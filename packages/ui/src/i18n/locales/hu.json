@@ -1,5 +1,7 @@
 {
   "common": {
+    "errorCount_one": "{{count}} hiba",
+    "errorCount_other": "{{count}} hiba",
     "add": "Hozzáadás",
     "cancel": "Mégse",
     "close": "Bezárás",
@@ -1121,7 +1123,17 @@
         "source": "Lejátszási lista források",
         "epg": "EPG-források",
         "refresh": "Adatfrissítés",
-        "globalUa": "Globális User-Agent"
+        "globalUa": "Globális User-Agent",
+        "stalkerPrefs": "Stalker-beállítások"
+      },
+      "stalkerPrefs": {
+        "title": "Stalker-beállítások",
+        "desc": "Állítsa be, hogyan töltődnek be a VOD film- és sorozatkategóriák a Stalker/MAC portálokon. Ezek a beállítások minden Stalker forrásra vonatkoznak.",
+        "pageConcurrency": "VOD oldal-egyidejűség",
+        "pageConcurrencyDesc": "Hány tartalomoldal kerül párhuzamosan lekérésre, amikor megnyit egy VOD film- vagy sorozatkategóriát. A Stalker portálok oldalanként 14 elemet adnak vissza, és a 4 az ajánlott biztonságos alapérték. A magasabb értékek gyorsabban töltenek, de több egyidejű kérést küldenek a szolgáltatónak, ami fiókja zárolásához vagy kitiltásához vezethet — Ön felelős a beállított értékért.",
+        "categoryCache": "VOD kategória-gyorsítótár időzítő",
+        "categoryCacheDesc": "Mennyi ideig használódnak újra egy megnyitott kategória elemei, mielőtt ismét frissülnek a portálról.",
+        "cacheAlwaysRefresh": "Mindig frissítés megnyitáskor (gyorsítótár nélkül)"
       },
       "sourcesTitle": "Források",
       "syncChannels": "Csatornák szinkronizálása",

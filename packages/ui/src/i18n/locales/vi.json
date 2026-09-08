@@ -63,6 +63,8 @@
     "noUpcomingProgram": "Không có chương trình sắp tới trong hướng dẫn"
   },
   "common": {
+    "errorCount_one": "{{count}} lỗi",
+    "errorCount_other": "{{count}} lỗi",
     "add": "Thêm",
     "cancel": "Hủy",
     "close": "Đóng",
@@ -2702,7 +2704,17 @@
         "source": "Nguồn Danh Sách Phát",
         "epg": "Nguồn EPG",
         "refresh": "Làm Mới Dữ Liệu",
-        "globalUa": "User-Agent Toàn Cầu"
+        "globalUa": "User-Agent Toàn Cầu",
+        "stalkerPrefs": "Tùy chọn Stalker"
+      },
+      "stalkerPrefs": {
+        "title": "Tùy chọn Stalker",
+        "desc": "Điều chỉnh cách tải danh mục phim và bộ phim VOD cho cổng Stalker/MAC. Các tùy chọn này áp dụng cho mọi nguồn Stalker.",
+        "pageConcurrency": "Số trang VOD tải song song",
+        "pageConcurrencyDesc": "Số trang nội dung được tải song song khi bạn mở một danh mục phim hoặc bộ phim VOD. Cổng Stalker trả về 14 mục mỗi trang và 4 là giá trị mặc định an toàn được khuyến nghị. Giá trị cao hơn tải nhanh hơn nhưng gửi nhiều yêu cầu đồng thời hơn tới nhà cung cấp và có thể dẫn đến việc tài khoản của bạn bị khóa hoặc cấm — bạn chịu trách nhiệm về giá trị đã đặt.",
+        "categoryCache": "Thời gian bộ nhớ đệm danh mục VOD",
+        "categoryCacheDesc": "Thời gian các mục của danh mục đã mở được tái sử dụng trước khi làm mới lại từ cổng.",
+        "cacheAlwaysRefresh": "Luôn làm mới khi mở (không dùng bộ nhớ đệm)"
       },
       "sourcesTitle": "Nguồn",
       "syncChannels": "Đồng Bộ Kênh",

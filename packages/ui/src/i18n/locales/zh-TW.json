@@ -1,5 +1,7 @@
 {
   "common": {
+    "errorCount_one": "{{count}} 個錯誤",
+    "errorCount_other": "{{count}} 個錯誤",
     "add": "新增",
     "cancel": "取消",
     "close": "關閉",
@@ -1121,7 +1123,17 @@
         "source": "播放列表源",
         "epg": "EPG 源",
         "refresh": "數據刷新",
-        "globalUa": "全局使用者代理"
+        "globalUa": "全局使用者代理",
+        "stalkerPrefs": "Stalker 偏好設定"
+      },
+      "stalkerPrefs": {
+        "title": "Stalker 偏好設定",
+        "desc": "調整 Stalker/MAC 入口的 VOD 電影和劇集類別的載入方式。這些偏好設定適用於每個 Stalker 來源。",
+        "pageConcurrency": "VOD 頁面並行數",
+        "pageConcurrencyDesc": "開啟 VOD 電影或劇集類別時並行擷取的內容頁數。Stalker 入口每頁會回傳 14 個項目，4 是建議的預設安全值。數值越高載入越快，但會向您的提供者傳送更多同時請求，並可能導致您的帳戶被封鎖或停用——您需對自行設定的數值負責。",
+        "categoryCache": "VOD 類別快取計時器",
+        "categoryCacheDesc": "已開啟類別的項目在再次從入口重新整理前會被重複使用多久。",
+        "cacheAlwaysRefresh": "開啟時一律重新整理（不使用快取）"
       },
       "sourcesTitle": "源",
       "syncChannels": "同步頻道",

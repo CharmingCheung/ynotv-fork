@@ -1,5 +1,7 @@
 {
   "common": {
+    "errorCount_one": "{{count}} fout",
+    "errorCount_other": "{{count}} fouten",
     "add": "Toevoegen",
     "cancel": "Annuleren",
     "close": "Sluiten",
@@ -1121,7 +1123,17 @@
         "source": "Afspeellijstbronnen",
         "epg": "EPG-bronnen",
         "refresh": "Gegevens vernieuwen",
-        "globalUa": "Globale User-Agent"
+        "globalUa": "Globale User-Agent",
+        "stalkerPrefs": "Stalker-voorkeuren"
+      },
+      "stalkerPrefs": {
+        "title": "Stalker-voorkeuren",
+        "desc": "Stel in hoe VOD-film- en seriecategorieën worden geladen voor Stalker/MAC-portals. Deze voorkeuren gelden voor elke Stalker-bron.",
+        "pageConcurrency": "VOD-paginagelijktijdigheid",
+        "pageConcurrencyDesc": "Hoeveel contentpagina's tegelijk worden opgehaald wanneer je een VOD-film- of seriecategorie opent. Stalker-portals leveren 14 items per pagina en 4 is de aanbevolen veilige standaard. Hogere waarden laden sneller, maar sturen meer gelijktijdige verzoeken naar je provider, wat kan leiden tot blokkering of een ban van je account — jij bent verantwoordelijk voor de waarde die je instelt.",
+        "categoryCache": "VOD-categoriecachetijd",
+        "categoryCacheDesc": "Hoe lang de items van een geopende categorie worden hergebruikt voordat ze opnieuw van de portal worden ververst.",
+        "cacheAlwaysRefresh": "Altijd vernieuwen bij openen (geen cache)"
       },
       "sourcesTitle": "Bronnen",
       "syncChannels": "Kanalen synchroniseren",

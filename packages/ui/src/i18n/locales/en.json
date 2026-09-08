@@ -1,5 +1,7 @@
 {
   "common": {
+    "errorCount_one": "{{count}} error",
+    "errorCount_other": "{{count}} errors",
     "add": "Add",
     "cancel": "Cancel",
     "close": "Close",
@@ -1121,7 +1123,17 @@
         "source": "Playlist Sources",
         "epg": "EPG Sources",
         "refresh": "Data Refresh",
+        "stalkerPrefs": "Stalker Preferences",
         "globalUa": "Global User-Agent"
+      },
+      "stalkerPrefs": {
+        "title": "Stalker Preferences",
+        "desc": "Tune how VOD Movies and Series categories are loaded for Stalker/MAC portals. These preferences apply to every Stalker source.",
+        "pageConcurrency": "VOD page fetch concurrency",
+        "pageConcurrencyDesc": "How many content pages are fetched in parallel when you open a VOD Movies or Series category. Stalker portals return 14 items per page and 4 is the recommended safe default. Higher values load faster but send more simultaneous requests to your provider — increasing them can lead to your account being blocked or banned, so you are responsible for the value you set.",
+        "categoryCache": "VOD category cache timer",
+        "categoryCacheDesc": "How long an opened category's items are reused before they are refreshed from the portal again.",
+        "cacheAlwaysRefresh": "Always refresh on open (no cache)"
       },
       "sourcesTitle": "Sources",
       "syncChannels": "Sync Channels",

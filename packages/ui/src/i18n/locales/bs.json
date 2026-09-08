@@ -1,5 +1,7 @@
 {
   "common": {
+    "errorCount_one": "{{count}} greška",
+    "errorCount_other": "{{count}} greške",
     "add": "Dodaj",
     "cancel": "Otkaži",
     "close": "Zatvori",
@@ -1121,7 +1123,17 @@
         "source": "Izvori playlista",
         "epg": "EPG izvori",
         "refresh": "Osvježavanje podataka",
-        "globalUa": "Globalni User-Agent"
+        "globalUa": "Globalni User-Agent",
+        "stalkerPrefs": "Stalker postavke"
+      },
+      "stalkerPrefs": {
+        "title": "Stalker postavke",
+        "desc": "Podesite kako se učitavaju kategorije VOD filmova i serija za Stalker/MAC portale. Ove postavke se primjenjuju na sve Stalker izvore.",
+        "pageConcurrency": "Istovremeno dohvaćanje VOD stranica",
+        "pageConcurrencyDesc": "Koliko se stranica sadržaja dohvaća paralelno kada otvorite kategoriju VOD filmova ili serija. Stalker portali vraćaju 14 stavki po stranici, a 4 je preporučena sigurna zadana vrijednost. Veće vrijednosti učitavaju brže, ali šalju više istovremenih zahtjeva vašem pružatelju i mogu dovesti do blokade ili bana vašeg računa — odgovorni ste za vrijednost koju postavite.",
+        "categoryCache": "Vrijeme keširanja VOD kategorija",
+        "categoryCacheDesc": "Koliko se dugo stavke otvorene kategorije ponovo koriste prije nego se ponovo osvježe s portala.",
+        "cacheAlwaysRefresh": "Uvijek osvježi pri otvaranju (bez keša)"
       },
       "sourcesTitle": "Izvori",
       "syncChannels": "Sinhronizuj kanale",

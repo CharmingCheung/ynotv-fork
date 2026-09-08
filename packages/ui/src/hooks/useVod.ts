@@ -6,6 +6,8 @@ import { db, type StoredMovie, type StoredSeries, type StoredEpisode, type VodCa
 import { syncSeriesEpisodes, syncAllVod, type VodSyncResult } from '../db/sync';
 import type { Source } from '@ynotv/core';
 import { useEnabledSources } from './useChannels';
+import { useSettingsStore } from '../stores/settingsStore';
+import { useToastStore } from '../stores/toastStore';
 import { getTmdbImageUrl, TMDB_POSTER_SIZES } from '../services/tmdb';
 import { getSearchVariants, matchesSearch } from '../utils/searchNormalization';
 import {
@@ -1005,7 +1007,8 @@ export function useCurrentLetter(
  * - Shows cached data immediately if available
  * - Lazy loads in background if cache is stale or missing
  * - Returns 'completed' flag when sync finishes to trigger UI refresh
- * - Implements timestamp-based caching (5 minute TTL)
+ * - Implements timestamp-based caching (TTL configurable via Settings ->
+ *   Sources -> Stalker Preferences; 5 minute default)
  */
 export function useLazyStalkerLoader(type: 'movies' | 'series', categoryId: string | null) {
   const [syncing, setSyncing] = useState(false);
@@ -1014,9 +1017,6 @@ export function useLazyStalkerLoader(type: 'movies' | 'series', categoryId: stri
   const [completed, setCompleted] = useState(false);
   const [hasCache, setHasCache] = useState(false);
 
-  // Cache TTL: 5 minutes for Stalker VOD (can be adjusted)
-  const CACHE_TTL_MS = 5 * 60 * 1000;
-
   // Storage key for last-sync timestamp (keyed per category + type)
   const syncTimestampKey = categoryId ? `stalker_sync_ts_${type}_${categoryId}` : null;
 
@@ -1024,6 +1024,12 @@ export function useLazyStalkerLoader(type: 'movies' | 'series', categoryId: stri
     // cancelled guards against a sync started for a previous category writing
     // state after the user has navigated away (e.g. back to "All").
     let cancelled = false;
+
+    // Category cache TTL comes from Settings -> Sources -> Stalker Preferences
+    // (default 5 min). 0 disables caching — every open of a category refetches
+    // its items in the background while the cached items stay visible.
+    const stalkerCacheMinutes = useSettingsStore.getState().stalkerCategoryCacheMinutes;
+    const stalkerCacheTtlMs = stalkerCacheMinutes > 0 ? stalkerCacheMinutes * 60 * 1000 : 0;
 
     if (!categoryId) {
       // Leaving a category (e.g. switching to "All"): reset ALL lazy-load
@@ -1089,7 +1095,7 @@ export function useLazyStalkerLoader(type: 'movies' | 'series', categoryId: stri
           if (lastSyncStr) {
             const lastSyncTime = parseInt(lastSyncStr, 10);
             if (!isNaN(lastSyncTime)) {
-              cacheIsFresh = (Date.now() - lastSyncTime) < CACHE_TTL_MS;
+              cacheIsFresh = (Date.now() - lastSyncTime) < stalkerCacheTtlMs;
             }
           }
         }
@@ -1128,6 +1134,19 @@ export function useLazyStalkerLoader(type: 'movies' | 'series', categoryId: stri
           if (cancelled) return;
           console.error('[useLazyStalkerLoader] Sync failed:', e);
           setMessage(i18n.t('vod:syncFailed'));
+          // Surface the underlying fetch failure (e.g. an HTTP error from one
+          // of the concurrent Stalker page requests) as a bottom-right toast,
+          // so it remains visible even after the category loading overlay
+          // dismisses. The category name (if any) gives context.
+          const detail = e instanceof Error ? e.message : typeof e === 'string' ? e : '';
+          if (detail) {
+            const friendly = translateNativeError(detail) || detail;
+            const label = category?.name || '';
+            useToastStore.getState().addToast(
+              label ? `${label}: ${friendly}` : friendly,
+              'error'
+            );
+          }
         } finally {
           if (!cancelled) {
             setSyncing(false);

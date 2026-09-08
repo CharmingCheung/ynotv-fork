@@ -106,6 +106,31 @@
 .toast-message {
   flex: 1;
   word-break: break-word;
+  /* Merged error toasts list each failure on its own line; cap the height so
+     the toast can't grow forever — overflow scrolls instead. */
+  white-space: pre-line;
+  max-height: 200px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+}
+
+/* Stacked-error count badge — pinned top-right inside the toast, left of the
+   close button, while the message list scrolls beneath it. */
+.toast-count {
+  position: absolute;
+  top: 10px;
+  right: 42px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(255, 80, 80, 0.18);
+  border: 1px solid rgba(255, 80, 80, 0.35);
+  color: #ffb3b3;
+  pointer-events: none;
+  white-space: nowrap;
 }
 
 .toast-close {

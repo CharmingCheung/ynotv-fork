@@ -1,5 +1,7 @@
 {
   "common": {
+    "errorCount_one": "{{count}} błąd",
+    "errorCount_other": "{{count}} błędy",
     "add": "Dodaj",
     "cancel": "Anuluj",
     "close": "Zamknij",
@@ -1121,7 +1123,17 @@
         "source": "Źródła list odtwarzania",
         "epg": "Źródła EPG",
         "refresh": "Odświeżanie danych",
-        "globalUa": "Globalny User-Agent"
+        "globalUa": "Globalny User-Agent",
+        "stalkerPrefs": "Preferencje Stalker"
+      },
+      "stalkerPrefs": {
+        "title": "Preferencje Stalker",
+        "desc": "Dostosuj sposób ładowania kategorii filmów i seriali VOD dla portali Stalker/MAC. Te preferencje dotyczą wszystkich źródeł Stalker.",
+        "pageConcurrency": "Równoległość stron VOD",
+        "pageConcurrencyDesc": "Ile stron treści jest pobieranych równolegle po otwarciu kategorii filmów lub seriali VOD. Portale Stalker zwracają 14 pozycji na stronę, a 4 to zalecana bezpieczna wartość domyślna. Wyższe wartości ładują szybciej, ale wysyłają więcej równoczesnych żądań do dostawcy, co może doprowadzić do zablokowania lub zbanowania Twojego konta — odpowiadasz za ustawioną wartość.",
+        "categoryCache": "Czas pamięci podręcznej kategorii VOD",
+        "categoryCacheDesc": "Jak długo pozycje otwartej kategorii są ponownie używane, zanim zostaną odświeżone z portalu.",
+        "cacheAlwaysRefresh": "Zawsze odświeżaj przy otwarciu (bez pamięci podręcznej)"
       },
       "sourcesTitle": "Źródła",
       "syncChannels": "Synchronizuj kanały",

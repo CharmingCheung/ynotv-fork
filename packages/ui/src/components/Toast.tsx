@@ -1,11 +1,15 @@
 import { useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import i18n from '../i18n';
 import { useToastStore } from '../stores/toastStore';
 import './Toast.css';
 
-function ToastItem({ id, message, type }: { id: number; message: string; type: 'error' | 'success' }) {
+function ToastItem({ id, message, type, count }: { id: number; message: string; type: 'error' | 'success'; count?: number }) {
   const [isHiding, setIsHiding] = useState(false);
   const removeToast = useToastStore((s) => s.removeToast);
+  // Stacked error toasts carry the number of merged failures; only show the
+  // badge once there's actually more than one.
+  const showCount = type === 'error' && !!count && count > 1;
 
   const handleClose = useCallback(() => {
     setIsHiding(true);
@@ -29,6 +33,11 @@ function ToastItem({ id, message, type }: { id: number; message: string; type: '
         )}
       </span>
       <span className="toast-message">{message}</span>
+      {showCount && (
+        <span className="toast-count" title={i18n.t('common:errorCount', { count })}>
+          {i18n.t('common:errorCount', { count })}
+        </span>
+      )}
       <button className="toast-close" onClick={handleClose}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <line x1="18" y1="6" x2="6" y2="18" />
@@ -47,7 +56,7 @@ export function ToastContainer() {
   return createPortal(
     <div className="toast-container">
       {toasts.map((t) => (
-        <ToastItem key={t.id} id={t.id} message={t.message} type={t.type} />
+        <ToastItem key={t.id} id={t.id} message={t.message} type={t.type} count={t.count} />
       ))}
     </div>,
     document.body

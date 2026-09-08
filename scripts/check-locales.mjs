@@ -204,6 +204,8 @@ const UNTRANSLATED_ALLOWLIST = new Set([
   'epg.description', 'common.syncingBatchWithPrefix', 'nav.items.liveTv', 'updates.later',
   // per-locale exceptions: "Local" is the correct word in Spanish/Portuguese
   'es:vod.local', 'pt-BR:vod.local', 'es:stremio.local', 'pt-BR:stremio.local',
+  // Spanish singular for the error-count badge is the same word as English
+  'es:common.errorCount_one',
   'es:settings.navigation.showVodLocal', 'pt-BR:settings.navigation.showVodLocal',
   // per-locale exceptions: the English word is already the correct translation
   // (Dutch "Recent", German "Episode", French "Pause"/"Auto")

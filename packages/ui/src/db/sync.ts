@@ -2725,6 +2725,11 @@ export async function syncStalkerCategory(
     source.id
   );
 
+  // Pages fetched in parallel per batch (Settings -> Sources -> Stalker
+  // Preferences; default 4). Defensive clamp in case a stale stored value
+  // sneaks past hydration.
+  const pageConcurrency = Math.min(12, Math.max(1, Math.round(useSettingsStore.getState().stalkerVodPageConcurrency) || 4));
+
   try {
     const fetchType = type === 'movies' ? 'vod' : 'series';
     // Use the new getCategoryItems method with progress. The client reports
@@ -2739,7 +2744,7 @@ export async function syncStalkerCategory(
           : i18n.t('vod:loadingPage', { current: currentPage });
       }
       onProgress(percent, msg);
-    });
+    }, pageConcurrency);
 
     if (items.length === 0) {
       debugLog(`[LazyLoad] No items found in category ${categoryId}`, 'sync');

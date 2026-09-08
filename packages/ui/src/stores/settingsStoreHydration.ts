@@ -86,6 +86,7 @@ const NUMBER_KEYS = new Set([
   'transparentGuideHeight', 'transparentGuideOverlayOpacity', 'transparentGuideSidebarOpacity',
   'stremioBadgeSize', 'nuvioBadgeSize', 'controllerDeadzone', 'remoteControlPort',
   'controllerRepeatDelayMs', 'controllerRepeatIntervalMs',
+  'stalkerVodPageConcurrency', 'stalkerCategoryCacheMinutes',
 ]);
 
 /** Coerce type-sensitive stored values; leave everything else untouched. */
@@ -540,6 +541,8 @@ async function hydrateSettingsStore(): Promise<void> {
         logoCacheMaxMb: data.logoCacheMaxMb ?? 250,
         logoCacheTtlDays: data.logoCacheTtlDays ?? 30,
         globalLiveTvUserAgent: data.globalLiveTvUserAgent ?? '',
+        stalkerVodPageConcurrency: data.stalkerVodPageConcurrency ?? 4,
+        stalkerCategoryCacheMinutes: data.stalkerCategoryCacheMinutes ?? 5,
         epgDarkenCurrent: data.epgDarkenCurrent ?? false,
         epgHighlightBorderCurrent: data.epgHighlightBorderCurrent ?? false,
         epgBoldChannelNames: data.epgBoldChannelNames ?? false,

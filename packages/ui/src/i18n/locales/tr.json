@@ -1,5 +1,7 @@
 {
   "common": {
+    "errorCount_one": "{{count}} hata",
+    "errorCount_other": "{{count}} hata",
     "add": "Ekle",
     "cancel": "İptal",
     "close": "Kapat",
@@ -1121,7 +1123,17 @@
         "source": "Oynatma Listesi Kaynakları",
         "epg": "Rehber Kaynakları",
         "refresh": "Veri Yenileme",
-        "globalUa": "Genel Kullanıcı Aracısı"
+        "globalUa": "Genel Kullanıcı Aracısı",
+        "stalkerPrefs": "Stalker Tercihleri"
+      },
+      "stalkerPrefs": {
+        "title": "Stalker Tercihleri",
+        "desc": "Stalker/MAC portalları için VOD Film ve Dizi kategorilerinin nasıl yükleneceğini ayarlayın. Bu tercihler her Stalker kaynağı için geçerlidir.",
+        "pageConcurrency": "VOD sayfa eşzamanlılığı",
+        "pageConcurrencyDesc": "Bir VOD Film veya Dizi kategorisini açtığınızda kaç içerik sayfasının paralel getirileceği. Stalker portalları sayfa başına 14 öğe döndürür ve 4 önerilen güvenli varsayılandır. Daha yüksek değerler daha hızlı yükler ancak sağlayıcınıza daha fazla eşzamanlı istek gönderir ve hesabınızın engellenmesine veya yasaklanmasına yol açabilir — ayarladığınız değerden siz sorumlusunuz.",
+        "categoryCache": "VOD kategori önbellek süresi",
+        "categoryCacheDesc": "Açılan bir kategorinin öğelerinin portaldan yeniden alınmadan önce ne kadar süre yeniden kullanılacağı.",
+        "cacheAlwaysRefresh": "Açılışta her zaman yenile (önbellek yok)"
       },
       "sourcesTitle": "Kaynaklar",
       "syncChannels": "Kanalları Eşitle",

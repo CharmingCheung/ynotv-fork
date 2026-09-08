@@ -1,5 +1,7 @@
 {
   "common": {
+    "errorCount_one": "{{count}} gabim",
+    "errorCount_other": "{{count}} gabime",
     "add": "Shto",
     "cancel": "Anulo",
     "close": "Mbyll",
@@ -1121,7 +1123,17 @@
         "source": "Burimet e listave të luajtjes",
         "epg": "Burimet e EPG-së",
         "refresh": "Rifreskimi i të dhënave",
-        "globalUa": "User-Agent global"
+        "globalUa": "User-Agent global",
+        "stalkerPrefs": "Preferencat e Stalker"
+      },
+      "stalkerPrefs": {
+        "title": "Preferencat e Stalker",
+        "desc": "Rregulloni se si ngarkohen kategoritë e filmave dhe serialeve VOD për portalet Stalker/MAC. Këto preferenca zbatohen për çdo burim Stalker.",
+        "pageConcurrency": "Paralelizmi i faqeve VOD",
+        "pageConcurrencyDesc": "Sa faqe përmbajtjeje merren paralelisht kur hapni një kategori filmash ose serialesh VOD. Portalet Stalker kthejnë 14 elemente për faqe dhe 4 është vlera e rekomanduar e sigurt si parazgjedhje. Vlerat më të larta ngarkojnë më shpejt, por dërgojnë më shumë kërkesa të njëkohshme te ofruesi juaj, gjë që mund të çojë në bllokim ose ban të llogarisë tuaj — ju jeni përgjegjës për vlerën që vendosni.",
+        "categoryCache": "Kohëmatësi i cache-it të kategorive VOD",
+        "categoryCacheDesc": "Sa kohë ripërdoren elementet e një kategorie të hapur përpara se të rifreskohen nga portali.",
+        "cacheAlwaysRefresh": "Rifresko gjithmonë kur hapet (pa cache)"
       },
       "sourcesTitle": "Burimet",
       "syncChannels": "Sinkronizo kanalet",

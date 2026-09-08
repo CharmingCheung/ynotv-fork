@@ -601,6 +601,11 @@ export interface SettingsState {
   setUseScrollwheelSeek: (enabled: boolean) => void;
   useScrollwheelSeekInvert: boolean;
   setUseScrollwheelSeekInvert: (enabled: boolean) => void;
+  // Stalker (MAC portal) VOD lazy-load preferences
+  stalkerVodPageConcurrency: number;
+  setStalkerVodPageConcurrency: (concurrency: number) => void;
+  stalkerCategoryCacheMinutes: number;
+  setStalkerCategoryCacheMinutes: (minutes: number) => void;
   failoverGroupShowSource: boolean;
   setFailoverGroupShowSource: (enabled: boolean) => void;
   failoverAlwaysPlayPrimary: boolean;
@@ -1546,6 +1551,22 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     set({ useScrollwheelSeekInvert: enabled });
     persistSettings({ useScrollwheelSeekInvert: enabled });
     dispatchAppEvent('ynotv:vod-settings-changed', { useScrollwheelSeekInvert: enabled });
+  },
+  // Stalker (MAC portal) VOD lazy-load preferences: how many pages are
+  // fetched in parallel when a VOD category is opened (default 4), and how
+  // long a loaded category's items stay cached before being refreshed.
+  stalkerVodPageConcurrency: 4,
+  setStalkerVodPageConcurrency: (concurrency) => {
+    const clamped = Math.min(12, Math.max(1, Math.round(concurrency) || 4));
+    set({ stalkerVodPageConcurrency: clamped });
+    persistSettings({ stalkerVodPageConcurrency: clamped });
+  },
+  stalkerCategoryCacheMinutes: 5,
+  setStalkerCategoryCacheMinutes: (minutes) => {
+    // 0 disables caching — every open of a category refetches it.
+    const clamped = Math.min(10080, Math.max(0, Math.round(minutes) || 0));
+    set({ stalkerCategoryCacheMinutes: clamped });
+    persistSettings({ stalkerCategoryCacheMinutes: clamped });
   },
   failoverGroupShowSource: false,
   setFailoverGroupShowSource: (enabled) => {

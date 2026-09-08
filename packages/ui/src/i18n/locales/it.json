@@ -1,5 +1,7 @@
 {
   "common": {
+    "errorCount_one": "{{count}} errore",
+    "errorCount_other": "{{count}} errori",
     "add": "Aggiungi",
     "cancel": "Annulla",
     "close": "Chiudi",
@@ -1121,7 +1123,17 @@
         "source": "Fonti playlist",
         "epg": "Fonti EPG",
         "refresh": "Aggiornamento dati",
-        "globalUa": "User-Agent globale"
+        "globalUa": "User-Agent globale",
+        "stalkerPrefs": "Preferenze Stalker"
+      },
+      "stalkerPrefs": {
+        "title": "Preferenze Stalker",
+        "desc": "Regola il caricamento delle categorie di film e serie VOD per i portali Stalker/MAC. Queste preferenze si applicano a tutte le fonti Stalker.",
+        "pageConcurrency": "Concorrenza pagine VOD",
+        "pageConcurrencyDesc": "Quante pagine di contenuti vengono recuperate in parallelo quando apri una categoria di film o serie VOD. I portali Stalker restituiscono 14 elementi per pagina e 4 è il valore sicuro consigliato predefinito. Valori più alti caricano più velocemente ma inviano più richieste simultanee al tuo provider, il che può portare al blocco o al bannamento del tuo account: sei tu il responsabile del valore impostato.",
+        "categoryCache": "Durata cache categorie VOD",
+        "categoryCacheDesc": "Per quanto tempo gli elementi di una categoria aperta vengono riutilizzati prima di essere aggiornati dal portale.",
+        "cacheAlwaysRefresh": "Aggiorna sempre all'apertura (senza cache)"
       },
       "sourcesTitle": "Fonti",
       "syncChannels": "Sincronizza canali",

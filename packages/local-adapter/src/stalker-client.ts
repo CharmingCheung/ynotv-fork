@@ -861,20 +861,21 @@ export class StalkerClient {
         }));
     }
 
-    async getVodStreams(categoryId?: string, onProgress?: StalkerPageProgress): Promise<Channel[]> {
+    async getVodStreams(categoryId?: string, onProgress?: StalkerPageProgress, concurrency = 4): Promise<Channel[]> {
         await this.ensureToken();
         console.log('[Stalker] getVodStreams: fetching with parallel pagination...');
 
         const catId = categoryId ? categoryId.replace(`${this.sourceId}_vod_`, '').replace(`${this.sourceId}_`, '') : '*';
 
-        // Fetch pages in parallel batches of 4 for faster loading
+        // Fetch pages in parallel batches for faster loading. The batch size is
+        // configurable via Settings -> Sources -> Stalker Preferences (default 4).
         // Note: Stalker uses 0-indexed pages (p=0 is first page)
         const allItems: any[] = [];
         let page = 0;
         let hasMore = true;
         let pagesFetched = 0; // 1-indexed count of pages actually retrieved (for the "Page X of Y" display)
         let totalPages: number | undefined;
-        const BATCH_SIZE = 4;
+        const BATCH_SIZE = concurrency;
 
         while (hasMore) {
             // Fetch BATCH_SIZE pages in parallel
@@ -1030,7 +1031,7 @@ export class StalkerClient {
         }));
     }
 
-    async getSeriesStreams(categoryId?: string, onProgress?: StalkerPageProgress): Promise<Channel[]> {
+    async getSeriesStreams(categoryId?: string, onProgress?: StalkerPageProgress, concurrency = 4): Promise<Channel[]> {
         await this.ensureToken();
         console.log('[Stalker] getSeriesStreams: fetching with parallel pagination...');
 
@@ -1043,7 +1044,7 @@ export class StalkerClient {
             let hasMore = true;
             let pagesFetched = 0; // 1-indexed count of pages retrieved so far
             let totalPages: number | undefined;
-            const BATCH_SIZE = 4;
+            const BATCH_SIZE = concurrency;
 
             while (hasMore) {
                 const batchPromises = [];
@@ -1986,11 +1987,11 @@ export class StalkerClient {
     }
 
     // Methods expected by sync.ts
-    async getCategoryItems(categoryId: string, type: 'vod' | 'series', onProgress?: StalkerPageProgress): Promise<Channel[]> {
+    async getCategoryItems(categoryId: string, type: 'vod' | 'series', onProgress?: StalkerPageProgress, concurrency?: number): Promise<Channel[]> {
         if (type === 'vod') {
-            return this.getVodStreams(categoryId, onProgress);
+            return this.getVodStreams(categoryId, onProgress, concurrency);
         } else {
-            return this.getSeriesStreams(categoryId, onProgress);
+            return this.getSeriesStreams(categoryId, onProgress, concurrency);
         }
     }
 

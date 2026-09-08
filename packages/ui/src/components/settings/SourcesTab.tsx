@@ -18,6 +18,7 @@ import { useToastStore } from '../../stores/toastStore';
 import { parseM3U, XtreamClient, StalkerClient } from '@ynotv/local-adapter';
 import { CategoryManager } from './CategoryManager';
 import { DataRefreshTab } from './DataRefreshTab';
+import { StalkerPrefsTab } from './StalkerPrefsTab';
 import './SourcesTab.css';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useSourceVersion } from '../../contexts/SourceVersionContext';
@@ -47,7 +48,7 @@ import { formatTime, formatDate, activeLocale } from '../../utils/dateTime';
 import i18n, { translateNativeError } from '../../i18n';
 import { parseBulkStalkerInput, type ParsedStalkerPortal } from '../../utils/stalkerBulkParser';
 
-export type SourcesSubTabId = 'source' | 'epg' | 'refresh' | 'global_ua';
+export type SourcesSubTabId = 'source' | 'epg' | 'refresh' | 'stalker_prefs' | 'global_ua';
 
 const PRESET_USER_AGENTS = [
   { labelKey: 'settings:sources.uaVlcDefault', value: 'VLC/3.0.18 LibVLC/3.0.18' },
@@ -1825,6 +1826,12 @@ export function SourcesTab({
           {i18n.t('settings:sources.tabs.refresh')}
         </button>
         <button
+          className={`settings-tab ${activeSubTab === 'stalker_prefs' ? 'active' : ''}`}
+          onClick={() => setActiveSubTab('stalker_prefs')}
+        >
+          {i18n.t('settings:sources.tabs.stalkerPrefs')}
+        </button>
+        <button
           className={`settings-tab ${activeSubTab === 'global_ua' ? 'active' : ''}`}
           onClick={() => setActiveSubTab('global_ua')}
         >
@@ -2993,6 +3000,10 @@ export function SourcesTab({
           onEpgRefreshChange={onEpgRefreshChange || (() => {})}
           onEpgSyncConcurrencyChange={onEpgSyncConcurrencyChange || (() => {})}
         />
+      )}
+
+      {activeSubTab === 'stalker_prefs' && (
+        <StalkerPrefsTab />
       )}
 
       {activeSubTab === 'global_ua' && (

@@ -1,5 +1,7 @@
 {
   "common": {
+    "errorCount_one": "{{count}} 个错误",
+    "errorCount_other": "{{count}} 个错误",
     "add": "添加",
     "cancel": "取消",
     "close": "关闭",
@@ -1121,7 +1123,17 @@
         "source": "播放列表源",
         "epg": "EPG 源",
         "refresh": "数据刷新",
-        "globalUa": "全局用户代理"
+        "globalUa": "全局用户代理",
+        "stalkerPrefs": "Stalker 首选项"
+      },
+      "stalkerPrefs": {
+        "title": "Stalker 首选项",
+        "desc": "调整 Stalker/MAC 门户的 VOD 电影和剧集类别的加载方式。这些首选项适用于每个 Stalker 源。",
+        "pageConcurrency": "VOD 页面并发数",
+        "pageConcurrencyDesc": "打开 VOD 电影或剧集类别时并行抓取的内容页数。Stalker 门户每页返回 14 个项目，4 是推荐的默认安全值。值越大加载越快，但会向您的提供商发送更多同时请求，并可能导致您的账户被封锁或封禁——您需对自行设置的值负责。",
+        "categoryCache": "VOD 类别缓存计时器",
+        "categoryCacheDesc": "已打开类别的项目在再次从门户刷新前会被复用多长时间。",
+        "cacheAlwaysRefresh": "打开时始终刷新（不使用缓存）"
       },
       "sourcesTitle": "源",
       "syncChannels": "同步频道",
