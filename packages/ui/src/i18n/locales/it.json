@@ -2,6 +2,10 @@
   "common": {
     "errorCount_one": "{{count}} errore",
     "errorCount_other": "{{count}} errori",
+    "errorCount_few": "{{count}} errori",
+    "errorCount_many": "{{count}} errori",
+    "errorCount_two": "{{count}} errori",
+    "errorCount_zero": "{{count}} errori",
     "add": "Aggiungi",
     "cancel": "Annulla",
     "close": "Chiudi",
@@ -2684,6 +2688,13 @@
     "weekAgo_zero": "{{count}} settimane fa"
   },
   "sports": {
+    "linkCurrentChannelToTeam": "Collega il canale attuale a una squadra",
+    "linkChannelToTeamDesc": "Scegli una squadra, poi indica dove {{channel}} deve comparire nel suo elenco di canali.",
+    "linkHere": "Collega qui",
+    "inThisSpot": "Già qui",
+    "linkChannelFailed": "Impossibile collegare il canale",
+    "linkChannelSlotsNote": "Collegare su una posizione occupata sposta quel canale di una posizione più in basso.",
+    "sport": "Sport",
     "tabs": {
       "live": "Live",
       "upcoming": "In programma",

@@ -32,6 +32,7 @@ interface TeamChannelLinksState {
   ensureLoaded: () => Promise<void>;
   reload: () => Promise<void>;
   linkTeam: (input: TeamLinkInput) => Promise<void>;
+  linkTeamAtSlot: (input: TeamLinkInput, targetSlot: number) => Promise<void>;
   unlinkTeamChannel: (leagueId: string, teamId: string, streamId: string) => Promise<void>;
   unlinkTeam: (leagueId: string, teamId: string) => Promise<void>;
   unlinkLeague: (leagueId: string) => Promise<void>;
@@ -114,7 +115,7 @@ export const useTeamChannelLinksStore = create<TeamChannelLinksState>((set, get)
   loading: false,
 
   ensureLoaded: async () => {
-    if (get().loaded || get().loading) return;
+    if (get().loaded) return;
     if (loadPromise) return loadPromise;
     loadPromise = (async () => {
       set({ loading: true });
@@ -143,7 +144,10 @@ export const useTeamChannelLinksStore = create<TeamChannelLinksState>((set, get)
         }));
       } catch (err) {
         console.error('[TeamChannelLinks] Failed to load links:', err);
-        set({ loaded: true, loading: false });
+        // Do NOT mark as loaded — keep `loaded: false` so a later
+        // ensureLoaded() call retries instead of treating the failure
+        // as a successful (empty) load.
+        set({ loading: false });
       } finally {
         loadPromise = null;
       }
@@ -163,6 +167,8 @@ export const useTeamChannelLinksStore = create<TeamChannelLinksState>((set, get)
   },
 
   linkTeam: async (input) => {
+    await get().ensureLoaded();
+    if (!get().loaded) return; // load failed — don't mutate against empty state
     const existingTeamLinks = getTeamLinks(get().links, input.league_id, input.team_id);
     const existingIdx = existingTeamLinks.findIndex((l) => l.stream_id === input.stream_id);
 
@@ -213,7 +219,59 @@ export const useTeamChannelLinksStore = create<TeamChannelLinksState>((set, get)
     });
   },
 
+  linkTeamAtSlot: async (input, targetSlot) => {
+    await get().ensureLoaded();
+    if (!get().loaded) return; // load failed — don't mutate against empty state
+    const existingTeamLinks = getTeamLinks(get().links, input.league_id, input.team_id);
+    const existingLink = existingTeamLinks.find((l) => l.stream_id === input.stream_id);
+    const others = existingTeamLinks.filter((l) => l.stream_id !== input.stream_id);
+
+    const id = linkId(input.league_id, input.team_id, input.stream_id);
+    const link: TeamChannelLink = {
+      id,
+      league_id: input.league_id,
+      team_id: input.team_id,
+      stream_id: input.stream_id,
+      channel_name: input.channel_name,
+      source_id: input.source_id,
+      priority: 0,
+      auto: existingLink?.auto ?? input.auto ?? 0,
+      confidence: existingLink?.confidence ?? input.confidence ?? 1,
+      updated_at: Date.now(),
+    };
+
+    const clampedSlot = Math.max(0, Math.min(targetSlot, others.length));
+    const reordered: TeamChannelLink[] = [
+      ...others.slice(0, clampedSlot),
+      link,
+      ...others.slice(clampedSlot),
+    ];
+
+    const normalized = reordered.map((l, idx) => ({
+      ...l,
+      priority: idx,
+      updated_at: Date.now(),
+    }));
+
+    const legacyId = `${input.league_id}:${input.team_id}`;
+    if (get().links.some((l) => l.id === legacyId)) {
+      await db.teamChannelLinks.delete(legacyId).catch(() => {});
+    }
+
+    await db.teamChannelLinks.bulkPut(normalized);
+
+    set((s) => {
+      const next = [
+        ...s.links.filter((l) => !(l.league_id === input.league_id && l.team_id === input.team_id)),
+        ...normalized,
+      ];
+      return { links: next, teamIndex: buildTeamIndex(next, s.teamIndex) };
+    });
+  },
+
   unlinkTeamChannel: async (leagueId, teamId, streamId) => {
+    await get().ensureLoaded();
+    if (!get().loaded) return; // load failed — don't mutate against empty state
     const id = linkId(leagueId, teamId, streamId);
     const legacyId = `${leagueId}:${teamId}`;
 
@@ -239,6 +297,8 @@ export const useTeamChannelLinksStore = create<TeamChannelLinksState>((set, get)
   },
 
   unlinkTeam: async (leagueId, teamId) => {
+    await get().ensureLoaded();
+    if (!get().loaded) return; // load failed — don't mutate against empty state
     const toDelete = get().links.filter((l) => l.league_id === leagueId && l.team_id === teamId);
     for (const l of toDelete) {
       await db.teamChannelLinks.delete(l.id).catch(() => {});
@@ -251,6 +311,8 @@ export const useTeamChannelLinksStore = create<TeamChannelLinksState>((set, get)
   },
 
   unlinkLeague: async (leagueId) => {
+    await get().ensureLoaded();
+    if (!get().loaded) return; // load failed — don't mutate against empty state
     const toDelete = get().links.filter((l) => l.league_id === leagueId);
     for (const l of toDelete) {
       await db.teamChannelLinks.delete(l.id).catch(() => {});
@@ -262,6 +324,8 @@ export const useTeamChannelLinksStore = create<TeamChannelLinksState>((set, get)
   },
 
   setPrimaryChannel: async (leagueId, teamId, streamId) => {
+    await get().ensureLoaded();
+    if (!get().loaded) return; // load failed — don't mutate against empty state
     const teamLinks = getTeamLinks(get().links, leagueId, teamId);
     const targetIdx = teamLinks.findIndex((l) => l.stream_id === streamId);
     if (targetIdx === -1) return;
@@ -287,6 +351,7 @@ export const useTeamChannelLinksStore = create<TeamChannelLinksState>((set, get)
 
   reorderTeamLinks: async (leagueId, teamId, orderedStreamIds) => {
     await get().ensureLoaded();
+    if (!get().loaded) return; // load failed — don't mutate against empty state
     const teamLinks = getTeamLinks(get().links, leagueId, teamId);
     const linkMap = new Map(teamLinks.map((l) => [l.stream_id, l]));
 
@@ -330,6 +395,7 @@ export const useTeamChannelLinksStore = create<TeamChannelLinksState>((set, get)
 
   autoLinkLeague: async (leagueId, customConfig) => {
     await get().ensureLoaded();
+    if (!get().loaded) return { suggestions: [], autoLinked: 0, teamCount: 0 };
     const teams = await getLeagueTeams(leagueId);
     if (teams.length === 0) {
       return { suggestions: [], autoLinked: 0, teamCount: 0 };

@@ -2,6 +2,10 @@
   "common": {
     "errorCount_one": "{{count}} Fehler",
     "errorCount_other": "{{count}} Fehler",
+    "errorCount_few": "{{count}} Fehler",
+    "errorCount_many": "{{count}} Fehler",
+    "errorCount_two": "{{count}} Fehler",
+    "errorCount_zero": "{{count}} Fehler",
     "add": "Hinzufügen",
     "cancel": "Abbrechen",
     "close": "Schließen",
@@ -2684,6 +2688,13 @@
     "weekAgo_zero": "vor {{count}} Wochen"
   },
   "sports": {
+    "linkCurrentChannelToTeam": "Aktuellen Sender mit Team verknüpfen",
+    "linkChannelToTeamDesc": "Wähle ein Team und bestimme, wo {{channel}} in dessen Senderliste landet.",
+    "linkHere": "Hier verknüpfen",
+    "inThisSpot": "Bereits hier",
+    "linkChannelFailed": "Sender konnte nicht verknüpft werden",
+    "linkChannelSlotsNote": "Beim Verknüpfen in einen belegten Platz rutscht der bisherige Sender einen Platz nach unten.",
+    "sport": "Sport",
     "tabs": {
       "live": "Live",
       "upcoming": "Anstehend",

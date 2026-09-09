@@ -2,6 +2,10 @@
   "common": {
     "errorCount_one": "{{count}} error",
     "errorCount_other": "{{count}} errors",
+    "errorCount_few": "{{count}} errors",
+    "errorCount_many": "{{count}} errors",
+    "errorCount_two": "{{count}} errors",
+    "errorCount_zero": "{{count}} errors",
     "add": "Add",
     "cancel": "Cancel",
     "close": "Close",
@@ -2684,6 +2688,13 @@
     "weekAgo_zero": "{{count}} weeks ago"
   },
   "sports": {
+    "linkCurrentChannelToTeam": "Link Current Channel to Team",
+    "linkChannelToTeamDesc": "Pick a team, then choose where {{channel}} plays in its channel list.",
+    "linkHere": "Link here",
+    "inThisSpot": "In this spot",
+    "linkChannelFailed": "Failed to link channel",
+    "linkChannelSlotsNote": "Linking into an occupied slot moves that channel down one spot.",
+    "sport": "Sport",
     "tabs": {
       "live": "Live Now",
       "upcoming": "Upcoming",

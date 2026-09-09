@@ -171,7 +171,7 @@ const UNTRANSLATED_ALLOWLIST = new Set([
   'player.epgCatchup', 'player.pip', 'settings.startup.layouts.pip', 'player.layoutPip', 'sports.total',
   'settings.shortcuts.groups.Layout', 'player.layoutLabel', 'settings.startup.layoutLabel',
   'settings.shortcuts.groups.Interface', 'settings.shortcuts.groups.Navigation', 'settings.tabs.navigation',
-  'sports.team', 'sports.streams', 'player.playerLabel', 'player.pause', 'probe.pause', 'player.stop',
+  'sports.sport', 'sports.team', 'sports.streams', 'player.playerLabel', 'player.pause', 'probe.pause', 'player.stop',
   'player.popout', 'player.shuffle', 'nuvio.addons', 'settings.about.updatesTitle',
   'player.visualizerCircularShort', 'sports.score', 'sports.stat', 'settings.livetv.channels.providerOption',
   'subtitles.provider', 'settings.sources.type', 'nuvio.type', 'player.mpvTimeout', 'probe.timeoutLabel',

@@ -2,6 +2,10 @@
   "common": {
     "errorCount_one": "{{count}} σφάλμα",
     "errorCount_other": "{{count}} σφάλματα",
+    "errorCount_few": "{{count}} σφάλματα",
+    "errorCount_many": "{{count}} σφάλματα",
+    "errorCount_two": "{{count}} σφάλματα",
+    "errorCount_zero": "{{count}} σφάλματα",
     "add": "Προσθήκη",
     "cancel": "Άκυρο",
     "close": "Κλείσιμο",
@@ -2684,6 +2688,13 @@
     "weekAgo_zero": "{{count}} εβδομάδες πριν"
   },
   "sports": {
+    "linkCurrentChannelToTeam": "Σύνδεση του τρέχοντος καναλιού με ομάδα",
+    "linkChannelToTeamDesc": "Επιλέξτε μια ομάδα και μετά πού θα εμφανίζεται το {{channel}} στη λίστα καναλιών της.",
+    "linkHere": "Σύνδεση εδώ",
+    "inThisSpot": "Ήδη εδώ",
+    "linkChannelFailed": "Αποτυχία σύνδεσης καναλιού",
+    "linkChannelSlotsNote": "Η σύνδεση σε κατειλημμένη θέση μετακινεί το υπάρχον κανάλι μία θέση χαμηλότερα.",
+    "sport": "Άθλημα",
     "tabs": {
       "live": "Ζωντανά Τώρα",
       "upcoming": "Επερχόμενα",

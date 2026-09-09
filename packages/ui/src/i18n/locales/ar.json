@@ -1,7 +1,11 @@
 {
   "common": {
     "errorCount_one": "{{count}} خطأ",
-    "errorCount_other": "{{count}} أخطاء",
+    "errorCount_other": "{{count}} خطأ",
+    "errorCount_few": "{{count}} أخطاء",
+    "errorCount_many": "{{count}} خطأ",
+    "errorCount_two": "{{count}} أخطاء",
+    "errorCount_zero": "{{count}} أخطاء",
     "add": "إضافة",
     "cancel": "إلغاء",
     "close": "إغلاق",
@@ -2684,6 +2688,13 @@
     "weekAgo_two": "منذ {{count}} أسابيع"
   },
   "sports": {
+    "linkCurrentChannelToTeam": "ربط القناة الحالية بفريق",
+    "linkChannelToTeamDesc": "اختر فريقًا، ثم حدد مكان {{channel}} في قائمة قنواته.",
+    "linkHere": "ربط هنا",
+    "inThisSpot": "موجودة هنا بالفعل",
+    "linkChannelFailed": "تعذّر ربط القناة",
+    "linkChannelSlotsNote": "الربط في خانة مشغولة ينقل تلك القناة خانة واحدة للأسفل.",
+    "sport": "رياضة",
     "tabs": {
       "live": "مباشر الآن",
       "upcoming": "القادمة",

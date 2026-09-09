@@ -2,6 +2,10 @@
   "common": {
     "errorCount_one": "{{count}} помилка",
     "errorCount_other": "{{count}} помилок",
+    "errorCount_few": "{{count}} помилки",
+    "errorCount_many": "{{count}} помилок",
+    "errorCount_two": "{{count}} помилки",
+    "errorCount_zero": "{{count}} помилок",
     "add": "Додати",
     "cancel": "Скасування",
     "close": "Закрити",
@@ -2684,6 +2688,13 @@
     "weekAgo_zero": "{{count}} тижні тому"
   },
   "sports": {
+    "linkCurrentChannelToTeam": "Прив'язати поточний канал до команди",
+    "linkChannelToTeamDesc": "Виберіть команду та вкажіть, де {{channel}} має бути в її списку каналів.",
+    "linkHere": "Прив'язати тут",
+    "inThisSpot": "Уже тут",
+    "linkChannelFailed": "Не вдалося прив'язати канал",
+    "linkChannelSlotsNote": "Прив'язка до зайнятої позиції зсуває попередній канал на одну позицію вниз.",
+    "sport": "Спорт",
     "tabs": {
       "live": "Зараз в ефірі",
       "upcoming": "Майбутні",

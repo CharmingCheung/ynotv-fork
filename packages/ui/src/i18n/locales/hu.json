@@ -2,6 +2,10 @@
   "common": {
     "errorCount_one": "{{count}} hiba",
     "errorCount_other": "{{count}} hiba",
+    "errorCount_few": "{{count}} hiba",
+    "errorCount_many": "{{count}} hiba",
+    "errorCount_two": "{{count}} hiba",
+    "errorCount_zero": "{{count}} hiba",
     "add": "Hozzáadás",
     "cancel": "Mégse",
     "close": "Bezárás",
@@ -2684,6 +2688,13 @@
     "weekAgo_zero": "{{count}} hete"
   },
   "sports": {
+    "linkCurrentChannelToTeam": "Aktuális csatorna hozzárendelése csapathoz",
+    "linkChannelToTeamDesc": "Válassz csapatot, majd hol szerepeljen a(z) {{channel}} a csatornalistájában.",
+    "linkHere": "Hozzárendelés ide",
+    "inThisSpot": "Már itt van",
+    "linkChannelFailed": "A csatorna hozzárendelése sikertelen",
+    "linkChannelSlotsNote": "Foglalt helyre történő hozzárendelés eggyel lejjebb tolja az ott lévő csatornát.",
+    "sport": "Sport",
     "tabs": {
       "live": "Élő most",
       "upcoming": "Közelgő",

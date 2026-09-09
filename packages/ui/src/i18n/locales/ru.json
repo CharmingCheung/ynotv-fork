@@ -2,6 +2,10 @@
   "common": {
     "errorCount_one": "{{count}} ошибка",
     "errorCount_other": "{{count}} ошибок",
+    "errorCount_few": "{{count}} ошибки",
+    "errorCount_many": "{{count}} ошибок",
+    "errorCount_two": "{{count}} ошибки",
+    "errorCount_zero": "{{count}} ошибок",
     "add": "Добавить",
     "cancel": "Отмена",
     "close": "Закрыть",
@@ -2684,6 +2688,13 @@
     "weekAgo_zero": "{{count}} недели назад"
   },
   "sports": {
+    "linkCurrentChannelToTeam": "Привязать текущий канал к команде",
+    "linkChannelToTeamDesc": "Выберите команду и укажите, где {{channel}} должен находиться в её списке каналов.",
+    "linkHere": "Привязать здесь",
+    "inThisSpot": "Уже здесь",
+    "linkChannelFailed": "Не удалось привязать канал",
+    "linkChannelSlotsNote": "Привязка к занятой позиции сдвигает прежний канал на одну позицию вниз.",
+    "sport": "Спорт",
     "tabs": {
       "live": "Сейчас в эфире",
       "upcoming": "Предстоящие",

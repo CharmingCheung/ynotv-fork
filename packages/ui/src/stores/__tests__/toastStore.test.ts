@@ -87,4 +87,18 @@ describe('toastStore error stacking', () => {
     vi.advanceTimersByTime(10000);
     expect(useToastStore.getState().toasts).toHaveLength(0);
   });
+
+  it('correctly resolves plural error counts across languages', async () => {
+    const { default: i18n } = await import('../../i18n');
+    for (const [lang, expected2] of [
+      ['en', '2 errors'],
+      ['ru', '2 ошибки'],
+      ['pl', '2 błędy'],
+      ['ar', '2 أخطاء'],
+    ] as const) {
+      await i18n.changeLanguage(lang);
+      expect(i18n.t('common:errorCount', { count: 2 })).toBe(expected2);
+    }
+    await i18n.changeLanguage('en');
+  });
 });

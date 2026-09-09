@@ -2,6 +2,10 @@
   "common": {
     "errorCount_one": "{{count}} 個錯誤",
     "errorCount_other": "{{count}} 個錯誤",
+    "errorCount_few": "{{count}} 個錯誤",
+    "errorCount_many": "{{count}} 個錯誤",
+    "errorCount_two": "{{count}} 個錯誤",
+    "errorCount_zero": "{{count}} 個錯誤",
     "add": "新增",
     "cancel": "取消",
     "close": "關閉",
@@ -2684,6 +2688,13 @@
     "weekAgo_zero": "{{count}} 周前"
   },
   "sports": {
+    "linkCurrentChannelToTeam": "將目前頻道關聯到球隊",
+    "linkChannelToTeamDesc": "選擇球隊，然後選擇 {{channel}} 在該球隊頻道清單中的位置。",
+    "linkHere": "在此關聯",
+    "inThisSpot": "已在此位置",
+    "linkChannelFailed": "頻道關聯失敗",
+    "linkChannelSlotsNote": "關聯到已佔用的位置會將該頻道下移一位。",
+    "sport": "體育",
     "tabs": {
       "live": "直播中",
       "upcoming": "即將開始",

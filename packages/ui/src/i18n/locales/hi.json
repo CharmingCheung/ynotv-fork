@@ -2,6 +2,10 @@
   "common": {
     "errorCount_one": "{{count}} त्रुटि",
     "errorCount_other": "{{count}} त्रुटियाँ",
+    "errorCount_few": "{{count}} त्रुटियाँ",
+    "errorCount_many": "{{count}} त्रुटियाँ",
+    "errorCount_two": "{{count}} त्रुटियाँ",
+    "errorCount_zero": "{{count}} त्रुटियाँ",
     "add": "जोड़ें",
     "cancel": "रद्द करें",
     "close": "बंद करें",
@@ -2684,6 +2688,13 @@
     "weekAgo_zero": "{{count}} सप्ताह पहले"
   },
   "sports": {
+    "linkCurrentChannelToTeam": "वर्तमान चैनल को टीम से लिंक करें",
+    "linkChannelToTeamDesc": "एक टीम चुनें, फिर बताएँ कि {{channel}} उसकी चैनल सूची में कहाँ आए।",
+    "linkHere": "यहाँ लिंक करें",
+    "inThisSpot": "इसी स्थान पर है",
+    "linkChannelFailed": "चैनल लिंक नहीं हो सका",
+    "linkChannelSlotsNote": "भरे हुए स्थान पर लिंक करने से वह चैनल एक स्थान नीचे चला जाता है।",
+    "sport": "खेल",
     "tabs": {
       "live": "अभी लाइव",
       "upcoming": "आगामी",

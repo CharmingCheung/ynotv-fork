@@ -2,6 +2,10 @@
   "common": {
     "errorCount_one": "{{count}} gabim",
     "errorCount_other": "{{count}} gabime",
+    "errorCount_few": "{{count}} gabime",
+    "errorCount_many": "{{count}} gabime",
+    "errorCount_two": "{{count}} gabime",
+    "errorCount_zero": "{{count}} gabime",
     "add": "Shto",
     "cancel": "Anulo",
     "close": "Mbyll",
@@ -2684,6 +2688,13 @@
     "weekAgo_zero": "{{count}} javë më parë"
   },
   "sports": {
+    "linkCurrentChannelToTeam": "Lidh kanalin aktual me një ekip",
+    "linkChannelToTeamDesc": "Zgjidh një ekip dhe më pas ku do të shfaqet {{channel}} në listën e kanaleve të tij.",
+    "linkHere": "Lidh këtu",
+    "inThisSpot": "Tashmë këtu",
+    "linkChannelFailed": "Dështoi lidhja e kanalit",
+    "linkChannelSlotsNote": "Lidhja në një vend të zënë e zhvendos atë kanal një vend më poshtë.",
+    "sport": "Sport",
     "tabs": {
       "live": "Live",
       "upcoming": "Të ardhshmet",

@@ -2,6 +2,10 @@
   "common": {
     "errorCount_one": "{{count}} 个错误",
     "errorCount_other": "{{count}} 个错误",
+    "errorCount_few": "{{count}} 个错误",
+    "errorCount_many": "{{count}} 个错误",
+    "errorCount_two": "{{count}} 个错误",
+    "errorCount_zero": "{{count}} 个错误",
     "add": "添加",
     "cancel": "取消",
     "close": "关闭",
@@ -2684,6 +2688,13 @@
     "weekAgo_zero": "{{count}} 周前"
   },
   "sports": {
+    "linkCurrentChannelToTeam": "将当前频道关联到球队",
+    "linkChannelToTeamDesc": "选择球队，然后选择 {{channel}} 在该球队频道列表中的位置。",
+    "linkHere": "在此关联",
+    "inThisSpot": "已在此位置",
+    "linkChannelFailed": "频道关联失败",
+    "linkChannelSlotsNote": "关联到已占用的位置会将该频道下移一位。",
+    "sport": "体育",
     "tabs": {
       "live": "直播中",
       "upcoming": "即将开始",

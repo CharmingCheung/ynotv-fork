@@ -254,6 +254,51 @@
   opacity: 0.75;
 }
 
+/* Link Current Channel to Team bar (top of the drawer, under the header) */
+.slg-link-team-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 212, 255, 0.04);
+  flex-shrink: 0;
+}
+
+.slg-link-team-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: rgba(0, 212, 255, 0.12);
+  border: 1px solid rgba(0, 212, 255, 0.35);
+  border-radius: 18px;
+  padding: 5px 13px;
+  color: var(--accent-primary, #00d4ff);
+  font-size: 0.76rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+  flex: 0 0 auto;
+}
+
+.slg-link-team-btn:hover {
+  background: rgba(0, 212, 255, 0.2);
+  border-color: rgba(0, 212, 255, 0.6);
+  color: #fff;
+}
+
+.slg-link-team-channel {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.55);
+  text-align: right;
+}
+
 /* Drawer Body & Games List */
 .slg-body {
   flex: 1;

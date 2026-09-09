@@ -1,0 +1,437 @@
+/* Link Current Channel to Team modal (opened from the Live Games sidebar) */
+
+.lct-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 20000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: lct-fade-in 0.15s ease-out;
+}
+
+@keyframes lct-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.lct-dialog {
+  width: 460px;
+  max-width: calc(100vw - 32px);
+  max-height: min(720px, calc(100vh - 48px));
+  display: flex;
+  flex-direction: column;
+  background: rgba(15, 17, 26, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+  color: var(--text-primary, #fff);
+  overflow: hidden;
+  animation: lct-pop 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes lct-pop {
+  from { transform: scale(0.96) translateY(8px); opacity: 0; }
+  to { transform: scale(1) translateY(0); opacity: 1; }
+}
+
+/* Header */
+.lct-header {
+  padding: 16px 18px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+
+.lct-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.lct-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.lct-close-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.7);
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+
+.lct-close-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+}
+
+.lct-desc {
+  margin: 8px 0 0;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.lct-channel-chip {
+  margin-top: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: rgba(0, 212, 255, 0.1);
+  border: 1px solid rgba(0, 212, 255, 0.28);
+  border-radius: 20px;
+  padding: 4px 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--accent-primary, #00d4ff);
+  max-width: 100%;
+}
+
+.lct-channel-chip-icon {
+  font-size: 0.85rem;
+}
+
+.lct-channel-chip-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Body */
+.lct-body {
+  padding: 14px 18px 18px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+.lct-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.lct-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.lct-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 3px;
+}
+
+.lct-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lct-field-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.lct-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.lct-pill {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 18px;
+  padding: 5px 13px;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+
+.lct-pill:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.lct-pill.active {
+  background: rgba(0, 212, 255, 0.15);
+  border-color: rgba(0, 212, 255, 0.45);
+  color: var(--accent-primary, #00d4ff);
+}
+
+/* Team list */
+.lct-team-search {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: #fff;
+  font-size: 0.82rem;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.lct-team-search:focus {
+  border-color: rgba(0, 212, 255, 0.5);
+}
+
+.lct-team-search::placeholder {
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.lct-team-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 218px;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+.lct-team-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.lct-team-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.lct-team-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 3px;
+}
+
+.lct-team-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 7px 10px;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 0.85rem;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.12s;
+}
+
+.lct-team-row:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.lct-team-row.active {
+  background: rgba(0, 212, 255, 0.12);
+  border-color: rgba(0, 212, 255, 0.4);
+  color: #fff;
+}
+
+.lct-team-logo {
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.lct-team-logo-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.lct-team-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lct-team-check {
+  color: var(--accent-primary, #00d4ff);
+  font-weight: 700;
+  opacity: 0;
+}
+
+.lct-team-row.active .lct-team-check {
+  opacity: 1;
+}
+
+.lct-teams-state {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.82rem;
+  padding: 10px 4px;
+}
+
+.lct-retry-btn {
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  color: #fff;
+  font-size: 0.78rem;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+
+.lct-retry-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.lct-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-top-color: var(--accent-primary, #00d4ff);
+  border-radius: 50%;
+  animation: lct-spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes lct-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Slot picker */
+.lct-slots-panel {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lct-slots-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lct-slots-team-name {
+  font-size: 0.95rem;
+  font-weight: 700;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lct-slots-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.lct-slot-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 9px;
+  padding: 8px 11px;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.82rem;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.12s;
+}
+
+.lct-slot-row:not(:disabled):hover {
+  background: rgba(0, 212, 255, 0.1);
+  border-color: rgba(0, 212, 255, 0.35);
+}
+
+.lct-slot-row.primary {
+  border-left: 3px solid #ffd54d;
+}
+
+.lct-slot-row.backup {
+  border-left: 3px solid rgba(255, 255, 255, 0.2);
+}
+
+.lct-slot-badge {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+  min-width: 64px;
+}
+
+.lct-slot-row.primary .lct-slot-badge {
+  color: #ffd54d;
+}
+
+.lct-slot-row.backup .lct-slot-badge {
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.lct-slot-occupant {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.8rem;
+}
+
+.lct-slot-action {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: var(--accent-primary, #00d4ff);
+  font-size: 0.76rem;
+}
+
+.lct-slot-row.current {
+  cursor: default;
+  opacity: 0.85;
+  background: rgba(0, 212, 255, 0.06);
+}
+
+.lct-slot-row.current .lct-slot-occupant {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.lct-slot-current-label {
+  color: var(--accent-primary, #00d4ff);
+}
+
+.lct-slots-note {
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.4);
+  line-height: 1.4;
+}

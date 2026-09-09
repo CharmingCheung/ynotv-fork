@@ -2,6 +2,10 @@
   "common": {
     "errorCount_one": "{{count}} fout",
     "errorCount_other": "{{count}} fouten",
+    "errorCount_few": "{{count}} fouten",
+    "errorCount_many": "{{count}} fouten",
+    "errorCount_two": "{{count}} fouten",
+    "errorCount_zero": "{{count}} fouten",
     "add": "Toevoegen",
     "cancel": "Annuleren",
     "close": "Sluiten",
@@ -2684,6 +2688,13 @@
     "weekAgo_zero": "{{count}} weken geleden"
   },
   "sports": {
+    "linkCurrentChannelToTeam": "Huidig kanaal aan team koppelen",
+    "linkChannelToTeamDesc": "Kies een team en waar {{channel}} in de kanaallijst moet verschijnen.",
+    "linkHere": "Hier koppelen",
+    "inThisSpot": "Al hier",
+    "linkChannelFailed": "Kan het kanaal niet koppelen",
+    "linkChannelSlotsNote": "Koppelen op een bezette plek schuift dat kanaal één plek naar beneden.",
+    "sport": "Sport",
     "tabs": {
       "live": "Nu live",
       "upcoming": "Aankomend",

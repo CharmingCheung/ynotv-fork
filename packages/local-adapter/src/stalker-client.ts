@@ -875,7 +875,7 @@ export class StalkerClient {
         let hasMore = true;
         let pagesFetched = 0; // 1-indexed count of pages actually retrieved (for the "Page X of Y" display)
         let totalPages: number | undefined;
-        const BATCH_SIZE = concurrency;
+        const BATCH_SIZE = Math.max(1, Math.min(12, Math.floor(concurrency) || 4));
 
         while (hasMore) {
             // Fetch BATCH_SIZE pages in parallel
@@ -1044,7 +1044,7 @@ export class StalkerClient {
             let hasMore = true;
             let pagesFetched = 0; // 1-indexed count of pages retrieved so far
             let totalPages: number | undefined;
-            const BATCH_SIZE = concurrency;
+            const BATCH_SIZE = Math.max(1, Math.min(12, Math.floor(concurrency) || 4));
 
             while (hasMore) {
                 const batchPromises = [];

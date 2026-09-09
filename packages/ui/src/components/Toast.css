@@ -115,12 +115,12 @@
   scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
 }
 
-/* Stacked-error count badge — pinned top-right inside the toast, left of the
-   close button, while the message list scrolls beneath it. */
+/* Stacked-error count badge — sits between message and close button, pinned
+   at the top-right so the message list never overlaps it while scrolling. */
 .toast-count {
-  position: absolute;
-  top: 10px;
-  right: 42px;
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: 1px;
   font-size: 0.7rem;
   font-weight: 700;
   line-height: 1;

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import type { StoredChannel, StoredProgram } from '../db';
@@ -8,6 +8,7 @@ import { formatTime, formatDate } from '../utils/dateTime';
 import { useEpgClockFormat } from '../stores/uiStore';
 import i18n from '../i18n';
 import { ProgramContextMenu } from './ProgramContextMenu';
+import { VirtualList, type VirtualListHandle } from './common/VirtualList';
 import './ViewAllProgramsModal.css';
 
 interface ViewAllProgramsModalProps {
@@ -29,6 +30,10 @@ interface DayGroup {
   date: Date;
   programs: StoredProgram[];
 }
+
+type ViewAllRow =
+  | { type: 'header'; key: string; date: Date; count: number }
+  | { type: 'program'; key: number | string; program: StoredProgram };
 
 const MAX_PROGRAMS = 2000;
 const VIEW_ALL_BACK_MS = 45 * 24 * 60 * 60 * 1000;
@@ -136,17 +141,30 @@ export function ViewAllProgramsModal({
   const [searchQuery, setSearchQuery] = useState('');
   const [menu, setMenu] = useState<{ program: StoredProgram; x: number; y: number } | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const virtualListRef = useRef<VirtualListHandle>(null);
+  const [stickyInfo, setStickyInfo] = useState<{
+    fullDate: string;
+    relativeTag?: string;
+    isToday: boolean;
+    count: number;
+    pushOffset: number;
+  } | null>(null);
+  const scrolledKeyRef = useRef<string | null>(null);
 
   const channelId = channel?.stream_id ?? null;
   const catchupAvailable = Boolean(channel?.tv_archive) || channel?.tv_archive === 1;
 
   // Reset transient state every time the modal opens (or the channel changes).
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      scrolledKeyRef.current = null;
+      return;
+    }
     setActiveKey(null);
     setMenu(null);
     setSearchQuery('');
     setNowMs(Date.now());
+    scrolledKeyRef.current = null;
   }, [isOpen, channelId]);
 
   // Load ALL programs for the channel straight from the DB.
@@ -238,6 +256,28 @@ export function ViewAllProgramsModal({
     return formatDate(dayStart, opts);
   };
 
+  const formatFullDayHeader = (dayStart: Date) => {
+    const diffDays = Math.round((startOfDay(new Date(nowMs)) - startOfDay(dayStart)) / 86400000);
+    let relativeTag: string | undefined;
+    if (diffDays === 0) relativeTag = i18n.t('time:today', { defaultValue: 'Today' });
+    else if (diffDays === -1) relativeTag = i18n.t('time:tomorrow', { defaultValue: 'Tomorrow' });
+    else if (diffDays === 1) relativeTag = i18n.t('time:yesterday', { defaultValue: 'Yesterday' });
+
+    const opts: Intl.DateTimeFormatOptions = {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+    };
+    if (dayStart.getFullYear() !== new Date(nowMs).getFullYear()) {
+      opts.year = 'numeric';
+    }
+    return {
+      fullDate: formatDate(dayStart, opts),
+      relativeTag,
+      isToday: diffDays === 0,
+    };
+  };
+
   // Pick the initial day: the one containing the running program if any,
   // otherwise the day of "now", otherwise the earliest available day.
   useEffect(() => {
@@ -253,53 +293,255 @@ export function ViewAllProgramsModal({
     setActiveKey((runningDay ?? dayGroups.find((g) => g.key === dayKeyOf(now)) ?? dayGroups[0]).key);
   }, [isOpen, activeKey, dayGroups, nowMs]);
 
+  const basePrograms = useMemo(() => {
+    if (activeKey === 'all') return programs ?? [];
+    if (activeKey) return dayGroups.find((g) => g.key === activeKey)?.programs ?? [];
+    return [];
+  }, [activeKey, programs, dayGroups]);
+
+  const displayedPrograms = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return basePrograms;
+    return basePrograms.filter((p) =>
+      p.title?.toLowerCase().includes(q) ||
+      p.subtitle?.toLowerCase().includes(q) ||
+      p.description?.toLowerCase().includes(q)
+    );
+  }, [basePrograms, searchQuery]);
+
+  const virtualRows = useMemo<ViewAllRow[]>(() => {
+    if (!displayedPrograms || displayedPrograms.length === 0) return [];
+    if (activeKey !== 'all') {
+      return displayedPrograms.map((p) => ({
+        type: 'program',
+        key: p.id,
+        program: p,
+      }));
+    }
+
+    const rows: ViewAllRow[] = [];
+    let lastKey = '';
+    const dayCounts = new Map<string, number>();
+    for (const p of displayedPrograms) {
+      const s = toMs(p.start);
+      if (!Number.isFinite(s)) continue;
+      const k = dayKeyOf(s);
+      dayCounts.set(k, (dayCounts.get(k) ?? 0) + 1);
+    }
+
+    for (const p of displayedPrograms) {
+      const startMs = toMs(p.start);
+      if (!Number.isFinite(startMs)) continue;
+      const k = dayKeyOf(startMs);
+      if (k !== lastKey) {
+        lastKey = k;
+        rows.push({
+          type: 'header',
+          key: `sep-${k}`,
+          date: new Date(startMs),
+          count: dayCounts.get(k) ?? 0,
+        });
+      }
+      rows.push({
+        type: 'program',
+        key: p.id,
+        program: p,
+      });
+    }
+    return rows;
+  }, [activeKey, displayedPrograms]);
+
   // Scroll the running program into view when the modal opens or the tab changes.
   useEffect(() => {
-    if (!isOpen || !listRef.current || activeKey === null || searchQuery.trim()) return;
-    const list = listRef.current;
+    if (!isOpen || activeKey === null || searchQuery.trim() || virtualRows.length === 0) return;
+    if (scrolledKeyRef.current === activeKey) return;
+    scrolledKeyRef.current = activeKey;
+
+    const currentNow = Date.now();
     const raf = requestAnimationFrame(() => {
-      const activeGroup = dayGroups.find((g) => g.key === activeKey);
-      if (!activeGroup) return;
-      const running = activeGroup.programs.find((p) => {
-        const s = toMs(p.start);
-        const e = toMs(p.end);
-        return s <= nowMs && e > nowMs;
+      const runningIndex = virtualRows.findIndex((r) => {
+        if (r.type !== 'program') return false;
+        const s = toMs(r.program.start);
+        const e = toMs(r.program.end);
+        return s <= currentNow && e > currentNow;
       });
-      if (running) {
-        const els = list.querySelectorAll<HTMLElement>('[data-pid]');
-        for (const el of els) {
-          if (el.dataset.pid === String(running.id)) {
-            el.scrollIntoView({ block: 'center' });
-            return;
-          }
-        }
+      if (runningIndex !== -1 && virtualListRef.current) {
+        virtualListRef.current.scrollToIndex({ index: runningIndex, align: 'center', behavior: 'auto' });
+      } else if (listRef.current) {
+        listRef.current.scrollTop = 0;
       }
-      list.scrollTop = 0;
     });
     return () => cancelAnimationFrame(raf);
-  }, [isOpen, activeKey, dayGroups, searchQuery]);
+  }, [isOpen, activeKey, virtualRows, searchQuery]);
+
+  const updateStickyFromScroll = useCallback(() => {
+    if (activeKey !== 'all' || !listRef.current || virtualRows.length === 0) {
+      setStickyInfo(null);
+      return;
+    }
+
+    const st = listRef.current.scrollTop;
+    const virtualItems = virtualListRef.current?.getVirtualItems();
+    if (!virtualItems || virtualItems.length === 0) return;
+
+    // Find the item currently at or crossing the top of the scroll viewport.
+    const topItem = virtualItems.find((vi) => vi.start + vi.size > st) ?? virtualItems[0];
+    const topRow = virtualRows[topItem.index];
+    if (!topRow) return;
+
+    let dayDate: Date;
+    let count = 0;
+    if (topRow.type === 'header') {
+      dayDate = topRow.date;
+      count = topRow.count;
+    } else {
+      const s = toMs(topRow.program.start);
+      dayDate = new Date(s);
+      for (let i = topItem.index; i >= 0; i--) {
+        const r = virtualRows[i];
+        if (r.type === 'header') {
+          count = r.count;
+          break;
+        }
+      }
+    }
+
+    const headerDetails = formatFullDayHeader(dayDate);
+
+    // Check if the next day's header is pushing the sticky header.
+    const nextHeader = virtualItems.find(
+      (vi) => vi.index > topItem.index && virtualRows[vi.index]?.type === 'header'
+    );
+    const H = 44;
+    let pushOffset = 0;
+    if (nextHeader) {
+      const dist = nextHeader.start - st;
+      if (dist < H && dist > 0) {
+        pushOffset = dist - H;
+      }
+    }
+
+    setStickyInfo((prev) => {
+      if (
+        prev &&
+        prev.fullDate === headerDetails.fullDate &&
+        prev.relativeTag === headerDetails.relativeTag &&
+        prev.isToday === headerDetails.isToday &&
+        prev.count === count &&
+        prev.pushOffset === pushOffset
+      ) {
+        return prev;
+      }
+      return {
+        ...headerDetails,
+        count,
+        pushOffset,
+      };
+    });
+  }, [activeKey, virtualRows, nowMs]);
+
+  useEffect(() => {
+    if (activeKey !== 'all' || virtualRows.length === 0) {
+      setStickyInfo(null);
+      return;
+    }
+    const raf = requestAnimationFrame(() => {
+      updateStickyFromScroll();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [activeKey, virtualRows, updateStickyFromScroll]);
 
   if (!isOpen || !channel) return null;
 
-  const basePrograms = activeKey === 'all'
-    ? (programs ?? [])
-    : activeKey
-      ? (dayGroups.find((g) => g.key === activeKey)?.programs ?? [])
-      : [];
-
-  const displayedPrograms = searchQuery.trim()
-    ? basePrograms.filter((p) => {
-        const q = searchQuery.trim().toLowerCase();
-        return (
-          p.title?.toLowerCase().includes(q) ||
-          p.subtitle?.toLowerCase().includes(q) ||
-          p.description?.toLowerCase().includes(q)
-        );
-      })
-    : basePrograms;
-
   const timeStr = (ms: number) =>
     formatTime(new Date(ms), { hour: '2-digit', minute: '2-digit', hour12: epgClockFormat !== '24h' });
+
+  const renderProgramCard = (p: StoredProgram) => {
+    const startMs = toMs(p.start);
+    const endMs = toMs(p.end);
+    const isCurrent = startMs <= nowMs && endMs > nowMs;
+    const isPast = endMs <= nowMs;
+    const clickable = isPast && catchupAvailable && !!onPlayCatchup;
+    const dateLabel = formatDate(new Date(startMs), {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      ...(new Date(startMs).getFullYear() !== new Date(nowMs).getFullYear() ? { year: 'numeric' } : {}),
+    });
+    const tooltip = `${p.title}${p.subtitle ? `\n${p.subtitle}` : ''}\n${dateLabel} • ${timeStr(startMs)} – ${timeStr(endMs)}${p.description ? `\n\n${p.description}` : ''}${clickable ? `\n\n${i18n.t('epg:clickPlayCatchup', { defaultValue: 'Click to play catch-up' })}` : `\n\n${i18n.t('live:viewAllTip', { defaultValue: 'Right-click for recording / catch-up options' })}`}`;
+
+    const handlePlay = () => {
+      if (!clickable) return;
+      const rawStartMs = p.raw_start ? new Date(p.raw_start).getTime() : startMs;
+      const durationMins = Math.max(1, Math.round((endMs - startMs) / 60000));
+      onPlayCatchup!(channel, p.title, rawStartMs, durationMins, p.description);
+      onClose();
+    };
+
+    return (
+      <div
+        key={p.id}
+        data-pid={p.id}
+        className={`vap-card ${isCurrent ? 'is-current' : ''} ${isPast ? 'is-past' : ''} ${clickable ? 'clickable' : ''}`}
+        title={tooltip}
+        onClick={handlePlay}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setMenu({ program: p, x: e.clientX, y: e.clientY });
+        }}
+      >
+        <div className="vap-card-left">
+          <div className={`vap-time-badge ${isCurrent ? 'current' : ''}`}>
+            {timeStr(startMs)} – {timeStr(endMs)}
+          </div>
+
+          <div className="vap-card-main">
+            <div className="vap-card-title-row">
+              <span className="vap-card-title">{p.title}</span>
+              {isCurrent && (
+                <span className="vap-running-badge">
+                  {i18n.t('common:running', { defaultValue: 'Running' })}
+                </span>
+              )}
+            </div>
+            {p.subtitle && (
+              <span className="vap-card-subtitle">{p.subtitle}</span>
+            )}
+            {p.description && (
+              <span className="vap-card-desc">{p.description}</span>
+            )}
+          </div>
+        </div>
+
+        <div className="vap-card-actions" onClick={(e) => e.stopPropagation()}>
+          {clickable && (
+            <button
+              type="button"
+              className="vap-catchup-btn"
+              title={i18n.t('epg:clickPlayCatchup', { defaultValue: 'Click to play catch-up' })}
+              onClick={handlePlay}
+            >
+              <PlaySvg size={10} />
+              <span>{i18n.t('live:viewAllCatchup', { defaultValue: 'Catch-up' })}</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            className="vap-action-btn"
+            title={i18n.t('common:moreOptions', { defaultValue: 'More options' })}
+            onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              setMenu({ program: p, x: rect.left, y: rect.bottom + 4 });
+            }}
+          >
+            <MoreSvg size={13} />
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   return createPortal(
     <>
@@ -431,87 +673,80 @@ export function ViewAllProgramsModal({
               )}
             </div>
           ) : (
-            <div className="vap-content" ref={listRef}>
-              {displayedPrograms.map((p) => {
-                const startMs = toMs(p.start);
-                const endMs = toMs(p.end);
-                const isCurrent = startMs <= nowMs && endMs > nowMs;
-                const isPast = endMs <= nowMs;
-                const clickable = isPast && catchupAvailable && !!onPlayCatchup;
-                const tooltip = `${p.title}${p.subtitle ? `\n${p.subtitle}` : ''}\n${timeStr(startMs)} - ${timeStr(endMs)}${p.description ? `\n\n${p.description}` : ''}${clickable ? `\n\n${i18n.t('epg:clickPlayCatchup', { defaultValue: 'Click to play catch-up' })}` : `\n\n${i18n.t('live:viewAllTip', { defaultValue: 'Right-click for recording / catch-up options' })}`}`;
-
-                const handlePlay = () => {
-                  if (!clickable) return;
-                  const rawStartMs = p.raw_start ? new Date(p.raw_start).getTime() : startMs;
-                  const durationMins = Math.max(1, Math.round((endMs - startMs) / 60000));
-                  onPlayCatchup!(channel, p.title, rawStartMs, durationMins, p.description);
-                  onClose();
-                };
-
-                return (
-                  <div
-                    key={p.id}
-                    data-pid={p.id}
-                    className={`vap-card ${isCurrent ? 'is-current' : ''} ${isPast ? 'is-past' : ''} ${clickable ? 'clickable' : ''}`}
-                    title={tooltip}
-                    onClick={handlePlay}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setMenu({ program: p, x: e.clientX, y: e.clientY });
-                    }}
-                  >
-                    <div className="vap-card-left">
-                      <div className={`vap-time-badge ${isCurrent ? 'current' : ''}`}>
-                        {timeStr(startMs)} – {timeStr(endMs)}
-                      </div>
-
-                      <div className="vap-card-main">
-                        <div className="vap-card-title-row">
-                          <span className="vap-card-title">{p.title}</span>
-                          {isCurrent && (
-                            <span className="vap-running-badge">
-                              {i18n.t('common:running', { defaultValue: 'Running' })}
-                            </span>
-                          )}
-                        </div>
-                        {p.subtitle && (
-                          <span className="vap-card-subtitle">{p.subtitle}</span>
-                        )}
-                        {p.description && (
-                          <span className="vap-card-desc">{p.description}</span>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="vap-card-actions" onClick={(e) => e.stopPropagation()}>
-                      {clickable && (
-                        <button
-                          type="button"
-                          className="vap-catchup-btn"
-                          title={i18n.t('epg:clickPlayCatchup', { defaultValue: 'Click to play catch-up' })}
-                          onClick={handlePlay}
-                        >
-                          <PlaySvg size={10} />
-                          <span>{i18n.t('live:viewAllCatchup', { defaultValue: 'Catch-up' })}</span>
-                        </button>
+            <div className="vap-content" ref={listRef} onScroll={updateStickyFromScroll}>
+              {activeKey === 'all' && stickyInfo && (
+                <div
+                  className="vap-sticky-header-container"
+                  style={{
+                    transform: stickyInfo.pushOffset ? `translateY(${stickyInfo.pushOffset}px)` : undefined,
+                  }}
+                >
+                  <div className={`vap-day-separator ${stickyInfo.isToday ? 'is-today' : ''}`}>
+                    <div className="vap-day-separator-left">
+                      <span className="vap-day-separator-icon">
+                        <CalendarSvg size={14} />
+                      </span>
+                      <span className="vap-day-separator-title">{stickyInfo.fullDate}</span>
+                      {stickyInfo.relativeTag && (
+                        <span className={`vap-day-separator-badge ${stickyInfo.isToday ? 'today' : 'other'}`}>
+                          {stickyInfo.relativeTag}
+                        </span>
                       )}
-
-                      <button
-                        type="button"
-                        className="vap-action-btn"
-                        title={i18n.t('common:moreOptions', { defaultValue: 'More options' })}
-                        onClick={(e) => {
-                          const rect = e.currentTarget.getBoundingClientRect();
-                          setMenu({ program: p, x: rect.left, y: rect.bottom + 4 });
-                        }}
-                      >
-                        <MoreSvg size={13} />
-                      </button>
+                    </div>
+                    <div className="vap-day-separator-right">
+                      <span className="vap-day-separator-count">
+                        {i18n.t('common:programsCount', { count: stickyInfo.count })}
+                      </span>
                     </div>
                   </div>
-                );
-              })}
+                </div>
+              )}
+
+              <VirtualList
+                key={`vap-vlist-${activeKey}-${channel.stream_id}`}
+                ref={virtualListRef}
+                scrollRef={listRef}
+                items={virtualRows}
+                estimateItemHeight={(index) => (virtualRows[index]?.type === 'header' ? 48 : 62)}
+                overscan={8}
+                onVirtualItemsChange={updateStickyFromScroll}
+                getKey={(row) => row.key}
+                renderItem={(row, index) => {
+                  if (row.type === 'header') {
+                    const headerInfo = formatFullDayHeader(row.date);
+                    return (
+                      <div
+                        className={`vap-virtual-row header ${index === 0 ? 'first-row' : ''}`}
+                        style={index === 0 ? { visibility: 'hidden' } : undefined}
+                      >
+                        <div className={`vap-day-separator ${headerInfo.isToday ? 'is-today' : ''}`}>
+                          <div className="vap-day-separator-left">
+                            <span className="vap-day-separator-icon">
+                              <CalendarSvg size={14} />
+                            </span>
+                            <span className="vap-day-separator-title">{headerInfo.fullDate}</span>
+                            {headerInfo.relativeTag && (
+                              <span className={`vap-day-separator-badge ${headerInfo.isToday ? 'today' : 'other'}`}>
+                                {headerInfo.relativeTag}
+                              </span>
+                            )}
+                          </div>
+                          <div className="vap-day-separator-right">
+                            <span className="vap-day-separator-count">
+                              {i18n.t('common:programsCount', { count: row.count })}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div className={`vap-virtual-row ${index === 0 ? 'first-row' : ''}`}>
+                      {renderProgramCard(row.program)}
+                    </div>
+                  );
+                }}
+              />
             </div>
           )}
 

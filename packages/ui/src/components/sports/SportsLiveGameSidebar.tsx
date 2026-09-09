@@ -20,6 +20,7 @@ import {
 import { applyTvFocus } from '../../services/spatialNavigation';
 import { useUIStore } from '../../stores/uiStore';
 import { GameDetail } from './GameDetail';
+import { LinkChannelToTeamModal } from './LinkChannelToTeamModal';
 import './SportsLiveGameSidebar.css';
 
 interface SportsLiveGameSidebarProps {
@@ -538,6 +539,7 @@ export function SportsLiveGameSidebar({
   const { t } = useTranslation('sports');
   const [selectedLeague, setSelectedLeague] = useState<string>('all');
   const [selectedEventForDetail, setSelectedEventForDetail] = useState<SportsEvent | null>(null);
+  const [linkChannelOpen, setLinkChannelOpen] = useState(false);
 
   const { liveLeagues, loaded, loadSettings } = useSportsSettingsStore();
   const { ensureLoaded: ensureTeamLinksLoaded } = useTeamChannelLinks();
@@ -764,6 +766,27 @@ export function SportsLiveGameSidebar({
           )}
         </div>
 
+        {/* Link current channel to a team — shown at the top of the pullout
+            while a live channel is playing so it is one hover away. */}
+        {currentChannel && (
+          <div className="slg-link-team-bar">
+            <button
+              className="slg-link-team-btn"
+              onClick={() => setLinkChannelOpen(true)}
+              title={t('linkCurrentChannelToTeam', 'Link Current Channel to Team')}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+              </svg>
+              <span>{t('linkCurrentChannelToTeam', 'Link Current Channel to Team')}</span>
+            </button>
+            <span className="slg-link-team-channel" title={currentChannel.alias || currentChannel.name}>
+              {currentChannel.alias || currentChannel.name}
+            </span>
+          </div>
+        )}
+
         {/* Drawer Body */}
         <div className="slg-body">
           {filteredEvents.length > 0 ? (
@@ -799,6 +822,11 @@ export function SportsLiveGameSidebar({
           onPlayChannel={onChannelClick}
           onChannelClick={onChannelClickName}
         />
+      )}
+
+      {/* Link Current Channel to Team Modal */}
+      {linkChannelOpen && currentChannel && (
+        <LinkChannelToTeamModal channel={currentChannel} onClose={() => setLinkChannelOpen(false)} />
       )}
     </>
   );

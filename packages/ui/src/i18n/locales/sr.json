@@ -1,7 +1,11 @@
 {
   "common": {
     "errorCount_one": "{{count}} грешка",
-    "errorCount_other": "{{count}} грешке",
+    "errorCount_other": "{{count}} грешака",
+    "errorCount_few": "{{count}} грешке",
+    "errorCount_many": "{{count}} грешака",
+    "errorCount_two": "{{count}} грешке",
+    "errorCount_zero": "{{count}} грешака",
     "add": "Додај",
     "cancel": "Откажи",
     "close": "Затвори",
@@ -2684,6 +2688,13 @@
     "weekAgo_zero": "пре {{count}} недеље"
   },
   "sports": {
+    "linkCurrentChannelToTeam": "Повежи тренутни канал са тимом",
+    "linkChannelToTeamDesc": "Изаберите тим, а затим где ће се {{channel}} налазити у његовој листи канала.",
+    "linkHere": "Повежи овде",
+    "inThisSpot": "Већ је овде",
+    "linkChannelFailed": "Неуспешно повезивање канала",
+    "linkChannelSlotsNote": "Повезивање на заузето место помера тај канал једно место ниже.",
+    "sport": "Спорт",
     "tabs": {
       "live": "Уживо",
       "upcoming": "Надолазеће",

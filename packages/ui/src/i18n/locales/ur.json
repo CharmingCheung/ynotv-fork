@@ -2,6 +2,10 @@
   "common": {
     "errorCount_one": "{{count}} خرابی",
     "errorCount_other": "{{count}} خرابیاں",
+    "errorCount_few": "{{count}} خرابیاں",
+    "errorCount_many": "{{count}} خرابیاں",
+    "errorCount_two": "{{count}} خرابیاں",
+    "errorCount_zero": "{{count}} خرابیاں",
     "add": "شامل کریں",
     "cancel": "منسوخ کریں",
     "close": "بند کریں",
@@ -2684,6 +2688,13 @@
     "weekAgo_zero": "{{count}} ہفتے پہلے"
   },
   "sports": {
+    "linkCurrentChannelToTeam": "موجودہ چینل کو ٹیم سے منسلک کریں",
+    "linkChannelToTeamDesc": "ایک ٹیم منتخب کریں، پھر بتائیں کہ {{channel}} اس کی چینل فہرست میں کہاں آئے۔",
+    "linkHere": "یہاں منسلک کریں",
+    "inThisSpot": "اسی جگہ ہے",
+    "linkChannelFailed": "چینل منسلک نہیں ہو سکا",
+    "linkChannelSlotsNote": "بھری ہوئی جگہ پر منسلک کرنے سے وہ چینل ایک جگہ نیچے چلا جاتا ہے۔",
+    "sport": "کھیل",
     "tabs": {
       "live": "ابھی لائیو",
       "upcoming": "آئندہ",

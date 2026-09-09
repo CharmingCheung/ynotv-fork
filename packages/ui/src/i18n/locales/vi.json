@@ -65,6 +65,10 @@
   "common": {
     "errorCount_one": "{{count}} lỗi",
     "errorCount_other": "{{count}} lỗi",
+    "errorCount_few": "{{count}} lỗi",
+    "errorCount_many": "{{count}} lỗi",
+    "errorCount_two": "{{count}} lỗi",
+    "errorCount_zero": "{{count}} lỗi",
     "add": "Thêm",
     "cancel": "Hủy",
     "close": "Đóng",
@@ -3703,6 +3707,13 @@
     }
   },
   "sports": {
+    "linkCurrentChannelToTeam": "Liên kết kênh hiện tại với đội",
+    "linkChannelToTeamDesc": "Chọn một đội, rồi chọn vị trí của {{channel}} trong danh sách kênh của đội đó.",
+    "linkHere": "Liên kết tại đây",
+    "inThisSpot": "Đã ở vị trí này",
+    "linkChannelFailed": "Không liên kết được kênh",
+    "linkChannelSlotsNote": "Liên kết vào vị trí đã có kênh sẽ đẩy kênh đó xuống một bậc.",
+    "sport": "Thể thao",
     "tabs": {
       "live": "Trực Tiếp",
       "upcoming": "Sắp Tới",

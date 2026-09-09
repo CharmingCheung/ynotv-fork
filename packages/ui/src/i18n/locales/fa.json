@@ -2,6 +2,10 @@
   "common": {
     "errorCount_one": "{{count}} خطا",
     "errorCount_other": "{{count}} خطا",
+    "errorCount_few": "{{count}} خطا",
+    "errorCount_many": "{{count}} خطا",
+    "errorCount_two": "{{count}} خطا",
+    "errorCount_zero": "{{count}} خطا",
     "add": "افزودن",
     "cancel": "انصراف",
     "close": "بستن",
@@ -2684,6 +2688,13 @@
     "weekAgo_zero": "{{count}} هفته پیش"
   },
   "sports": {
+    "linkCurrentChannelToTeam": "اتصال کانال فعلی به تیم",
+    "linkChannelToTeamDesc": "یک تیم انتخاب کنید، سپس محل {{channel}} را در فهرست کانال‌های آن مشخص کنید.",
+    "linkHere": "اتصال در اینجا",
+    "inThisSpot": "هم‌اکنون اینجاست",
+    "linkChannelFailed": "اتصال کانال ناموفق بود",
+    "linkChannelSlotsNote": "اتصال به جایگاه اشغال‌شده، آن کانال را یک ردیف پایین می‌برد.",
+    "sport": "ورزش",
     "tabs": {
       "live": "زنده اکنون",
       "upcoming": "آینده",

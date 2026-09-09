@@ -2,6 +2,10 @@
   "common": {
     "errorCount_one": "{{count}} hata",
     "errorCount_other": "{{count}} hata",
+    "errorCount_few": "{{count}} hata",
+    "errorCount_many": "{{count}} hata",
+    "errorCount_two": "{{count}} hata",
+    "errorCount_zero": "{{count}} hata",
     "add": "Ekle",
     "cancel": "İptal",
     "close": "Kapat",
@@ -2684,6 +2688,13 @@
     "weekAgo_zero": "{{count}} hafta önce"
   },
   "sports": {
+    "linkCurrentChannelToTeam": "Geçerli kanalı takıma bağla",
+    "linkChannelToTeamDesc": "Bir takım seçin ve {{channel}} kanalının o takımın kanal listesinde nerede olacağını belirleyin.",
+    "linkHere": "Buraya bağla",
+    "inThisSpot": "Zaten burada",
+    "linkChannelFailed": "Kanal bağlanamadı",
+    "linkChannelSlotsNote": "Dolu bir konuma bağlamak, o kanalı bir sıra aşağı kaydırır.",
+    "sport": "Spor",
     "tabs": {
       "live": "Canlı Şimdi",
       "upcoming": "Yaklaşan",
