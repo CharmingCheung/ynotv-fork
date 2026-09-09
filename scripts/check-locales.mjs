@@ -206,6 +206,9 @@ const UNTRANSLATED_ALLOWLIST = new Set([
   'es:vod.local', 'pt-BR:vod.local', 'es:stremio.local', 'pt-BR:stremio.local',
   // Spanish singular for the error-count badge is the same word as English
   'es:common.errorCount_one',
+  // French "source"/"sources" for the show-source count hint is the same word
+  'fr:common.sourcesCount_one', 'fr:common.sourcesCount_other', 'fr:common.sourcesCount_few',
+  'fr:common.sourcesCount_many', 'fr:common.sourcesCount_two', 'fr:common.sourcesCount_zero',
   'es:settings.navigation.showVodLocal', 'pt-BR:settings.navigation.showVodLocal',
   // per-locale exceptions: the English word is already the correct translation
   // (Dutch "Recent", German "Episode", French "Pause"/"Auto")

@@ -2775,6 +2775,118 @@ const INIT_SCRIPT: &str = r##"
         } catch (e) {}
     })();
 
+    // Intercept capability probes so jellyfin-web's client-side detection (browserDeviceProfile.js)
+    // treats this environment as fully capable of direct playback for all common codecs/containers.
+    (function patchCanPlayType() {
+        try {
+            var origCanPlay = HTMLMediaElement.prototype.canPlayType;
+            if (!origCanPlay || origCanPlay.__ynotvPatched) return;
+            var wrapper = function (type) {
+                if (typeof type === 'string') {
+                    var lower = type.toLowerCase();
+                    if (/video\/(?:x-matroska|mkv|mp4|webm|avi|quicktime|x-msvideo|x-ms-wmv|mpeg|mp2t)/i.test(lower) ||
+                        /audio\/(?:x-matroska|mkv|mp4|webm|aac|mp3|opus|ogg|flac|wav|vnd\.dlna\.adts|ac3|eac3|dts|truehd)/i.test(lower) ||
+                        /codecs=["']?[^"']*(?:hevc|hvc1|hev1|av01|vp9|vp8|h264|avc1|dts|truehd|ac-3|ec-3|opus|flac)/i.test(lower)) {
+                        return 'probably';
+                    }
+                }
+                return origCanPlay.apply(this, arguments);
+            };
+            wrapper.__ynotvPatched = true;
+            HTMLMediaElement.prototype.canPlayType = wrapper;
+        } catch (e) {}
+    })();
+
+    // -------------------------------------------------------------------------
+    // MPV DirectPlay Profile Injection
+    // -------------------------------------------------------------------------
+    // jellyfin-web sends a browser DeviceProfile in /PlaybackInfo requests that
+    // reflects HTML5 video constraints (often lacking MKV, HEVC, DTS, TrueHD,
+    // ASS subtitles). The Jellyfin server evaluates that profile and forces
+    // ffmpeg transcoding or errors out if the user has transcoding disabled.
+    //
+    // By augmenting the outgoing DeviceProfile to advertise full MPV capabilities
+    // (matching Jellyfin Media Player / JMP's getDeviceProfile), the server
+    // knows the client can DirectPlay any container, video codec, audio codec,
+    // and subtitle format. The server returns DirectStreamUrl immediately with
+    // no ffmpeg transcoding jobs.
+    function getMpvDeviceProfile(baseProfile) {
+        var profile = (baseProfile && typeof baseProfile === 'object') ? baseProfile : {};
+        profile.Name = 'ynoTV (MPV)';
+        profile.MaxStreamingBitrate = 1000000000;
+        profile.MaxStaticBitrate = 1000000000;
+        profile.MusicStreamingTranscodingBitrate = 1280000;
+        profile.TimelineOffsetSeconds = 5;
+
+        // In Jellyfin, omitting Container and Codec on { Type: 'Video' } signifies
+        // that ANY container and ANY video/audio codec can be Direct Played natively.
+        profile.DirectPlayProfiles = [
+            { Type: 'Audio' },
+            { Type: 'Photo' },
+            { Type: 'Video' }
+        ];
+
+        profile.TranscodingProfiles = [
+            { Type: 'Audio' },
+            {
+                Container: 'ts',
+                Type: 'Video',
+                Protocol: 'hls',
+                AudioCodec: 'aac,mp3,ac3,opus,vorbis',
+                VideoCodec: 'h264,h265,hevc,mpeg4,mpeg2video',
+                MaxAudioChannels: '6'
+            },
+            { Container: 'jpeg', Type: 'Photo' }
+        ];
+
+        profile.ResponseProfiles = [];
+        profile.ContainerProfiles = [];
+        profile.CodecProfiles = [];
+
+        profile.SubtitleProfiles = [
+            { Format: 'srt', Method: 'External' },
+            { Format: 'srt', Method: 'Embed' },
+            { Format: 'ass', Method: 'External' },
+            { Format: 'ass', Method: 'Embed' },
+            { Format: 'sub', Method: 'Embed' },
+            { Format: 'sub', Method: 'External' },
+            { Format: 'ssa', Method: 'Embed' },
+            { Format: 'ssa', Method: 'External' },
+            { Format: 'smi', Method: 'Embed' },
+            { Format: 'smi', Method: 'External' },
+            { Format: 'pgssub', Method: 'Embed' },
+            { Format: 'dvdsub', Method: 'Embed' },
+            { Format: 'dvbsub', Method: 'Embed' },
+            { Format: 'pgs', Method: 'Embed' },
+            { Format: 'vtt', Method: 'Embed' },
+            { Format: 'vtt', Method: 'External' },
+            { Format: 'subrip', Method: 'Embed' },
+            { Format: 'subrip', Method: 'External' }
+        ];
+
+        return profile;
+    }
+
+    function injectMpvDeviceProfile(body) {
+        if (!body) return body;
+        try {
+            var isString = typeof body === 'string';
+            var data = isString ? JSON.parse(body) : body;
+            if (data && typeof data === 'object') {
+                data.DeviceProfile = getMpvDeviceProfile(data.DeviceProfile);
+                if (data.MaxStreamingBitrate == null || data.MaxStreamingBitrate < 1000000000) {
+                    data.MaxStreamingBitrate = 1000000000;
+                }
+                if (data.EnableDirectPlay !== undefined) data.EnableDirectPlay = true;
+                if (data.EnableDirectStream !== undefined) data.EnableDirectStream = true;
+                return isString ? JSON.stringify(data) : data;
+            }
+        } catch (e) {
+            diag('inject-mpv-profile-error', String(e));
+        }
+        return body;
+    }
+
     // Observe network calls used by Jellyfin to obtain PlaybackInfo/MediaStreams.
     // This captures the requested subtitle/audio stream choices from PlaybackInfo requests.
     function resolveCapturedHlsUrl(targetUrl) {
@@ -2835,7 +2947,13 @@ const INIT_SCRIPT: &str = r##"
                     var init = arguments[1];
                     var url = typeof request === 'string' ? request : (request && request.url) || '';
                     var reqBody = (init && init.body) || (request && request.body) || null;
-                    if (/PlaybackInfo/i.test(url)) recordPlaybackInfoReq(url, reqBody);
+                    if (/PlaybackInfo/i.test(url)) {
+                        if (init && init.body) {
+                            init.body = injectMpvDeviceProfile(init.body);
+                            reqBody = init.body;
+                        }
+                        recordPlaybackInfoReq(url, reqBody);
+                    }
                     recordHlsRequest(url);
                     if (/\/Sessions\/Playing(\/Progress|\/Stopped)?(?:\?|$)/i.test(url)) {
                         diag('suppressed-web-session-report', { url: url });
@@ -2929,9 +3047,10 @@ const INIT_SCRIPT: &str = r##"
                         return;
                     }
                     if (this.__ynotvUrl && /PlaybackInfo/i.test(this.__ynotvUrl)) {
+                        body = injectMpvDeviceProfile(body);
                         recordPlaybackInfoReq(this.__ynotvUrl, body);
                     }
-                    return originalSend.apply(this, arguments);
+                    return originalSend.call(this, body);
                 };
                 wrappedSend.__ynotvPatched = true;
                 XMLHttpRequest.prototype.send = wrappedSend;
@@ -3081,6 +3200,8 @@ const INIT_SCRIPT: &str = r##"
             buildPlayableUrl: buildPlayableUrl,
             findMediaSegment: findMediaSegment,
             extractMediaItemId: extractMediaItemId,
+            getMpvDeviceProfile: getMpvDeviceProfile,
+            injectMpvDeviceProfile: injectMpvDeviceProfile,
             seedPlaybackInfo: function (itemId, body) {
                 playbackInfo = body;
                 lastPlaybackInfoAt = Date.now();

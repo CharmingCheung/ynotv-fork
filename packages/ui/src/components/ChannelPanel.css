@@ -869,7 +869,11 @@
   background: var(--guide-btn-hover-bg, var(--surface-hover, rgba(255, 255, 255, 0.15)));
   border-color: var(--guide-btn-hover-border-color, var(--accent-primary, rgba(255, 255, 255, 0.35)));
   color: var(--guide-btn-hover-color, var(--text-primary, white));
-  padding: 6px 10px;
+  /* Keep the hover padding identical to the resting padding (same
+     --guide-btn-padding var) — a wider hovered button at a wrap boundary
+     reflows to the next row, moving out from under the cursor and looping
+     forever (pop up/down). Emphasis comes from background/border instead. */
+  padding: var(--guide-btn-padding, 6px 8px);
   transform: var(--guide-btn-hover-transform, none);
   box-shadow: var(--guide-btn-hover-shadow, none);
 }
@@ -887,6 +891,44 @@
 
 .guide-header-left button:hover .btn-label {
   max-width: 180px;
+  opacity: 1;
+  margin-left: 6px;
+}
+
+/* Source-count hint on the show-source button (multi-source categories only):
+   slides in with the label on hover, styled as a small pill. */
+.guide-header-left button .guide-source-count-hint {
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: max-width 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease, margin 0.2s ease;
+  margin-left: 0;
+  display: inline-block;
+  vertical-align: middle;
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--guide-btn-color, var(--text-secondary, rgba(255, 255, 255, 0.8)));
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 1px 6px;
+  line-height: 1.4;
+}
+.guide-header-left button:hover .guide-source-count-hint {
+  max-width: 180px;
+  opacity: 1;
+  margin-left: 6px;
+}
+
+/* 3-column strip header: keep the button labels AND the source-count hint
+   visible at all times. The icon-expansion-on-hover (max-width 0 -> 180px)
+   made a hovered button at the narrow strip's wrap boundary drop to a second
+   row, moving it out from under the cursor, collapsing back, and looping
+   forever (pop up/down into a 2nd row). A constant footprint means hovering
+   never reflows the header. */
+.guide-panel.alt-view-active .guide-header-left button .btn-label,
+.guide-panel.alt-view-active .guide-header-left button .guide-source-count-hint {
+  max-width: none;
   opacity: 1;
   margin-left: 6px;
 }
@@ -2683,7 +2725,7 @@ html.epg-disable-channel-fade .guide-channels {
   .guide-refresh-source-btn,
   .guide-epg-shift-btn,
   .guide-now-btn {
-    padding: 2px 8px;
+    padding: var(--guide-btn-padding, 2px 8px);
     font-size: 0.68rem;
     gap: 4px;
   }

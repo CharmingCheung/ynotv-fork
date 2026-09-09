@@ -520,6 +520,20 @@ export function ChannelPanel({
   const shouldSkipGrid = !visible || isSearchMode || isWatchlistMode || allChannelsCapped;
   const channels = useChannels(categoryId, channelSortOrder, { skip: shouldSkipGrid });
 
+  // Distinct non-empty source ids in the current category. Used to decide
+  // whether the show-source toggle is worth offering (multi-source categories
+  // only) and to show a small count hint on the button. Computed synchronously
+  // from the already-loaded channel list — no extra query, so deciding whether
+  // the button is needed adds no delay.
+  const categorySourceCount = useMemo(() => {
+    const seen = new Set<string>();
+    for (const ch of channels) {
+      if (ch.source_id) seen.add(ch.source_id);
+    }
+    return seen.size;
+  }, [channels]);
+  const categorySpansMultipleSources = categorySourceCount > 1;
+
   // Channel Search Filter
   const [channelSearchQuery, setChannelSearchQuery] = useState('');
   const [channelSearchFocused, setChannelSearchFocused] = useState(false);
@@ -844,6 +858,15 @@ export function ChannelPanel({
 
   const [showCustomPlaylistName, setShowCustomPlaylistName] = useState(() => {
     const saved = localStorage.getItem('showCustomPlaylistName');
+    return saved === 'true';
+  });
+
+  // Show-source toggle for ordinary categories (All Channels, or a regular
+  // source category that mixes channels from several playlists, e.g. via the
+  // playlist editor). Only surfaced when the category actually spans multiple
+  // sources — see categorySpansMultipleSources below.
+  const [showCategorySourceName, setShowCategorySourceName] = useState(() => {
+    const saved = localStorage.getItem('showCategorySourceName');
     return saved === 'true';
   });
 
@@ -3613,6 +3636,30 @@ export function ChannelPanel({
                     <span className="btn-label">{t('showSource')}</span>
                   </button>
                 )}
+                {/* Ordinary categories (e.g. All Channels, or a regular source
+                    category with channels added from other playlists via the
+                    playlist editor): offer the show-source toggle only when the
+                    category's channels span more than one source — a single-source
+                    category would just show the same name on every channel. */}
+                {categoryId !== '__favorites__' && categoryId !== '__recent__' && !isCustomCategory && categorySpansMultipleSources && (
+                  <button
+                    className={`guide-manage-channels-btn ${showCategorySourceName ? 'active-toggle' : ''}`}
+                    onClick={() => {
+                      const newVal = !showCategorySourceName;
+                      setShowCategorySourceName(newVal);
+                      localStorage.setItem('showCategorySourceName', String(newVal));
+                    }}
+                    title={`${t('showPlaylistName')} — ${i18n.t('common:sourcesCount', { count: categorySourceCount })}`}
+                  >
+                    <span style={{ flexShrink: 0 }}>{showCategorySourceName ? '📋' : '📄'}</span>
+                    <span className="btn-label">{t('showSource')}</span>
+                    {/* Why this button is offered: the category mixes channels
+                        from several playlists. */}
+                    <span className="guide-source-count-hint">
+                      {i18n.t('common:sourcesCount', { count: categorySourceCount })}
+                    </span>
+                  </button>
+                )}
                 {!epgThreeColumn && renderGuideManageButtons()}
               </>
             )}
@@ -4134,7 +4181,7 @@ export function ChannelPanel({
                         onPlayInExternal,
                         currentChannel,
                         highlightChannel,
-                        showPlaylistName: categoryId === '__recent__' ? showRecentPlaylistName : categoryId === '__favorites__' ? showFavPlaylistName : isCustomCategory ? showCustomPlaylistName : false,
+                        showPlaylistName: categoryId === '__recent__' ? showRecentPlaylistName : categoryId === '__favorites__' ? showFavPlaylistName : isCustomCategory ? showCustomPlaylistName : categorySpansMultipleSources ? showCategorySourceName : false,
                         sourceNames,
                         epgMetadataBadgeResolution,
                         epgMetadataBadgeFps,

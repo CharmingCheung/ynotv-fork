@@ -272,15 +272,27 @@ export const ChannelRow = memo(function ChannelRow({
             )}
           </span>
           {altView ? (
-            currentProgramInfo ? (
-              <span className="guide-channel-alt-program-title" title={currentProgramInfo.program.title}>
-                {currentProgramInfo.program.title}
-              </span>
-            ) : (
-              <span className="guide-channel-alt-no-program">
-                {i18n.t('common:noProgramInfo', { defaultValue: 'No Program Information' })}
-              </span>
-            )
+            <>
+              {currentProgramInfo ? (
+                <span className="guide-channel-alt-program-title" title={currentProgramInfo.program.title}>
+                  {currentProgramInfo.program.title}
+                </span>
+              ) : (
+                <span className="guide-channel-alt-no-program">
+                  {i18n.t('common:noProgramInfo', { defaultValue: 'No Program Information' })}
+                </span>
+              )}
+              {/* Playlist/source name line, matching the non-3-column rows:
+                  shown under the program title when the show-source toggle is on. */}
+              {isPlaylistNameShown && (
+                <span
+                  className="guide-channel-playlist-name"
+                  title={channel.source_category_display || channel.source_name || sourceNames?.get(channel.source_id) || channel.source_id}
+                >
+                  {channel.source_category_display || channel.source_name || sourceNames?.get(channel.source_id) || channel.source_id}
+                </span>
+              )}
+            </>
           ) : isPlaylistNameShown && (
             <span
               className="guide-channel-playlist-name"

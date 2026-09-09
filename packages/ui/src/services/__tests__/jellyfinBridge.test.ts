@@ -28,6 +28,8 @@ interface BridgeInternals {
     resolveCapturedHlsUrl: (url: string) => string;
     findMediaSegment: (url: string) => { type: 'Videos' | 'Audio'; itemId: string } | null;
     extractMediaItemId: (url: string) => string | null;
+    getMpvDeviceProfile: (baseProfile?: any) => any;
+    injectMpvDeviceProfile: (body: any) => any;
     seedPlaybackInfo: (itemId: string | null, body: any) => void;
     seedPlaybackInfoReq: (req: any) => void;
     seedHlsStream: (s: any) => void;
@@ -36,6 +38,7 @@ interface BridgeInternals {
 interface LoadedBridge {
     internals: BridgeInternals;
     window: any;
+    HTMLMediaElement: any;
 }
 
 /**
@@ -115,6 +118,9 @@ function loadBridge(opts: BridgeLoadOptions = {}): LoadedBridge {
     (HTMLMediaElementMock as any).prototype.play = function () {
         return Promise.resolve();
     };
+    (HTMLMediaElementMock as any).prototype.canPlayType = function () {
+        return '';
+    };
     class XMLHttpRequestMock {
         open() {}
         send() {}
@@ -154,7 +160,7 @@ function loadBridge(opts: BridgeLoadOptions = {}): LoadedBridge {
             'bridge internals not exposed — the init script likely threw at load; add the missing mock',
         );
     }
-    return { internals: win.__ynotvJfInternals as BridgeInternals, window: win };
+    return { internals: win.__ynotvJfInternals as BridgeInternals, window: win, HTMLMediaElement: HTMLMediaElementMock };
 }
 
 describe('jellyfin bridge item isolation', () => {
@@ -487,6 +493,71 @@ describe('jellyfin bridge item isolation', () => {
             for (const fn of rec.intervals.slice(intervalsStart)) fn();
             expect(rec.timeouts.length).toBe(timeoutsStart + 1);
             expect(rec.reloads).toBe(1);
+        });
+    });
+
+    describe('MPV DeviceProfile & DirectPlay injection', () => {
+        it('injects unrestricted DirectPlayProfiles and high bitrate into PlaybackInfo payload', () => {
+            const b = loadBridge();
+            const rawBody = JSON.stringify({
+                UserId: 'user-123',
+                DeviceProfile: {
+                    Name: 'Jellyfin Web',
+                    DirectPlayProfiles: [{ Container: 'mp4', Type: 'Video', VideoCodec: 'h264', AudioCodec: 'aac' }],
+                },
+            });
+
+            const mutated = b.internals.injectMpvDeviceProfile(rawBody);
+            expect(typeof mutated).toBe('string');
+            const parsed = JSON.parse(mutated);
+
+            expect(parsed.UserId).toBe('user-123');
+            expect(parsed.MaxStreamingBitrate).toBeGreaterThanOrEqual(1000000000);
+            expect(parsed.DeviceProfile.Name).toBe('ynoTV (MPV)');
+            expect(parsed.DeviceProfile.MaxStaticBitrate).toBe(1000000000);
+            // Must contain unrestricted Video/Audio/Photo DirectPlayProfiles
+            expect(parsed.DeviceProfile.DirectPlayProfiles).toEqual([
+                { Type: 'Audio' },
+                { Type: 'Photo' },
+                { Type: 'Video' },
+            ]);
+            // SubtitleProfiles must include all common formats with Embed and External
+            const subs = parsed.DeviceProfile.SubtitleProfiles;
+            expect(subs.some((s: any) => s.Format === 'ass' && s.Method === 'Embed')).toBe(true);
+            expect(subs.some((s: any) => s.Format === 'ass' && s.Method === 'External')).toBe(true);
+            expect(subs.some((s: any) => s.Format === 'pgs' && s.Method === 'Embed')).toBe(true);
+            expect(subs.some((s: any) => s.Format === 'srt' && s.Method === 'Embed')).toBe(true);
+        });
+
+        it('handles object input and sets direct play flags when present', () => {
+            const b = loadBridge();
+            const input = {
+                Id: 'item-123',
+                EnableDirectPlay: false,
+                EnableDirectStream: false,
+            };
+
+            const mutated = b.internals.injectMpvDeviceProfile(input);
+            expect(mutated.Id).toBe('item-123');
+            expect(mutated.EnableDirectPlay).toBe(true);
+            expect(mutated.EnableDirectStream).toBe(true);
+            expect(mutated.DeviceProfile.DirectPlayProfiles).toEqual([
+                { Type: 'Audio' },
+                { Type: 'Photo' },
+                { Type: 'Video' },
+            ]);
+        });
+
+        it('patches canPlayType to return probably for MKV, HEVC, and DTS formats', () => {
+            const b = loadBridge();
+            const canPlay = b.HTMLMediaElement.prototype.canPlayType;
+
+            expect(canPlay('video/x-matroska')).toBe('probably');
+            expect(canPlay('video/mp4; codecs="hevc,hvc1"')).toBe('probably');
+            expect(canPlay('video/mp4; codecs="av01"')).toBe('probably');
+            expect(canPlay('audio/mp4; codecs="dts"')).toBe('probably');
+            expect(canPlay('audio/mp4; codecs="truehd"')).toBe('probably');
+            expect(canPlay('audio/unknown-codec')).toBe('');
         });
     });
 });
