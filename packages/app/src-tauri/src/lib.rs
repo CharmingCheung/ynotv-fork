@@ -5534,6 +5534,7 @@ pub fn run() {
             web_server::web_serve_stop,
             web_server::remote_ws_broadcast,
             // Embedded Jellyfin child WebView commands
+            jellyfin_web::jellyfin_machine_name,
             jellyfin_web::jellyfin_embed_open,
             jellyfin_web::jellyfin_embed_resize,
             jellyfin_web::jellyfin_embed_close,

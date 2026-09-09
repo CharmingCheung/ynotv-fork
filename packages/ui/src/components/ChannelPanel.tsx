@@ -3203,6 +3203,24 @@ export function ChannelPanel({
           end, which moved out of the strip header. */}
       <div className="guide-alt-toolbar">
         {renderGuideManageButtons()}
+        {/* Manage Favorites (3-column home of the action, moved out of the
+            strip header): reorder/remove the favorites for this source. */}
+        {(categoryId === '__favorites__' || categoryId?.startsWith('__favsrc_')) && (
+          <button
+            className="guide-manage-channels-btn"
+            onClick={() => {
+              const srcId = categoryId?.startsWith('__favsrc_')
+                ? categoryId.replace('__favsrc_', '')
+                : null;
+              setManagingFavoritesSourceId(srcId);
+              setManagingFavorites(true);
+            }}
+            title={t('manageFavoritesOrder')}
+          >
+            <span style={{ flexShrink: 0 }}>⭐</span>
+            <span className="btn-label">{t('manageFavorites')}</span>
+          </button>
+        )}
         {/* View All Programs: opens the per-day modal showing every program the
             DB has for this channel (past for catch-up, future for recording). */}
         {selectedChannel && (
@@ -3578,7 +3596,11 @@ export function ChannelPanel({
             ) : (
               <>
                 <span className="guide-current-time">{formatEpgTime(currentTime)}</span>
-                {(categoryId === '__favorites__' || categoryId?.startsWith('__favsrc_')) && (
+                {/* In the 3-column view the Manage Favorites action lives in the
+                    right pane toolbar (renderAltRightPane) so the strip header
+                    keeps just the Show Source toggle — a single icon button
+                    that can never hit the hover-wrap oscillation. */}
+                {(categoryId === '__favorites__' || categoryId?.startsWith('__favsrc_')) && !epgThreeColumn && (
                   <button
                     className="guide-manage-channels-btn"
                     onClick={() => {

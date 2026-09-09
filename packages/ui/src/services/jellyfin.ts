@@ -16,6 +16,26 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
+import { getVersion } from '@tauri-apps/api/app';
+
+/**
+ * Stable per-install DeviceId for the ynoTV-side pre-auth login. The token this
+ * login returns is discarded (the embedded webview keeps its own session), but
+ * Jellyfin records a device for every AuthenticateByName, so keep the id stable
+ * instead of spawning a new "ynoTV" device on every Connect.
+ */
+function jellyfinPreAuthDeviceId(): string {
+  const KEY = 'ynotvJellyfinDeviceId';
+  try {
+    const existing = localStorage.getItem(KEY);
+    if (existing) return existing;
+    const id = crypto.randomUUID();
+    localStorage.setItem(KEY, id);
+    return id;
+  } catch {
+    return 'ynotv-desktop';
+  }
+}
 
 /** Validate credentials against a Jellyfin server and obtain an API token. */
 export async function jellyfinAuthenticate(
@@ -25,9 +45,26 @@ export async function jellyfinAuthenticate(
 ): Promise<{ token: string; userId: string | null; displayName: string | null } | null> {
   try {
     const base = serverUrl.replace(/\/+$/, '');
+    // Jellyfin rejects AuthenticateByName requests that carry no MediaBrowser
+    // identity, so send the same "ynoTV" / hostname identity the embedded
+    // webview reports (keeps the device record labeled consistently).
+    const [version, machineName] = await Promise.all([
+      getVersion().catch(() => ''),
+      invoke<string>('jellyfin_machine_name').catch(() => ''),
+    ]);
+    const identity = 'MediaBrowser ' + [
+      'Client="ynoTV"',
+      `Device="${(machineName || 'ynoTV').replace(/"/g, "'")}"`,
+      `DeviceId="${jellyfinPreAuthDeviceId()}"`,
+      `Version="${version || '1.0.0'}"`,
+    ].join(', ');
     const res = await fetch(`${base}/Users/AuthenticateByName`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Emby-Authorization': identity,
+        Authorization: identity,
+      },
       body: JSON.stringify({ Username: username, Pw: password }),
     });
     if (!res.ok) return null;

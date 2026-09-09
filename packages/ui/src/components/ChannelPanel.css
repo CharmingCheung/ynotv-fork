@@ -920,17 +920,18 @@
   margin-left: 6px;
 }
 
-/* 3-column strip header: keep the button labels AND the source-count hint
-   visible at all times. The icon-expansion-on-hover (max-width 0 -> 180px)
+/* 3-column strip header: keep the buttons icon-only (SVG/emoji, no label) at
+   rest AND on hover. Expanding the label on hover (max-width 0 -> 180px)
    made a hovered button at the narrow strip's wrap boundary drop to a second
    row, moving it out from under the cursor, collapsing back, and looping
-   forever (pop up/down into a 2nd row). A constant footprint means hovering
-   never reflows the header. */
-.guide-panel.alt-view-active .guide-header-left button .btn-label,
-.guide-panel.alt-view-active .guide-header-left button .guide-source-count-hint {
-  max-width: none;
-  opacity: 1;
-  margin-left: 6px;
+   forever (pop up/down into a 2nd row). With a constant footprint — label
+   never expands + hover padding identical to resting — hovering never
+   reflows the header; each button's title tooltip still reveals its label. */
+.guide-panel.alt-view-active .guide-header-left button:hover .btn-label,
+.guide-panel.alt-view-active .guide-header-left button:hover .guide-source-count-hint {
+  max-width: 0;
+  opacity: 0;
+  margin-left: 0;
 }
 
 .guide-refresh-source-btn:disabled {

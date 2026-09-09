@@ -170,6 +170,16 @@ fn http_client() -> &'static reqwest::Client {
 /// hex/dash-only token with a sane minimum length so short/custom ids don't
 /// regress, but reject word-like segments such as a reverse-proxy prefix named
 /// "Videos" (p/r/o/x/y are not hex digits).
+/// Escape a value for embedding inside a double-quoted JS string literal in the
+/// injected INIT_SCRIPT (used for the client identity globals).
+fn escape_js_string(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
+}
+
 fn is_plausible_jellyfin_item_id(seg: &str) -> bool {
     !seg.is_empty()
         && seg.len() >= 8
@@ -255,13 +265,51 @@ fn parse_play_url(url: &str) -> Option<(String, String, String, Option<String>, 
     Some((server_base, api_key, item_id, media_source_id, start_ticks))
 }
 
-/// Fire-and-forget POST to the Jellyfin session API.
+/// The machine's hostname — the same value injected into the embedded webview
+/// as `__YNOTV_DEVICE_NAME__` and reported to the Jellyfin dashboard.
+fn jellyfin_device_name() -> String {
+    sysinfo::System::host_name()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| std::env::var("COMPUTERNAME").ok().filter(|s| !s.trim().is_empty()))
+        .or_else(|| std::env::var("HOSTNAME").ok().filter(|s| !s.trim().is_empty()))
+        .unwrap_or_else(|| "ynoTV".to_string())
+}
+
+/// MediaBrowser identity header value identifying this app as "ynoTV" on the
+/// machine's hostname — mirrors exactly what the embedded webview's rewritten
+/// requests carry, so server-side sessions/playback reports attribute to the
+/// same "DESKTOP-XXX / ynoTV <version>" device instead of the stale
+/// "Jellyfin Web" label stored on the token's device record.
+fn jellyfin_identity_header(token: &str) -> String {
+    let device = jellyfin_device_name().replace('"', "'");
+    format!(
+        "MediaBrowser Client=\"ynoTV\", Device=\"{}\", Version=\"{}\", Token=\"{}\"",
+        device,
+        env!("CARGO_PKG_VERSION"),
+        token
+    )
+}
+
+/// The machine's hostname for the frontend, so its pre-authentication call
+/// (AuthenticateByName) can carry the same MediaBrowser identity the embedded
+/// webview reports — the Jellyfin server rejects identity-less logins.
+#[tauri::command]
+pub fn jellyfin_machine_name() -> String {
+    jellyfin_device_name()
+}
+
+/// Fire-and-forget POST to the Jellyfin session API. Carries the full
+/// MediaBrowser identity (not just X-Emby-Token): token-only requests resolve
+/// to the device record's stored AppName ("Jellyfin Web" for tokens created
+/// before the identity rewrite), which would attach playback reports to a
+/// phantom "Jellyfin Web" dashboard session instead of the ynoTV one.
 fn post_jellyfin(path: String, server_base: String, api_key: String, body: serde_json::Value) {
     tauri::async_runtime::spawn(async move {
         let url = format!("{}{}", server_base, path);
         let send = http_client()
             .post(&url)
-            .header("X-Emby-Token", api_key)
+            .header("X-Emby-Token", api_key.clone())
+            .header("Authorization", jellyfin_identity_header(&api_key))
             .header("Content-Type", "application/json")
             .json(&body)
             .send()
@@ -538,9 +586,23 @@ pub async fn jellyfin_embed_open<R: Runtime>(
         ),
     );
 
+    // Client identity reported to the Jellyfin server. By default the embedded
+    // webview shows up on the dashboard as "Edge Chromium / Jellyfin Web <web
+    // version>"; rewrite the X-Emby-Authorization header in the INIT_SCRIPT so
+    // it identifies as "ynoTV <app version>" on the machine's hostname instead
+    // (mirroring how Jellyfin Media Player appears on the dashboard).
+    let app_version = app.package_info().version.to_string();
+    let device_name = jellyfin_device_name();
+
     let init_script = format!(
-        "window.__YNOTV_DEBUG_LOGGING__ = {};\n{}",
-        debug_enabled, INIT_SCRIPT
+        "window.__YNOTV_DEBUG_LOGGING__ = {};\n\
+         window.__YNOTV_APP_VERSION__ = \"{}\";\n\
+         window.__YNOTV_DEVICE_NAME__ = \"{}\";\n\
+         {}",
+        debug_enabled,
+        escape_js_string(&app_version),
+        escape_js_string(&device_name),
+        INIT_SCRIPT
     );
 
     let webview_builder =
@@ -970,7 +1032,8 @@ pub async fn jellyfin_embed_notify_playback_ended<R: Runtime>(
         });
         let _ = http_client()
             .post(&url)
-            .header("X-Emby-Token", snap.api_key)
+            .header("X-Emby-Token", snap.api_key.clone())
+            .header("Authorization", jellyfin_identity_header(&snap.api_key))
             .header("Content-Type", "application/json")
             .json(&body)
             .send()
@@ -2887,6 +2950,83 @@ const INIT_SCRIPT: &str = r##"
         return body;
     }
 
+    // -------------------------------------------------------------------------
+    // Client identity for the Jellyfin dashboard
+    // -------------------------------------------------------------------------
+    // The embedded webview otherwise reports itself as "Edge Chromium" /
+    // "Jellyfin Web <server web version>" on the dashboard. Rewrite the
+    // X-Emby-Authorization header (sent with every API request) to identify as
+    // "ynoTV <app version>" on the machine's hostname — the same shape Jellyfin
+    // Media Player shows ("DESKTOP-XXX / Jellyfin Media Player 1.12.0"). The
+    // values are injected by Rust when the webview is created. This only changes
+    // how the server labels our sessions; playback decisions still come from the
+    // DeviceProfile in PlaybackInfo requests.
+    var ynotvAppVersion = window.__YNOTV_APP_VERSION__ || '';
+    var ynotvDeviceName = window.__YNOTV_DEVICE_NAME__ || '';
+
+    function ynotvRewriteAuthHeader(value) {
+        try {
+            if (!value || typeof value !== 'string') return value;
+            if (value.toLowerCase().indexOf('mediabrowser') === -1) return value;
+            // Nothing to identify with (e.g. the script running standalone) —
+            // keep the server default. Rust always injects both globals in the
+            // real webview, so this only matters for tests / edge cases.
+            if (!ynotvAppVersion && !ynotvDeviceName) return value;
+            var out = value.replace(/\bClient="[^"]*"/i, 'Client="ynoTV"');
+            if (ynotvDeviceName) {
+                out = out.replace(/\bDevice="[^"]*"/i, function () { return 'Device="' + ynotvDeviceName + '"'; });
+            }
+            if (ynotvAppVersion) {
+                out = out.replace(/\bVersion="[^"]*"/i, function () { return 'Version="' + ynotvAppVersion + '"'; });
+            }
+            return out;
+        } catch (e) {
+            return value;
+        }
+    }
+
+    // Jellyfin's api clients send the identity header under two names across
+    // versions: the legacy "X-Emby-Authorization" (10.8/10.9 era) and the modern
+    // "Authorization" (jellyfin-apiclient 1.11 / web 10.11+), always with a
+    // "MediaBrowser ..." value. ynotvRewriteAuthHeader bails unless the value
+    // carries that prefix, so unrelated Authorization headers (e.g. Bearer)
+    // pass through untouched.
+    function ynotvIsAuthHeaderName(name) {
+        var lower = String(name || '').toLowerCase();
+        return lower === 'x-emby-authorization' || lower === 'authorization';
+    }
+
+    // Patch outgoing fetch headers before the request leaves the webview.
+    // Handles a Headers instance, a plain object, and a [name, value][] array.
+    function ynotvPatchFetchHeaders(init) {
+        try {
+            if (!init) return;
+            var h = init.headers;
+            if (!h) return;
+            if (typeof Headers !== 'undefined' && h instanceof Headers) {
+                if (h.has('X-Emby-Authorization')) {
+                    h.set('X-Emby-Authorization', ynotvRewriteAuthHeader(h.get('X-Emby-Authorization')));
+                }
+                if (h.has('Authorization')) {
+                    h.set('Authorization', ynotvRewriteAuthHeader(h.get('Authorization')));
+                }
+            } else if (Array.isArray(h)) {
+                for (var i = 0; i < h.length; i++) {
+                    var pair = h[i];
+                    if (pair && pair[0] && ynotvIsAuthHeaderName(pair[0])) {
+                        pair[1] = ynotvRewriteAuthHeader(pair[1]);
+                    }
+                }
+            } else if (typeof h === 'object') {
+                for (var k in h) {
+                    if (Object.prototype.hasOwnProperty.call(h, k) && ynotvIsAuthHeaderName(k)) {
+                        h[k] = ynotvRewriteAuthHeader(h[k]);
+                    }
+                }
+            }
+        } catch (e) {}
+    }
+
     // Observe network calls used by Jellyfin to obtain PlaybackInfo/MediaStreams.
     // This captures the requested subtitle/audio stream choices from PlaybackInfo requests.
     function resolveCapturedHlsUrl(targetUrl) {
@@ -2947,6 +3087,10 @@ const INIT_SCRIPT: &str = r##"
                     var init = arguments[1];
                     var url = typeof request === 'string' ? request : (request && request.url) || '';
                     var reqBody = (init && init.body) || (request && request.body) || null;
+                    ynotvPatchFetchHeaders(init);
+                    if (!init && request && typeof request === 'object' && request.headers) {
+                        ynotvPatchFetchHeaders(request);
+                    }
                     if (/PlaybackInfo/i.test(url)) {
                         if (init && init.body) {
                             init.body = injectMpvDeviceProfile(init.body);
@@ -2987,6 +3131,17 @@ const INIT_SCRIPT: &str = r##"
         try {
             var originalOpen = XMLHttpRequest.prototype.open;
             var originalSend = XMLHttpRequest.prototype.send;
+            var originalSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+            if (originalSetHeader && !originalSetHeader.__ynotvPatched) {
+                var wrappedSetHeader = function (name, value) {
+                    if (typeof name === 'string' && ynotvIsAuthHeaderName(name)) {
+                        value = ynotvRewriteAuthHeader(value);
+                    }
+                    return originalSetHeader.call(this, name, value);
+                };
+                wrappedSetHeader.__ynotvPatched = true;
+                XMLHttpRequest.prototype.setRequestHeader = wrappedSetHeader;
+            }
             if (originalOpen && !originalOpen.__ynotvPatched) {
                 var wrappedOpen = function (method, url) {
                     this.__ynotvUrl = String(url || '');

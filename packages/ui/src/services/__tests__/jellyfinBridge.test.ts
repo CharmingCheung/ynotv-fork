@@ -39,6 +39,7 @@ interface LoadedBridge {
     internals: BridgeInternals;
     window: any;
     HTMLMediaElement: any;
+    XMLHttpRequest: any;
 }
 
 /**
@@ -122,9 +123,13 @@ function loadBridge(opts: BridgeLoadOptions = {}): LoadedBridge {
         return '';
     };
     class XMLHttpRequestMock {
+        _headers: Record<string, string> = {};
         open() {}
         send() {}
         addEventListener() {}
+        setRequestHeader(name: string, value: string) {
+            this._headers[String(name).toLowerCase()] = value;
+        }
     }
 
     const factory = new Function(
@@ -160,7 +165,12 @@ function loadBridge(opts: BridgeLoadOptions = {}): LoadedBridge {
             'bridge internals not exposed — the init script likely threw at load; add the missing mock',
         );
     }
-    return { internals: win.__ynotvJfInternals as BridgeInternals, window: win, HTMLMediaElement: HTMLMediaElementMock };
+    return {
+        internals: win.__ynotvJfInternals as BridgeInternals,
+        window: win,
+        HTMLMediaElement: HTMLMediaElementMock,
+        XMLHttpRequest: XMLHttpRequestMock,
+    };
 }
 
 describe('jellyfin bridge item isolation', () => {
@@ -558,6 +568,88 @@ describe('jellyfin bridge item isolation', () => {
             expect(canPlay('audio/mp4; codecs="dts"')).toBe('probably');
             expect(canPlay('audio/mp4; codecs="truehd"')).toBe('probably');
             expect(canPlay('audio/unknown-codec')).toBe('');
+        });
+    });
+
+    describe('client identity (Authorization rewrite)', () => {
+        // jellyfin-apiclient 1.11 (web 10.11) sends the identity under
+        // "Authorization"; older clients (10.8/10.9 era) use "X-Emby-Authorization".
+        const AUTH_HEADER = 'MediaBrowser Client="Jellyfin Web", Device="Edge Chromium", DeviceId="abc123", Version="10.11.11"';
+        const identityExtras = {
+            __YNOTV_APP_VERSION__: '2.5.3',
+            __YNOTV_DEVICE_NAME__: 'DESKTOP-TEST',
+        };
+
+        it.each(['Authorization', 'X-Emby-Authorization'])(
+            'rewrites the %s header set via XHR setRequestHeader',
+            (headerName) => {
+                const b = loadBridge({ windowExtras: identityExtras });
+                const xhr = new b.XMLHttpRequest();
+                xhr.open('POST', 'http://jf.test:8096/Items/5b12f80a4f3c4a2c9f1e1a2b3c4d5e6f/PlaybackInfo');
+                xhr.setRequestHeader(headerName, AUTH_HEADER);
+
+                const sent = xhr._headers[headerName.toLowerCase()];
+                expect(sent).toContain('Client="ynoTV"');
+                expect(sent).toContain('Device="DESKTOP-TEST"');
+                expect(sent).toContain('Version="2.5.3"');
+                // DeviceId must be preserved — sessions/playstate depend on it.
+                expect(sent).toContain('DeviceId="abc123"');
+                expect(sent).not.toContain('Jellyfin Web');
+            });
+
+        it('leaves the header untouched when identity globals are missing', () => {
+            const b = loadBridge();
+            const xhr = new b.XMLHttpRequest();
+            xhr.open('POST', 'http://jf.test:8096/System/Info');
+            xhr.setRequestHeader('Authorization', AUTH_HEADER);
+
+            expect(xhr._headers['authorization']).toBe(AUTH_HEADER);
+        });
+
+        it('leaves non-MediaBrowser Authorization headers untouched', () => {
+            const b = loadBridge({ windowExtras: identityExtras });
+            const xhr = new b.XMLHttpRequest();
+            xhr.open('POST', 'http://jf.test:8096/System/Info');
+            xhr.setRequestHeader('Authorization', 'Bearer some-token');
+
+            expect(xhr._headers['authorization']).toBe('Bearer some-token');
+        });
+
+        it('rewrites a Headers object on outgoing fetch calls', async () => {
+            const calls: { url: string; init: any }[] = [];
+            const fetchMock = (url: string, init: any) => {
+                calls.push({ url, init });
+                return Promise.resolve({});
+            };
+            const b = loadBridge({ windowExtras: { ...identityExtras, fetch: fetchMock } });
+
+            const headers = new Headers({ Authorization: AUTH_HEADER });
+            await b.window.fetch('http://jf.test:8096/System/Info', { method: 'GET', headers });
+
+            expect(calls).toHaveLength(1);
+            const sent = calls[0].init.headers;
+            expect(sent.get('Authorization')).toContain('Client="ynoTV"');
+            expect(sent.get('Authorization')).toContain('Device="DESKTOP-TEST"');
+            expect(sent.get('Authorization')).toContain('Version="2.5.3"');
+            expect(sent.get('Authorization')).toContain('DeviceId="abc123"');
+        });
+
+        it('rewrites a plain-object headers map (the real jellyfin-apiclient shape) on fetch calls', async () => {
+            const calls: { url: string; init: any }[] = [];
+            const fetchMock = (url: string, init: any) => {
+                calls.push({ url, init });
+                return Promise.resolve({});
+            };
+            const b = loadBridge({ windowExtras: { ...identityExtras, fetch: fetchMock } });
+
+            await b.window.fetch('http://jf.test:8096/Users/authenticatebyname', {
+                method: 'POST',
+                headers: { Authorization: AUTH_HEADER, 'Content-Type': 'application/json' },
+            });
+
+            expect(calls[0].init.headers.Authorization).toContain('Client="ynoTV"');
+            expect(calls[0].init.headers.Authorization).toContain('Version="2.5.3"');
+            expect(calls[0].init.headers['Content-Type']).toBe('application/json');
         });
     });
 });

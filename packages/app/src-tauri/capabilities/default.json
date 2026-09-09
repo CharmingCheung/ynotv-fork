@@ -106,7 +106,8 @@
       "jellyfin_open_log_dir",
       "jellyfin_clear_log_file",
       "jellyfin_set_debug_logging",
-      "jellyfin_append_logs"
+      "jellyfin_append_logs",
+      "jellyfin_machine_name"
     ]
   }
 }
