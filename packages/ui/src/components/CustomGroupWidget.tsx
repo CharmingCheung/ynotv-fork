@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLiveQuery } from '../hooks/useSqliteLiveQuery';
 import { useCurrentProgram, useEnabledSources } from '../hooks/useChannels';
+import { useWidgetChannelScroll } from '../hooks/useWidgetChannelScroll';
 import { db } from '../db';
 import type { StoredChannel } from '../db';
 import './CustomGroupWidget.css';
@@ -99,18 +100,15 @@ export function CustomGroupWidget({
   const isMainScreen = activeView === 'none';
   const isVisible = isMainScreen && showControls && (data?.channels?.length ?? 0) > 0 && !isVod;
 
-  // When the widget (re)appears or the playing channel changes, bring the
-  // currently playing channel into view so the user never has to hunt for it
-  // again after switching channels (the list remounts whenever controls hide).
-  useEffect(() => {
-    if (!isVisible || !currentChannelId || !listRef.current) return;
-    const currentEl = Array.from(listRef.current.children).find(
-      (child) => child instanceof HTMLElement && child.dataset.streamId === currentChannelId
-    );
-    if (currentEl instanceof HTMLElement) {
-      currentEl.scrollIntoView({ block: 'nearest' });
-    }
-  }, [isVisible, currentChannelId, data?.channels?.length]);
+  // Restore the user's scroll position when the overlay re-appears, and bring
+  // the currently playing channel into view when it changes (the list remounts
+  // at the top whenever controls hide, so without this the position is lost).
+  const { onListScroll } = useWidgetChannelScroll({
+    isVisible,
+    currentChannelId,
+    listRef,
+    itemCount: data?.channels?.length ?? 0,
+  });
 
   if (!isVisible) return null;
 
@@ -131,7 +129,7 @@ export function CustomGroupWidget({
           </div>
         )}
       </div>
-      <div className="custom-group-list" ref={listRef}>
+      <div className="custom-group-list" ref={listRef} onScroll={onListScroll}>
         {data!.channels.map((ch) => (
           <GroupChannelItem
             key={ch.stream_id}

@@ -11,6 +11,7 @@ import { VirtualGrid, type VirtualGridHandle } from '../common/VirtualGrid';
 import { PosterSizeSlider, type PosterSizePreset } from '../PosterSizeSlider';
 import { MediaCard } from './MediaCard';
 import { AlphabetRail } from './AlphabetRail';
+import { restoreScrollPosition, shouldPersistScroll, type SavedScrollPosition } from '../../hooks/scrollRestore';
 import type { StoredMovie, StoredSeries } from '../../db';
 import {
   usePaginatedMovies,
@@ -38,7 +39,7 @@ import './VodBrowse.css';
 // (TransitionView unmounts them), which destroys the grid's scrollTop. Caching
 // it here (keyed by view + category + search) lets us restore the exact spot
 // when the user comes back, even in lists with thousands of items.
-const savedVodGridScroll = new Map<string, number>();
+const savedVodGridScroll = new Map<string, SavedScrollPosition>();
 
 const VOD_POSTER_SIZE_PRESETS = [
   { value: 100, label: 'XS' },
@@ -115,7 +116,11 @@ export function VodBrowse({
     [type, categoryId, search]
   );
   const lastScrollTopRef = useRef(0);
+  const lastScrollMaxRef = useRef(0);
   const pendingRestoreKeyRef = useRef<string | null>(null);
+  // Set while a programmatic restore is applying scrollTop, so onScroll can
+  // tell it apart from a real user scroll and keep the restore pending.
+  const restoreTargetRef = useRef<number | null>(null);
 
   // Save the current offset whenever this view is about to be replaced
   // (unmount or category/search change), keyed by the view being left.
@@ -123,8 +128,20 @@ export function VodBrowse({
     const key = scrollKey;
     pendingRestoreKeyRef.current = key;
     lastScrollTopRef.current = 0;
+    lastScrollMaxRef.current = 0;
     return () => {
-      savedVodGridScroll.set(key, lastScrollTopRef.current);
+      // StrictMode double-invokes effects in dev (mount → cleanup → mount);
+      // that synthetic cleanup must not clobber a saved position with
+      // {top: 0}. The refs are only non-zero after a real scroll, so skipping
+      // the save when both are 0 is a no-op there and still captures genuine
+      // unmounts — a deliberate scroll to top saves {top: 0}, which every
+      // restore consumer treats identically to "no saved position".
+      if (shouldPersistScroll(lastScrollTopRef.current, lastScrollMaxRef.current)) {
+        savedVodGridScroll.set(key, {
+          top: lastScrollTopRef.current,
+          max: lastScrollMaxRef.current,
+        });
+      }
     };
   }, [scrollKey]);
 
@@ -190,7 +207,7 @@ export function VodBrowse({
   // Scroll to top when category changes (unless there's a saved scroll offset to restore)
   useEffect(() => {
     const saved = savedVodGridScroll.get(scrollKey);
-    if ((saved === undefined || saved === 0) && virtualGridRef.current) {
+    if ((saved === undefined || saved.top <= 0) && virtualGridRef.current) {
       virtualGridRef.current.scrollToIndex({ index: 0, align: 'start' });
     }
   }, [categoryId, scrollKey]);
@@ -208,19 +225,25 @@ export function VodBrowse({
   const loading = dataLoading || lazyLoading;
 
   // Once the items for the current view are rendered, jump back to the saved
-  // offset so returning users land exactly where they left off.
-  // Use dataLoading so cached items restore immediately instead of waiting
-  // for a background Stalker sync to finish.
+  // offset so returning users land exactly where they left off. The restore is
+  // re-applied (via restoreScrollPosition) while the grid is still growing —
+  // pages load async and rows are re-measured, so a single application can be
+  // clamped to a still-short list and end up at the top.
   useEffect(() => {
-    if (dataLoading || items.length === 0) return;
+    if (dataLoading || items.length === 0 || !scrollRef.current) return;
     if (pendingRestoreKeyRef.current !== scrollKey) return;
-    pendingRestoreKeyRef.current = null;
     const saved = savedVodGridScroll.get(scrollKey);
-    if (saved !== undefined && saved > 0 && scrollRef.current) {
-      scrollRef.current.scrollTop = saved;
-      lastScrollTopRef.current = saved;
-    }
-  }, [dataLoading, items.length, scrollKey]);
+    if (saved === undefined || saved.top <= 0) return;
+    return restoreScrollPosition({
+      el: scrollRef.current,
+      saved,
+      isPending: () => pendingRestoreKeyRef.current === scrollKey,
+      onSettled: () => {
+        pendingRestoreKeyRef.current = null;
+      },
+      targetRef: restoreTargetRef,
+    });
+  }, [dataLoading, items.length, scrollKey, lazyLoading]);
 
   const lastWatchedMap = useVodLastWatchedMap(type === 'movies' ? 'movie' : 'series');
 
@@ -456,8 +479,12 @@ export function VodBrowse({
         className="vod-browse__grid-scroll flex-1 min-h-0 overflow-y-auto"
         onScroll={(e) => {
           lastScrollTopRef.current = e.currentTarget.scrollTop;
-          // Cancel pending restore on user manual scroll so background sync doesn't clobber it
-          pendingRestoreKeyRef.current = null;
+          lastScrollMaxRef.current = e.currentTarget.scrollHeight - e.currentTarget.clientHeight;
+          // Cancel pending restore on a real user scroll so background sync
+          // doesn't clobber it — but let programmatic restore applies finish.
+          if (restoreTargetRef.current === null || Math.abs(e.currentTarget.scrollTop - restoreTargetRef.current) > 1) {
+            pendingRestoreKeyRef.current = null;
+          }
         }}
       >
         <VirtualGrid

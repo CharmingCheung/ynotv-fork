@@ -52,6 +52,7 @@ import { markLocalMovieWatched, markLocalEpisodeWatched } from '../../services/l
 import { useActiveTmdbToken } from '../../hooks/useTmdbLists';
 import { useVodFavoritesStore } from '../../stores/vodFavoritesStore';
 import { useAlphabetIndex, useCurrentLetter } from '../../hooks/useVod';
+import { restoreScrollPosition, shouldPersistScroll, type SavedScrollPosition } from '../../hooks/scrollRestore';
 import { preloadPosters, cancelPosterPreload } from './posterPreload';
 import { PosterSizeSlider } from '../PosterSizeSlider';
 import { useAutoLocalSync } from '../../services/local-library/auto-sync';
@@ -178,6 +179,11 @@ const LocalGridItem = (
   );
 };
 
+// Scroll-position persistence: the local grid remounts whenever the VOD page
+// unmounts (e.g. playback switches views), so the last scroll offset is cached
+// per view key (filter : search : sort) and restored once items render again.
+const savedLocalGridScroll = new Map<string, SavedScrollPosition>();
+
 interface LocalTabProps {
   initialFilter?: 'all' | 'movies' | 'series';
   lockFilter?: boolean;
@@ -227,6 +233,50 @@ export function LocalTab({
   });
   const virtuosoRef = useRef<VirtualGridHandle>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Effective filter (locked to a tab when opened from elsewhere) — drives
+  // which items/banner/buttons are shown: Movies tab shows only Movies, Series
+  // tab only Series.
+  const effFilter = activeFilter === 'unmatched' ? 'unmatched' : lockFilter ? initialFilter : activeFilter;
+
+  // Scroll-position persistence (see savedLocalGridScroll above). The grid
+  // unmounts whenever the VOD page leaves (playback) and remounts at the top,
+  // so the offset is saved per view key and restored once items render again.
+  // The active filter is part of the key so each filter pill keeps its own
+  // position instead of sharing one.
+  const scrollKey = useMemo(
+    () => `${effFilter}:${searchQuery ?? ''}:${sortKey}:${sortDir}`,
+    [effFilter, searchQuery, sortKey, sortDir]
+  );
+  const lastScrollTopRef = useRef(0);
+  const lastScrollMaxRef = useRef(0);
+  const pendingRestoreKeyRef = useRef<string | null>(null);
+  // Set while a programmatic restore is applying scrollTop, so onScroll can
+  // tell it apart from a real user scroll and keep the restore pending.
+  const restoreTargetRef = useRef<number | null>(null);
+
+  // Save the current offset whenever this view is about to be replaced
+  // (unmount or filter/search/sort change), keyed by the view being left.
+  useEffect(() => {
+    const key = scrollKey;
+    pendingRestoreKeyRef.current = key;
+    lastScrollTopRef.current = 0;
+    lastScrollMaxRef.current = 0;
+    return () => {
+      // StrictMode double-invokes effects in dev (mount → cleanup → mount);
+      // that synthetic cleanup must not clobber a saved position with
+      // {top: 0}. The refs are only non-zero after a real scroll, so skipping
+      // the save when both are 0 is a no-op there and still captures genuine
+      // unmounts — a deliberate scroll to top saves {top: 0}, which every
+      // restore consumer treats identically to "no saved position".
+      if (shouldPersistScroll(lastScrollTopRef.current, lastScrollMaxRef.current)) {
+        savedLocalGridScroll.set(key, {
+          top: lastScrollTopRef.current,
+          max: lastScrollMaxRef.current,
+        });
+      }
+    };
+  }, [scrollKey]);
   const [visibleRange, setVisibleRange] = useState({ startIndex: 0, endIndex: 0 });
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -438,10 +488,6 @@ export function LocalTab({
       return next;
     });
   }, []);
-  // Effective filter (locked to a tab when opened from elsewhere) — drives
-  // which items/banner/buttons are shown: Movies tab shows only Movies, Series
-  // tab only Series.
-  const effFilter = activeFilter === 'unmatched' ? 'unmatched' : lockFilter ? initialFilter : activeFilter;
 
   const groupMissingMetadata = useCallback(
     (g: LocalGroup): boolean => {
@@ -541,6 +587,34 @@ export function LocalTab({
 
     return sortGroups(list, sortKey, sortDir);
   }, [groups, lockFilter, initialFilter, activeFilter, searchQuery, sortKey, sortDir, isGroupFavorited, groupMissingMetadata, hideUnavailable]);
+
+  // Once the items for the current view are rendered, jump back to the saved
+  // offset so returning users land exactly where they left off. The restore is
+  // re-applied (via restoreScrollPosition) while the grid is still growing —
+  // rows are re-measured and posters load async, so a single application can
+  // land short (e.g. "a little before the bottom").
+  useEffect(() => {
+    if (filteredGroups.length === 0 || !scrollRef.current) return;
+    if (pendingRestoreKeyRef.current !== scrollKey) return;
+    const saved = savedLocalGridScroll.get(scrollKey);
+    if (saved === undefined || saved.top <= 0) {
+      // New view (fresh search/sort/filter with no saved offset) — start at
+      // the top instead of inheriting the previous view's scroll position.
+      pendingRestoreKeyRef.current = null;
+      scrollRef.current.scrollTop = 0;
+      lastScrollTopRef.current = 0;
+      return;
+    }
+    return restoreScrollPosition({
+      el: scrollRef.current,
+      saved,
+      isPending: () => pendingRestoreKeyRef.current === scrollKey,
+      onSettled: () => {
+        pendingRestoreKeyRef.current = null;
+      },
+      targetRef: restoreTargetRef,
+    });
+  }, [filteredGroups.length, scrollKey]);
 
   // Alphabet #-Z quick jump rail (only meaningful in name order).
   const groupNames = useMemo(
@@ -1882,6 +1956,16 @@ export function LocalTab({
         <div
           ref={scrollRef}
           className="local-grid-scroll flex-1 min-h-0 overflow-y-auto"
+          onScroll={(e) => {
+            lastScrollTopRef.current = e.currentTarget.scrollTop;
+            lastScrollMaxRef.current = e.currentTarget.scrollHeight - e.currentTarget.clientHeight;
+            // Cancel pending restore on a real user scroll so a background
+            // library update doesn't clobber it — but let programmatic
+            // restore applies finish.
+            if (restoreTargetRef.current === null || Math.abs(e.currentTarget.scrollTop - restoreTargetRef.current) > 1) {
+              pendingRestoreKeyRef.current = null;
+            }
+          }}
           style={
             {
               '--local-poster-size': `${posterSize}px`,

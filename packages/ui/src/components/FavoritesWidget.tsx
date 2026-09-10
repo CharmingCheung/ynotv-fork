@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { StoredChannel } from '../db';
 import { useLiveQuery } from '../hooks/useSqliteLiveQuery';
 import { useCurrentProgram, applyHomeCategoryFilterWords } from '../hooks/useChannels';
 import { useSettingsStore } from '../stores/settingsStore';
+import { useWidgetChannelScroll } from '../hooks/useWidgetChannelScroll';
 import { db } from '../db';
 import './FavoritesWidget.css';
 
@@ -97,18 +98,15 @@ export function FavoritesWidget({
   const isMainScreen = activeView === 'none';
   const isVisible = isMainScreen && showControls && (favoriteChannels?.length ?? 0) > 0 && !isVod;
 
-  // When the widget (re)appears or the playing channel changes, bring the
-  // currently playing channel into view so the user never has to hunt for it
-  // again after switching channels (the list remounts whenever controls hide).
-  useEffect(() => {
-    if (!isVisible || !currentChannelId || !listRef.current) return;
-    const currentEl = Array.from(listRef.current.children).find(
-      (child) => child instanceof HTMLElement && child.dataset.streamId === currentChannelId
-    );
-    if (currentEl instanceof HTMLElement) {
-      currentEl.scrollIntoView({ block: 'nearest' });
-    }
-  }, [isVisible, currentChannelId, favoriteChannels?.length]);
+  // Restore the user's scroll position when the overlay re-appears, and bring
+  // the currently playing channel into view when it changes (the list remounts
+  // at the top whenever controls hide, so without this the position is lost).
+  const { onListScroll } = useWidgetChannelScroll({
+    isVisible,
+    currentChannelId,
+    listRef,
+    itemCount: favoriteChannels?.length ?? 0,
+  });
 
   if (!isVisible) {
     return null;
@@ -129,7 +127,7 @@ export function FavoritesWidget({
           </div>
         )}
       </div>
-      <div className="favorites-list" ref={listRef}>
+      <div className="favorites-list" ref={listRef} onScroll={onListScroll}>
         {favoriteChannels?.map((channel) => (
           <FavoriteChannelItem
             key={channel.stream_id}

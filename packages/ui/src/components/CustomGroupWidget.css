@@ -41,24 +41,61 @@
   height: 172px;
   overflow-y: scroll;
   pointer-events: auto;
+  /* Rows' offsetTop is measured relative to this container (scroll math) */
+  position: relative;
 }
 
 .custom-group-widget .group-channel-item {
   padding: 5px 8px;
-  cursor: pointer;
+  cursor: pointer !important;
   color: rgba(255, 255, 255, 0.85);
   transition: all 0.15s ease;
   user-select: none;
   pointer-events: auto;
   border-radius: 6px;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-start !important;
   gap: 1px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  margin-bottom: 0 !important;
+  border: none !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04) !important;
+  background: transparent;
   width: 100%;
   box-sizing: border-box;
   flex-shrink: 0;
+}
+
+/* Light theme's global `.group-channel-item` rule forces a horizontal row at
+   higher specificity / later sheet order, which would revert this widget to
+   the one-line layout. Re-assert the stacked name + program layout (matching
+   Favorites) with selectors that out-specify the light-theme overrides. */
+[data-theme="light"] .custom-group-widget .group-channel-item,
+html[data-theme="light"] .custom-group-widget .group-channel-item,
+html.modern-ui-v3[data-theme="light"] .custom-group-widget .group-channel-item {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-start !important;
+  gap: 1px !important;
+  background: transparent !important;
+  border: none !important;
+  border-bottom: var(--lt-bd-black-05, 1px solid rgba(0, 0, 0, 0.05)) !important;
+}
+
+/* The light-theme surface rule paints the now-playing row too, washing out the
+   accent tint the other widgets keep there. Re-assert the widget's own tint
+   (and a stronger one on hover) so the active channel stays highlighted in
+   light mode, exactly as Favorites/Recent do. */
+[data-theme="light"] .custom-group-widget .group-channel-item.currently-playing,
+html[data-theme="light"] .custom-group-widget .group-channel-item.currently-playing,
+html.modern-ui-v3[data-theme="light"] .custom-group-widget .group-channel-item.currently-playing {
+  background: rgba(139, 92, 246, 0.2) !important;
+}
+
+[data-theme="light"] .custom-group-widget .group-channel-item.currently-playing:hover,
+html[data-theme="light"] .custom-group-widget .group-channel-item.currently-playing:hover,
+html.modern-ui-v3[data-theme="light"] .custom-group-widget .group-channel-item.currently-playing:hover {
+  background: rgba(139, 92, 246, 0.28) !important;
 }
 
 .custom-group-widget .group-channel-item:hover {

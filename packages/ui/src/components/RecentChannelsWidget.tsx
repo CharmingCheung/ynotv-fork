@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { getRecentChannels, onRecentChannelsUpdate, type RecentChannelEntry } from '../utils/recentChannels';
 import { useCurrentProgram } from '../hooks/useChannels';
+import { useWidgetChannelScroll } from '../hooks/useWidgetChannelScroll';
 import { db } from '../db';
 import type { StoredChannel } from '../db';
 import './RecentChannelsWidget.css';
@@ -89,18 +90,15 @@ export function RecentChannelsWidget({
   const isMainScreen = activeView === 'none';
   const isVisible = isMainScreen && showControls && recentEntries.length > 0 && !isVod;
 
-  // When the widget (re)appears or the playing channel changes, bring the
-  // currently playing channel into view so the user never has to hunt for it
-  // again after switching channels (the list remounts whenever controls hide).
-  useEffect(() => {
-    if (!isVisible || !currentChannelId || !listRef.current) return;
-    const currentEl = Array.from(listRef.current.children).find(
-      (child) => child instanceof HTMLElement && child.dataset.streamId === currentChannelId
-    );
-    if (currentEl instanceof HTMLElement) {
-      currentEl.scrollIntoView({ block: 'nearest' });
-    }
-  }, [isVisible, currentChannelId, limitedEntries.length]);
+  // Restore the user's scroll position when the overlay re-appears, and bring
+  // the currently playing channel into view when it changes (the list remounts
+  // at the top whenever controls hide, so without this the position is lost).
+  const { onListScroll } = useWidgetChannelScroll({
+    isVisible,
+    currentChannelId,
+    listRef,
+    itemCount: limitedEntries.length,
+  });
 
   if (!isVisible) {
     return null;
@@ -121,7 +119,7 @@ export function RecentChannelsWidget({
           </div>
         )}
       </div>
-      <div className="recent-channels-list" ref={listRef}>
+      <div className="recent-channels-list" ref={listRef} onScroll={onListScroll}>
         {limitedEntries.map((entry) => (
           <RecentChannelItem
             key={entry.streamId}

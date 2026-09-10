@@ -37,6 +37,8 @@
   height: 172px;
   overflow-y: scroll;
   pointer-events: auto;
+  /* Rows' offsetTop is measured relative to this container (scroll math) */
+  position: relative;
 }
 
 .favorite-channel-item {
