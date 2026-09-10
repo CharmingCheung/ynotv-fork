@@ -62,9 +62,15 @@ export function WidgetsTab({
 }: WidgetsTabProps) {
   useTranslation();
   const scalePercent   = Math.round(widgetScale * 100);
+  // Cap the preview so extreme scales (up to 400%) don't blow out the settings
+  // panel with clipped content — the real overlay still scales fully.
+  const previewScale   = Math.min(widgetScale, 2.5);
   const opacityPercent = Math.round(widgetBgOpacity * 100);
   const sScalePct      = Math.round(sportsScale * 100);
   const sOpacityPct    = Math.round(sportsBgOpacity * 100);
+  // Cap the preview so extreme scales (up to 400%) don't blow out the settings
+  // panel with clipped content — the real overlay still scales fully.
+  const sPreviewScale  = Math.min(sportsScale, 2.5);
 
   return (
     <div className="settings-tab-content playback-tab-content">
@@ -81,7 +87,7 @@ export function WidgetsTab({
           <SliderRow
             label={i18n.t('settings:livetv.widgets.widgetScale')}
             hint={i18n.t('settings:livetv.widgets.widgetScaleHint')}
-            min={50} max={200} step={5}
+            min={50} max={400} step={5}
             value={scalePercent}
             display={`${scalePercent}%`}
             onChange={(v) => onWidgetScaleChange(v / 100)}
@@ -132,7 +138,7 @@ export function WidgetsTab({
         <div className="widget-preview-area">
           <div
             className="widget-preview-scaled"
-            style={{ transform: `scale(${widgetScale})`, transformOrigin: 'top left' }}
+            style={{ transform: `scale(${previewScale})`, transformOrigin: 'top left' }}
           >
             {/* Recent mock */}
             <div className="widget-preview-box">
@@ -165,8 +171,8 @@ export function WidgetsTab({
           </div>
           {/* Height spacer */}
           <div aria-hidden="true" style={{
-            height: `calc(${Math.round((172 + 36) * widgetScale)}px + 8px)`,
-            width:  `calc(${Math.round(700      * widgetScale)}px)`,
+            height: `calc(${Math.round((172 + 36) * previewScale)}px + 8px)`,
+            width:  `calc(${Math.round(700      * previewScale)}px)`,
             pointerEvents: 'none',
           }} />
         </div>
@@ -184,7 +190,7 @@ export function WidgetsTab({
           <SliderRow
             label={i18n.t('settings:livetv.widgets.overlayScale')}
             hint={i18n.t('settings:livetv.widgets.overlayScaleHint')}
-            min={50} max={200} step={5}
+            min={50} max={400} step={5}
             value={sScalePct}
             display={`${sScalePct}%`}
             onChange={(v) => onSportsScaleChange(v / 100)}
@@ -232,7 +238,7 @@ export function WidgetsTab({
             background: `linear-gradient(to bottom, rgba(0,0,0,${sportsBgOpacity}) 0%, rgba(0,0,0,${(sportsBgOpacity*0.5).toFixed(2)}) 60%, transparent 100%)`,
             padding: '8px 12px 20px',
             borderRadius: '8px',
-            transform: `scaleY(${sportsScale})`,
+            transform: `scaleY(${sPreviewScale})`,
             transformOrigin: 'top center',
             overflow: 'hidden',
           }}>

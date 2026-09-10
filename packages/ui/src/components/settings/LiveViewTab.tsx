@@ -224,7 +224,7 @@ export function LiveViewTab({
                   <input
                     type="range"
                     min="10"
-                    max="28"
+                    max="80"
                     value={channelInfoOverlayFontSize}
                     onChange={(e) => onChannelInfoOverlayFontSizeChange(parseInt(e.target.value))}
                     style={{ flex: 1 }}
@@ -245,7 +245,7 @@ export function LiveViewTab({
                   <input
                     type="range"
                     min="24"
-                    max="72"
+                    max="200"
                     value={channelInfoOverlayLogoSize}
                     onChange={(e) => onChannelInfoOverlayLogoSizeChange(parseInt(e.target.value))}
                     style={{ flex: 1 }}
@@ -308,7 +308,7 @@ export function LiveViewTab({
                   <input
                     type="range"
                     min="200"
-                    max="600"
+                    max="1200"
                     step="10"
                     value={channelInfoOverlayBoxWidth}
                     onChange={(e) => onChannelInfoOverlayBoxWidthChange(parseInt(e.target.value))}

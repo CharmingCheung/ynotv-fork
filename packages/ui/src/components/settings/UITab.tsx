@@ -819,7 +819,7 @@ export function UITab({ settings, onSettingsChange }: UITabProps) {
                     <input
                       type="range"
                       min="10"
-                      max="28"
+                      max="80"
                       value={settings.channelInfoOverlayFontSize ?? 16}
                       onChange={(e) => onSettingsChange({ ...settings, channelInfoOverlayFontSize: parseInt(e.target.value) })}
                       style={{ flex: 1 }}
@@ -837,7 +837,7 @@ export function UITab({ settings, onSettingsChange }: UITabProps) {
                     <input
                       type="range"
                       min="24"
-                      max="72"
+                      max="200"
                       value={settings.channelInfoOverlayLogoSize ?? 42}
                       onChange={(e) => onSettingsChange({ ...settings, channelInfoOverlayLogoSize: parseInt(e.target.value) })}
                       style={{ flex: 1 }}
@@ -896,7 +896,7 @@ export function UITab({ settings, onSettingsChange }: UITabProps) {
                     <input
                       type="range"
                       min="200"
-                      max="600"
+                      max="1200"
                       step="10"
                       value={settings.channelInfoOverlayBoxWidth ?? 380}
                       onChange={(e) => onSettingsChange({ ...settings, channelInfoOverlayBoxWidth: parseInt(e.target.value) })}
