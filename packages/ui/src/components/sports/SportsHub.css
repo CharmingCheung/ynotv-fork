@@ -8465,16 +8465,22 @@
   align-items: center;
   gap: 8px;
   font-size: 0.78rem;
-  color: var(--text-secondary, rgba(255, 255, 255, 0.5));
+  color: var(--text-secondary, rgba(255, 255, 255, 0.7));
 }
 
 .favorite-card-standing {
   font-weight: 600;
-  color: var(--team-color, #3b82f6);
+  color: var(--text-secondary, rgba(255, 255, 255, 0.85));
 }
 
 .favorite-card-record {
   font-weight: 500;
+  color: var(--text-muted, rgba(255, 255, 255, 0.55));
+}
+
+.favorite-card-league {
+  font-weight: 500;
+  color: var(--text-muted, rgba(255, 255, 255, 0.55));
 }
 
 /* Match / Scoreboard Box */

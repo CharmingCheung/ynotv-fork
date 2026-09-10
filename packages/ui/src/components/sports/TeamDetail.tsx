@@ -13,6 +13,7 @@ import {
   getTeamNews,
   formatEventTime, 
   formatEventDate,
+  inferTeamLeague,
   type TeamDetails,
   type TeamAthlete,
   type DepthChartGroup,
@@ -190,14 +191,15 @@ export function TeamDetail({ team, onClose, onChannelClick, onPlayChannel, bread
   const [showFullSchedule, setShowFullSchedule] = useState(false);
   const [chunkBySeries, setChunkBySeries] = useState(true);
 
-  const isFavorite = useIsFavorite(team.id, team.leagueId);
-  const addFavorite = useAddFavorite();
-  const removeFavorite = useRemoveFavorite();
-
   const [loadingTab, setLoadingTab] = useState(false);
 
-  const leagueId = (team.leagueId || 'nfl').toLowerCase();
-  const hasDepthChart = LEAGUES_WITH_DEPTH_CHART.has(leagueId);
+  const resolvedLeague = team.leagueId || inferTeamLeague(team);
+  const leagueId = (resolvedLeague || '').toLowerCase();
+  const hasDepthChart = Boolean(resolvedLeague && LEAGUES_WITH_DEPTH_CHART.has(leagueId));
+
+  const isFavorite = useIsFavorite(team.id, resolvedLeague);
+  const addFavorite = useAddFavorite();
+  const removeFavorite = useRemoveFavorite();
 
   useEffect(() => {
     if (!hasDepthChart && activeTab === 'depth') {
@@ -208,7 +210,7 @@ export function TeamDetail({ team, onClose, onChannelClick, onPlayChannel, bread
   const activeBreadcrumbs = useMemo<BreadcrumbItem[]>(() => {
     if (breadcrumbs && breadcrumbs.length > 0) return breadcrumbs;
 
-    const info = LEAGUE_INFO_MAP[leagueId] || { sportName: 'Sports', leagueName: leagueId.toUpperCase() };
+    const info = (leagueId && LEAGUE_INFO_MAP[leagueId]) || { sportName: 'Sports', leagueName: (leagueId || 'SPORTS').toUpperCase() };
     const rootLabel = fromTab || i18n.t('sports:tabs.leagues');
 
     return [
@@ -219,8 +221,12 @@ export function TeamDetail({ team, onClose, onChannelClick, onPlayChannel, bread
   }, [breadcrumbs, leagueId, team.name, fromTab, details?.name, onClose, onRootClick]);
 
   useEffect(() => {
+    if (!resolvedLeague) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
-    const currentLeagueId = team.leagueId || 'nfl';
+    const currentLeagueId = resolvedLeague;
     
     Promise.all([
       getTeamDetails(team.id, currentLeagueId),
@@ -232,40 +238,45 @@ export function TeamDetail({ team, onClose, onChannelClick, onPlayChannel, bread
         setPast(scheduleResult.past);
       })
       .finally(() => setLoading(false));
-  }, [team.id, team.leagueId]);
+  }, [team.id, team.leagueId, resolvedLeague]);
 
   useEffect(() => {
-    const currentLeagueId = team.leagueId || 'nfl';
+    if (!resolvedLeague) return;
+    const currentLeagueId = resolvedLeague;
     if (hasDepthChart && activeTab === 'depth' && depthChart.length === 0) {
       setLoadingTab(true);
       getTeamDepthChart(team.id, currentLeagueId)
         .then(res => setDepthChart(res))
         .finally(() => setLoadingTab(false));
-    } else if (activeTab === 'injuries' && injuries.length === 0) {
+    }
+    if (activeTab === 'injuries' && injuries.length === 0) {
       setLoadingTab(true);
       getTeamInjuries(team.id, currentLeagueId)
         .then(res => setInjuries(res))
         .finally(() => setLoadingTab(false));
-    } else if (activeTab === 'leaders' && leaders.length === 0) {
+    }
+    if (activeTab === 'leaders' && leaders.length === 0) {
       setLoadingTab(true);
       getTeamLeaders(team.id, currentLeagueId)
         .then(res => setLeaders(res))
         .finally(() => setLoadingTab(false));
-    } else if (activeTab === 'news' && news.length === 0) {
+    }
+    if (activeTab === 'news' && news.length === 0) {
       setLoadingTab(true);
       getTeamNews(team.id, currentLeagueId)
         .then(res => setNews(res))
         .finally(() => setLoadingTab(false));
     }
-  }, [hasDepthChart, activeTab, team.id, team.leagueId, depthChart.length, injuries.length, leaders.length, news.length]);
+  }, [hasDepthChart, activeTab, team.id, team.leagueId, resolvedLeague, depthChart.length, injuries.length, leaders.length, news.length]);
 
   const handleToggleFavorite = useCallback(() => {
+    if (!resolvedLeague) return;
     if (isFavorite) {
-      removeFavorite(team.id, team.leagueId);
+      removeFavorite(team.id, resolvedLeague);
     } else {
-      addFavorite(team);
+      addFavorite({ ...team, leagueId: resolvedLeague });
     }
-  }, [isFavorite, team, addFavorite, removeFavorite]);
+  }, [isFavorite, team, resolvedLeague, addFavorite, removeFavorite]);
 
   const teamColor = details?.color || '00338d';
   const teamColorStyle = `#${teamColor}`;
@@ -322,7 +333,16 @@ export function TeamDetail({ team, onClose, onChannelClick, onPlayChannel, bread
         })}
       </nav>
 
-      {loading ? (
+      {!resolvedLeague ? (
+        <div className="sports-loading" style={{ minHeight: '260px', flexDirection: 'column', gap: '12px' }}>
+          <p style={{ color: 'var(--text-secondary, #aaa)', fontSize: '15px' }}>
+            {t('leagueUnavailable', { defaultValue: 'Unable to determine the league for this team.' })}
+          </p>
+          <button className="sports-btn-secondary" onClick={onClose}>
+            {t('close', { defaultValue: 'Close' })}
+          </button>
+        </div>
+      ) : loading ? (
         <div className="sports-loading">
           <div className="sports-spinner" />
           <span>{t('loadingTeamInfo')}</span>
@@ -620,10 +640,10 @@ export function TeamDetail({ team, onClose, onChannelClick, onPlayChannel, bread
         </>
       )}
 
-      {selectedAthleteId && (
+      {selectedAthleteId && resolvedLeague && (
         <AthleteDetailModal
           athleteId={selectedAthleteId}
-          leagueId={team.leagueId || 'nfl'}
+          leagueId={resolvedLeague}
           onClose={() => setSelectedAthleteId(null)}
         />
       )}

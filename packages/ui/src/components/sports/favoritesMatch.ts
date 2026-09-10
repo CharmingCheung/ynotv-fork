@@ -1,21 +1,27 @@
 import type { SportsEvent, SportsTeam } from '@ynotv/core';
+import { inferTeamLeagueResult } from '../../services/sports/leagueInference';
 
 /**
  * True when an event involves the favorite team. ESPN team IDs are only
- * unique within a league — e.g. id "18" is the NFL Saints but also the MLB
- * Astros — so matching by id alone makes unrelated games (like SF @ HOU)
- * appear as a favorite's game. Match league-aware whenever the favorite knows
- * its league; fall back to id-only for legacy favorites without a leagueId.
- * (Trade-off: a team's games in other competitions, e.g. a soccer favorite's
- * Champions League fixture, won't match here — the favorite card still shows
- * them via the team's own schedule.)
+ * unique within a league — e.g. id "7" is both the NFL Broncos and NBA Nuggets,
+ * and id "18" is the NFL Saints and MLB Astros.
+ *
+ * Matches ID and ensures league awareness, with fallback to inferTeamLeague
+ * so that cross-league events (e.g. NFL Broncos vs Chiefs) NEVER match an NBA Nuggets favorite.
  */
 export function eventInvolvesTeam(
   event: SportsEvent,
-  team: Pick<SportsTeam, 'id' | 'leagueId'>
+  team: { id: string; leagueId?: string; name?: string; logo?: string }
 ): boolean {
   const idMatch = event.homeTeam.id === team.id || event.awayTeam.id === team.id;
   if (!idMatch) return false;
-  if (!team.leagueId || !event.league?.id) return true;
-  return event.league.id === team.leagueId;
+
+  const teamLeague = team.leagueId?.trim().toLowerCase() || inferTeamLeagueResult(team).leagueId;
+  const eventLeague = event.league?.id?.trim().toLowerCase()
+    || event.homeTeam.leagueId?.trim().toLowerCase()
+    || event.awayTeam.leagueId?.trim().toLowerCase();
+
+  // An unresolved legacy ID must not match an event from an arbitrary league.
+  if (!teamLeague || !eventLeague) return false;
+  return teamLeague === eventLeague;
 }

@@ -309,7 +309,7 @@ function saveCachedTeams(leagueId: string, teams: SportsTeam[]) {
 export async function getLeagueTeams(leagueId: string): Promise<SportsTeam[]> {
   const cached = getCachedTeams(leagueId);
   if (cached && cached.length > 0) {
-    return cached;
+    return cached.map(t => ({ ...t, leagueId: t.leagueId || leagueId }));
   }
 
   const config = SPORT_CONFIG[leagueId];

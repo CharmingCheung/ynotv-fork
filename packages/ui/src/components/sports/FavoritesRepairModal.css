@@ -1,0 +1,163 @@
+.sports-favorites-repair-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.78);
+}
+
+.sports-favorites-repair-modal {
+  width: min(560px, 100%);
+  max-height: min(760px, 90vh);
+  overflow-y: auto;
+  padding: 24px;
+  color: var(--text-primary, #fff);
+  background: var(--bg-secondary, #1a1a1a);
+  border: 1px solid var(--border-color, #333);
+  border-radius: 16px;
+  box-shadow: 0 16px 60px rgba(0, 0, 0, 0.5);
+}
+
+.sports-favorites-repair-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.sports-favorites-repair-header h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.sports-favorites-repair-header p {
+  margin: 8px 0 0;
+  color: var(--text-secondary, #aaa);
+  line-height: 1.45;
+}
+
+.sports-favorites-repair-close {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 8px;
+  color: inherit;
+  background: transparent;
+  font-size: 24px;
+  cursor: pointer;
+}
+
+.sports-favorites-repair-progress {
+  margin: 20px 0 12px;
+  color: var(--text-secondary, #aaa);
+  font-size: 13px;
+}
+
+.sports-favorites-repair-team {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+  padding: 14px;
+  border-radius: 10px;
+  background: var(--bg-primary, #101010);
+}
+
+.sports-favorites-repair-team img,
+.sports-favorites-repair-candidate img {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+}
+
+.sports-favorites-repair-team div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sports-favorites-repair-team span,
+.sports-favorites-repair-candidate small {
+  color: var(--text-secondary, #aaa);
+  font-size: 12px;
+}
+
+.sports-favorites-repair-label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--text-secondary, #bbb);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.sports-favorites-repair-select {
+  width: 100%;
+  padding: 10px 12px;
+  color: inherit;
+  background: var(--bg-primary, #101010);
+  border: 1px solid var(--border-color, #444);
+  border-radius: 8px;
+}
+
+.sports-favorites-repair-candidates {
+  margin-top: 20px;
+}
+
+.sports-favorites-repair-candidate {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  color: inherit;
+  text-align: left;
+  background: var(--bg-primary, #101010);
+  border: 1px solid var(--border-color, #333);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.sports-favorites-repair-candidate:hover {
+  border-color: var(--accent-primary, #00d4ff);
+}
+
+.sports-favorites-repair-candidate span {
+  flex: 1;
+}
+
+.sports-favorites-repair-loading,
+.sports-favorites-repair-no-match {
+  color: var(--text-secondary, #aaa);
+  font-size: 13px;
+}
+
+.sports-favorites-repair-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.sports-favorites-repair-skip,
+.sports-favorites-repair-confirm {
+  padding: 10px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.sports-favorites-repair-skip {
+  color: var(--text-secondary, #bbb);
+  background: transparent;
+  border: 1px solid var(--border-color, #444);
+}
+
+.sports-favorites-repair-confirm {
+  color: #000;
+  background: var(--accent-primary, #00d4ff);
+  border: 1px solid transparent;
+  font-weight: 600;
+}

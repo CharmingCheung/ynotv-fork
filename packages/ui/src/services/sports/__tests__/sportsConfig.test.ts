@@ -77,9 +77,14 @@ describe('AFL Sports Configuration', () => {
     expect(matchesFavorite(nflPatriots, '17', 'afl')).toBe(false);
     expect(matchesFavorite(nflPatriots, '17', 'nfl')).toBe(true);
 
-    // Legacy favorites without leagueId still match by id
-    const legacyFav = { id: '17', name: 'Some Team', addedAt: 1 };
-    expect(matchesFavorite(legacyFav, '17', 'afl')).toBe(true);
+    // Legacy favorites with identifiable names infer league and isolate correctly
+    const legacyCollingwood = { id: '17', name: 'Collingwood Magpies', addedAt: 1 };
+    expect(matchesFavorite(legacyCollingwood, '17', 'afl')).toBe(true);
+    expect(matchesFavorite(legacyCollingwood, '17', 'nfl')).toBe(false);
+
+    // Completely unresolvable favorites fail closed to prevent cross-league collision
+    const unresolvableFav = { id: '17', name: 'Some Unknown Team', addedAt: 1 };
+    expect(matchesFavorite(unresolvableFav, '17', 'afl')).toBe(false);
   });
 
   it('extracts AFL scoring plays including Goals, Behinds, and Rushed behinds', () => {

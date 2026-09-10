@@ -204,3 +204,11 @@ export {
   getLeaguesBySport,
   getLeagueLogos,
 } from './utils';
+
+// League Inference
+export {
+  inferTeamLeague,
+  inferTeamLeagueResult,
+  inferLeagueFromLogoUrl,
+  inferLeagueFromTeamName,
+} from './leagueInference';

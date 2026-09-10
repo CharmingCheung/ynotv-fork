@@ -24,7 +24,7 @@ import { TeamDetail } from './TeamDetail';
 import { GameDetail } from './GameDetail';
 import { SportsCalendarModal } from './SportsCalendarModal';
 import { useSportsSettingsStore } from '../../stores/sportsSettingsStore';
-import { useSportsFavoritesStore } from '../../stores/sportsFavoritesStore';
+import { useSportsFavoritesStore, matchesFavorite } from '../../stores/sportsFavoritesStore';
 
 interface LeaguesTabProps {
   onSearchChannels?: (channelName: string) => void;
@@ -232,7 +232,7 @@ const getSportGradient = (sport: string) => {
   return SPORT_GRADIENTS[sport] || 'linear-gradient(135deg, #818cf8 0%, #3730a3 100%)';
 };
 
-function groupTeamsByDivision(teams: SportsTeam[], leagueId?: string): Map<string, SportsTeam[]> {
+export function groupTeamsByDivision(teams: SportsTeam[], leagueId?: string): Map<string, SportsTeam[]> {
   const groups = new Map<string, SportsTeam[]>();
   const lid = (leagueId || '').toLowerCase();
 
@@ -326,9 +326,9 @@ function groupTeamsByDivision(teams: SportsTeam[], leagueId?: string): Map<strin
       else if (fullName.includes('padres')) divName = 'NL West';
       else if (fullName.includes('giants')) divName = 'NL West';
     } else if (lid === 'nba') {
-      if (fullName.includes('celtics') || fullName.includes('nets') || fullName.includes('knicks') || fullName.includes('76ers') || fullName.includes('raptors')) divName = 'Atlantic Division';
+      if (fullName.includes('hawks') || fullName.includes('hornets') || fullName.includes('heat') || fullName.includes('magic') || fullName.includes('wizards')) divName = 'Southeast Division';
+      else if (fullName.includes('celtics') || ((fullName.includes('brooklyn') || /\bnets\b/i.test(fullName)) && !fullName.includes('hornets')) || fullName.includes('knicks') || fullName.includes('76ers') || fullName.includes('raptors')) divName = 'Atlantic Division';
       else if (fullName.includes('bulls') || fullName.includes('cavaliers') || fullName.includes('pistons') || fullName.includes('pacers') || fullName.includes('bucks')) divName = 'Central Division';
-      else if (fullName.includes('hawks') || fullName.includes('hornets') || fullName.includes('heat') || fullName.includes('magic') || fullName.includes('wizards')) divName = 'Southeast Division';
       else if (fullName.includes('nuggets') || fullName.includes('timberwolves') || fullName.includes('thunder') || fullName.includes('trail blazers') || fullName.includes('blazers') || fullName.includes('jazz')) divName = 'Northwest Division';
       else if (fullName.includes('warriors') || fullName.includes('clippers') || fullName.includes('lakers') || fullName.includes('suns') || fullName.includes('kings')) divName = 'Pacific Division';
       else if (fullName.includes('mavericks') || fullName.includes('rockets') || fullName.includes('grizzlies') || fullName.includes('pelicans') || fullName.includes('spurs')) divName = 'Southwest Division';
@@ -1459,7 +1459,7 @@ export function LeaguesTab({ onSearchChannels, onPlayChannel }: LeaguesTabProps)
                           <div className="sports-teams-stacked-list">
                             {divTeams.map((team) => {
                               const teamAny = team as any;
-                              const isFav = favorites.some((f) => f.id === team.id && (!f.leagueId || f.leagueId.toLowerCase() === selectedLeague.id.toLowerCase()));
+                              const isFav = favorites.some((f) => matchesFavorite(f, team.id, selectedLeague.id));
                               const primaryColor = teamAny.color ? `#${teamAny.color.replace('#', '')}` : '#6366f1';
 
                               return (
@@ -1533,7 +1533,7 @@ export function LeaguesTab({ onSearchChannels, onPlayChannel }: LeaguesTabProps)
                           <div className="league-division-column-teams">
                             {divTeams.map((team, idx) => {
                               const teamAny = team as any;
-                              const isFav = favorites.some((f) => f.id === team.id && (!f.leagueId || f.leagueId.toLowerCase() === selectedLeague.id.toLowerCase()));
+                              const isFav = favorites.some((f) => matchesFavorite(f, team.id, selectedLeague.id));
                               const primaryColor = teamAny.color ? `#${teamAny.color.replace('#', '')}` : '#6366f1';
 
                               return (
@@ -1597,7 +1597,7 @@ export function LeaguesTab({ onSearchChannels, onPlayChannel }: LeaguesTabProps)
                           <div className="sports-teams-grid-v2">
                             {divTeams.map((team) => {
                               const teamAny = team as any;
-                              const isFav = favorites.some((f) => f.id === team.id && (!f.leagueId || f.leagueId.toLowerCase() === selectedLeague.id.toLowerCase()));
+                              const isFav = favorites.some((f) => matchesFavorite(f, team.id, selectedLeague.id));
                               const primaryColor = teamAny.color ? `#${teamAny.color.replace('#', '')}` : '#6366f1';
 
                               return (

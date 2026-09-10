@@ -74,25 +74,26 @@ function buildESPNLogoUrl(teamId: string, sportKey: string): string | undefined 
   return `https://a.espncdn.com/i/teamlogos/${sportPath}/500/${teamId}.png`;
 }
 
-function getAthleteInfo(competitor: ESPNEvent['competitions'][0]['competitors'][0] | undefined): SportsTeam {
+function getAthleteInfo(competitor: ESPNEvent['competitions'][0]['competitors'][0] | undefined, sportKey?: string): SportsTeam {
   if (competitor?.athlete) {
     return {
       id: competitor.athlete.id,
       name: competitor.athlete.displayName || competitor.athlete.fullName || 'Unknown',
       shortName: competitor.athlete.shortName,
       logo: competitor.athlete.headshot?.href,
+      leagueId: sportKey,
     };
   }
-  return { id: competitor?.id || '', name: 'TBD', shortName: undefined, logo: undefined };
+  return { id: competitor?.id || '', name: 'TBD', shortName: undefined, logo: undefined, leagueId: sportKey };
 }
 
 function getTeamInfo(competitor: ESPNEvent['competitions'][0]['competitors'][0] | undefined, sportKey: string): SportsTeam {
   if (!competitor) {
-    return { id: '', name: 'TBD', shortName: undefined, logo: undefined };
+    return { id: '', name: 'TBD', shortName: undefined, logo: undefined, leagueId: sportKey };
   }
 
   if (competitor.athlete) {
-    return getAthleteInfo(competitor);
+    return getAthleteInfo(competitor, sportKey);
   }
 
   if (competitor.team) {
@@ -103,10 +104,11 @@ function getTeamInfo(competitor: ESPNEvent['competitions'][0]['competitors'][0] 
       name: competitor.team.displayName || 'Unknown',
       shortName: competitor.team.abbreviation,
       logo: apiLogo || fallbackLogo,
+      leagueId: sportKey,
     };
   }
 
-  return { id: competitor.id, name: 'Unknown', shortName: undefined, logo: undefined };
+  return { id: competitor.id, name: 'Unknown', shortName: undefined, logo: undefined, leagueId: sportKey };
 }
 
 function getScore(competitor: ESPNEvent['competitions'][0]['competitors'][0] | undefined): number | undefined {
@@ -190,8 +192,8 @@ function mapUFCEvent(event: ESPNEvent, config: SportConfig): SportsEvent {
   if (state === 'in') status = 'live';
   else if (state === 'post') status = 'finished';
 
-  const homeTeam = getAthleteInfo(mainHome);
-  const awayTeam = getAthleteInfo(mainAway);
+  const homeTeam = getAthleteInfo(mainHome, 'ufc');
+  const awayTeam = getAthleteInfo(mainAway, 'ufc');
 
   return {
     id: event.id,
@@ -264,8 +266,9 @@ function mapRacingEvent(event: ESPNEvent, sportKey: string, config: SportConfig)
         name: p1.athlete?.displayName || p1.athlete?.fullName || 'TBD',
         shortName: p1.athlete?.shortName,
         logo: p1.athlete?.headshot?.href,
+        leagueId: sportKey,
       }
-    : { id: '', name: 'TBD', shortName: undefined, logo: undefined };
+    : { id: '', name: 'TBD', shortName: undefined, logo: undefined, leagueId: sportKey };
 
   const awayTeam = p2
     ? {
@@ -273,8 +276,9 @@ function mapRacingEvent(event: ESPNEvent, sportKey: string, config: SportConfig)
         name: p2.athlete?.displayName || p2.athlete?.fullName || 'TBD',
         shortName: p2.athlete?.shortName,
         logo: p2.athlete?.headshot?.href,
+        leagueId: sportKey,
       }
-    : { id: '', name: 'TBD', shortName: undefined, logo: undefined };
+    : { id: '', name: 'TBD', shortName: undefined, logo: undefined, leagueId: sportKey };
 
   const state = event.status?.type?.state || 'pre';
   let status: SportsEvent['status'] = 'scheduled';
@@ -337,6 +341,7 @@ function mapGolfEvent(event: ESPNEvent, sportKey: string, config: SportConfig): 
     name: event.name,
     shortName: event.shortName,
     logo: undefined,
+    leagueId: sportKey,
   };
 
   const awayTeam = leader?.athlete
@@ -345,8 +350,9 @@ function mapGolfEvent(event: ESPNEvent, sportKey: string, config: SportConfig): 
         name: leader.athlete.displayName || leader.athlete.fullName || 'Leader',
         shortName: leader.athlete.shortName,
         logo: leader.athlete.flag?.href,
+        leagueId: sportKey,
       }
-    : { id: '', name: 'Leader TBD', shortName: undefined, logo: undefined };
+    : { id: '', name: 'Leader TBD', shortName: undefined, logo: undefined, leagueId: sportKey };
 
   return {
     id: event.id,
@@ -486,12 +492,12 @@ function mapTennisEvent(event: ESPNEvent, sportKey: string, config: SportConfig)
     || matches[0];
 
   const awayTeam = featuredMatch
-    ? { id: featuredMatch.id, name: featuredMatch.awayName, shortName: undefined, logo: featuredMatch.awayLogo }
-    : { id: '', name: 'TBD', shortName: undefined, logo: undefined };
+    ? { id: featuredMatch.id, name: featuredMatch.awayName, shortName: undefined, logo: featuredMatch.awayLogo, leagueId: sportKey }
+    : { id: '', name: 'TBD', shortName: undefined, logo: undefined, leagueId: sportKey };
 
   const homeTeam = featuredMatch
-    ? { id: featuredMatch.id, name: featuredMatch.homeName, shortName: undefined, logo: featuredMatch.homeLogo }
-    : { id: '', name: 'TBD', shortName: undefined, logo: undefined };
+    ? { id: featuredMatch.id, name: featuredMatch.homeName, shortName: undefined, logo: featuredMatch.homeLogo, leagueId: sportKey }
+    : { id: '', name: 'TBD', shortName: undefined, logo: undefined, leagueId: sportKey };
 
   return {
     id: event.id,

@@ -37,14 +37,14 @@ describe('eventInvolvesTeam', () => {
     expect(eventInvolvesTeam(event, { id: '18', leagueId: 'nfl' })).toBe(false);
   });
 
-  it('falls back to id-only matching for legacy favorites without a leagueId', () => {
+  it('fails closed and rejects matching for unresolved legacy favorites without a leagueId', () => {
     const event = makeEvent('137', '18', 'mlb');
-    expect(eventInvolvesTeam(event, { id: '18', leagueId: undefined })).toBe(true);
+    expect(eventInvolvesTeam(event, { id: '18', leagueId: undefined })).toBe(false);
   });
 
-  it('falls back to id-only matching when the event has no league info', () => {
+  it('fails closed and rejects matching when the event has no league info', () => {
     const event = makeEvent('137', '18', 'mlb');
     const noLeague = { ...event, league: undefined as any };
-    expect(eventInvolvesTeam(noLeague, { id: '18', leagueId: 'nfl' })).toBe(true);
+    expect(eventInvolvesTeam(noLeague, { id: '18', leagueId: 'nfl' })).toBe(false);
   });
 });
