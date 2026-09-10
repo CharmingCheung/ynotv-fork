@@ -41,7 +41,7 @@ const DEFAULT_SETTINGS: SkipIntroSettings = {
  * - Stremio / Nuvio episode metadata
  * - Media ID / Series ID regex patterns (e.g. local_tt39837101_ep_...)
  * - Local Library store lookup
- * - Dexie vodSeries DB lookup
+ * - Local SQLite vodSeries DB lookup
  * - TMDb external IDs resolution (if TMDb ID is known)
  * - TVMaze fallback lookup
  * - Filename episode regex parsing (e.g. S01E01)
@@ -120,7 +120,7 @@ export async function resolveIntroDbParams(
       }
     }
 
-    // 5. Dexie DB lookup for standard VOD series
+    // 5. Local DB lookup for standard VOD series
     if (!imdbId && vodInfo.seriesId) {
       try {
         const series = await db.vodSeries.get(vodInfo.seriesId);

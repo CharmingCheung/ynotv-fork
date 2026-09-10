@@ -146,8 +146,18 @@ export function useCategories() {
 
       // Parallel loading: categories, custom groups, and favorite count all at once
       const [allCategoriesResult, customGroupsResult, favoriteCountResult, recentChannelsResult] = await Promise.all([
-        // Load categories and filter by enabled sources
-        db.categories.filter(cat => enabledSourceIds.has(cat.source_id)).sortBy('category_name').catch(err => {
+        // Load categories for enabled sources. SQL-side source filter + sort so
+        // we don't pull every category across ALL sources into JS just to drop
+        // most of them (the old filter().sortBy() path did a full table read).
+        (async () => {
+          const idsList = Array.from(enabledSourceIds);
+          if (idsList.length === 0) return [];
+          const placeholders = idsList.map(() => '?').join(',');
+          return await db.categories.whereRaw(
+            `source_id IN (${placeholders}) ORDER BY category_name`,
+            idsList
+          ).toArray();
+        })().catch(err => {
           console.error('[useCategories] Failed to load categories:', err);
           return [];
         }),

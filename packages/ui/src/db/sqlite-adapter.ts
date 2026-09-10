@@ -209,9 +209,9 @@ export { Mutex };
 
 const writeLock = new Mutex();
 
-// Helper class for client-side filtering and chaining (Dexie Compatibility)
-
-// Helper class for client-side filtering and chaining (Dexie Compatibility)
+// Helper class for client-side filtering and chaining. Mirrors the Dexie
+// Collection API so consumers can keep using the familiar chainable surface
+// (where/filter/sortBy/toArray) on top of SQLite.
 class SqliteCollection<T, TKey> {
     private fetcher: () => Promise<T[]>;
     private table: SqliteTable<T, TKey>;
@@ -992,7 +992,7 @@ class SqliteQuery<T> {
             // Special handling for category_ids (stored as JSON array string)
             if (this.field === 'category_ids' && this.op === '=' && typeof this.value === 'string') {
                 query += ` WHERE ${this.field} LIKE $1`;
-                params = [`%${this.value}%`];
+                params = [`%"${this.value}"%`];
             } else {
                 query += ` WHERE ${this.field}`;
                 if (this.op === 'IN' && Array.isArray(this.value)) {
@@ -1024,7 +1024,7 @@ class SqliteQuery<T> {
                 // Special handling for category_ids (stored as JSON array string)
                 if (this.field === 'category_ids' && this.op === '=' && typeof this.value === 'string') {
                     query += ` WHERE ${this.field} LIKE $1`;
-                    params = [`%${this.value}%`];
+                    params = [`%"${this.value}"%`];
                 } else {
                     query += ` WHERE ${this.field}`;
                     if (this.op === 'IN' && Array.isArray(this.value)) {
