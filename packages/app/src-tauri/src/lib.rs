@@ -4643,9 +4643,11 @@ async fn spawn_external_player_with_args(
 // =============================================================================
 
 #[derive(Default)]
-struct WindowStateTracker {
-    last_unmaximized: std::sync::Mutex<Option<WindowState>>,
-    last_non_fullscreen_maximized: std::sync::Mutex<bool>,
+pub(crate) struct WindowStateTracker {
+    pub(crate) last_unmaximized: std::sync::Mutex<Option<WindowState>>,
+    pub(crate) last_non_fullscreen_maximized: std::sync::Mutex<bool>,
+    pub(crate) pending_startup_maximize: std::sync::atomic::AtomicBool,
+    pub(crate) pending_startup_fullscreen: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -4879,6 +4881,7 @@ fn fallback_update_store_file<R: tauri::Runtime>(app: &tauri::AppHandle<R>, widt
     }
 }
 
+#[allow(dead_code)]
 fn restore_window_state(app: &tauri::AppHandle) {
     if let Some(path) = window_state_path(app) {
         if let Ok(json) = std::fs::read_to_string(&path) {
@@ -4933,6 +4936,11 @@ fn restore_window_position(app: &tauri::AppHandle) {
                     // dontSaveWindowSizeOnClose has width/height 0 but still carries a
                     // valid position and fullscreen/maximized flags, and those must
                     // not be discarded together.
+                    #[cfg(desktop)]
+                    let is_startup_tray = tray::is_startup_tray_launch();
+                    #[cfg(not(desktop))]
+                    let is_startup_tray = false;
+
                     if !valid_position {
                         // Recover from a state captured while Windows had the window
                         // minimized (sentinel -32000,-32000) instead of replaying the
@@ -4966,9 +4974,11 @@ fn restore_window_position(app: &tauri::AppHandle) {
                         if let Ok(recovered_json) = serde_json::to_string(&recovered) {
                             let _ = std::fs::write(&path, recovered_json);
                         }
-                        let _ = window.unminimize();
-                        let _ = window.show();
-                        let _ = window.set_focus();
+                        if !is_startup_tray {
+                            let _ = window.unminimize();
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
                         return;
                     }
 
@@ -4989,16 +4999,27 @@ fn restore_window_position(app: &tauri::AppHandle) {
                             tauri::LogicalSize { width: state.width as f64, height: state.height as f64 }
                         ));
                     }
-                    if state.maximized {
-                        let _ = window.maximize();
-                        debug!("[WindowState] Restored maximized state");
+                    if is_startup_tray {
+                        if let Some(tracker) = app.try_state::<WindowStateTracker>() {
+                            if state.maximized {
+                                tracker.pending_startup_maximize.store(true, std::sync::atomic::Ordering::Relaxed);
+                            }
+                            if state.fullscreen {
+                                tracker.pending_startup_fullscreen.store(true, std::sync::atomic::Ordering::Relaxed);
+                            }
+                        }
+                    } else {
+                        if state.maximized {
+                            let _ = window.maximize();
+                            debug!("[WindowState] Restored maximized state");
+                        }
+                        if state.fullscreen {
+                            let _ = window.set_fullscreen(true);
+                            debug!("[WindowState] Restored fullscreen state");
+                        }
+                        let _ = window.unminimize();
+                        let _ = window.show();
                     }
-                    if state.fullscreen {
-                        let _ = window.set_fullscreen(true);
-                        debug!("[WindowState] Restored fullscreen state");
-                    }
-                    let _ = window.unminimize();
-                    let _ = window.show();
                 }
             }
         }
@@ -5129,13 +5150,25 @@ pub fn run() {
             // WAL recovery) runs. The window is transparent, so until React
             // paints it has no visible content - making it visible early means
             // a slow startup shows the boot splash instead of "no window".
+            // If started via Windows startup (--startup-tray), keep it hidden
+            // in the system tray so it never flashes on screen or steals focus at logon.
             if let Some(window) = app.get_window("main") {
                 if let Some(icon) = app.default_window_icon() {
                     let _ = window.set_icon(icon.clone());
                 }
-                let _ = window.show();
-                let _ = window.unminimize();
-                let _ = window.set_focus();
+                #[cfg(desktop)]
+                let is_startup_tray = tray::is_startup_tray_launch();
+                #[cfg(not(desktop))]
+                let is_startup_tray = false;
+
+                if is_startup_tray {
+                    let _ = window.hide();
+                    info!("[Tray] Started via Windows startup; running hidden in the system tray.");
+                } else {
+                    let _ = window.show();
+                    let _ = window.unminimize();
+                    let _ = window.set_focus();
+                }
             }
             // Restore saved window position only (not size - size is controlled by UI settings)
             // Position is restored so the window opens in the same place it was closed
@@ -5242,6 +5275,7 @@ pub fn run() {
             if let Err(e) = tray::setup(app.handle()) {
                 error!("[Tray] Failed to set up system tray: {}", e);
             }
+
 
             // Register the logo cache as managed state so it's shared across all
             // logo cache commands instead of being re-created each call.
@@ -5469,6 +5503,7 @@ pub fn run() {
             open_log_folder,
             // Tray / minimize-to-tray commands
             tray::set_minimize_to_tray,
+            tray::set_launch_at_startup,
             // TVMaze / TV Calendar commands
             search_tvmaze,
             add_tv_favorite,

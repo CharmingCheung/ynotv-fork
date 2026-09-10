@@ -209,6 +209,9 @@ const SETTINGS_SEARCH_INDEX: SettingsSearchResult[] = [
   // --- UI ---
   { id: 'ui-tab', label: 'UI', tabId: 'ui', tabLabel: 'UI', section: 'UI' },
   { id: 'modern-ui-design', label: 'UI Design', description: 'Select the design layout: V1 (Classic), V2 (Modern), or V3.', tabId: 'ui', tabLabel: 'UI', section: 'UI' },
+  { id: 'minimize-to-tray', label: 'Minimize to tray when closing', description: 'When enabled, closing the window hides it to the system tray so playback and recordings continue running.', tabId: 'ui', tabLabel: 'UI', section: 'UI' },
+  { id: 'launch-on-windows-startup', label: 'Launch on Windows startup', description: 'When enabled, ynoTV starts automatically when you sign in to Windows.', tabId: 'ui', tabLabel: 'UI', section: 'UI' },
+  { id: 'launch-to-tray-on-startup', label: 'Launch to tray on startup', description: 'When enabled, ynoTV starts hidden in the system tray instead of showing its window (requires Launch on Windows startup).', tabId: 'ui', tabLabel: 'UI', section: 'UI' },
   { id: 'collapse-source-categories', label: 'Collapse Source Categories on Startup', description: 'Source categories will be collapsed by default when LiveTV and VOD Category views load.', tabId: 'ui', tabLabel: 'UI', section: 'UI' },
   { id: 'autohide-overlay-timer', label: 'Autohide Overlay Timer', description: 'How long to wait before hiding UI controls when inactive.', tabId: 'ui', tabLabel: 'UI', section: 'UI' },
   { id: 'window-width', label: 'Window Width', tabId: 'ui', tabLabel: 'UI', section: 'Window Settings' },

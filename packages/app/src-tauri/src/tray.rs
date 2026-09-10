@@ -55,6 +55,14 @@ pub fn show_main_window(app: &AppHandle<impl Runtime>) {
     if let Some(window) = app.get_window("main") {
         let _ = window.show();
         let _ = window.unminimize();
+        if let Some(tracker) = app.try_state::<crate::WindowStateTracker>() {
+            if tracker.pending_startup_maximize.swap(false, Ordering::Relaxed) {
+                let _ = window.maximize();
+            }
+            if tracker.pending_startup_fullscreen.swap(false, Ordering::Relaxed) {
+                let _ = window.set_fullscreen(true);
+            }
+        }
         let _ = window.set_focus();
     }
 }
@@ -114,4 +122,73 @@ pub fn set_minimize_to_tray(app: AppHandle, enabled: bool) -> bool {
         .minimize_to_tray
         .store(enabled, Ordering::Relaxed);
     enabled
+}
+
+/// Whether this process was launched by Windows startup with the tray option
+/// ("Launch to tray on startup"): the HKCU Run entry written by
+/// `set_launch_at_startup` appends `--startup-tray` only when the tray option
+/// is enabled, so the app knows to start hidden in the tray instead of
+/// showing its window. A plain "Launch on Windows startup" entry has no such
+/// argument and shows the window normally.
+pub fn is_startup_tray_launch() -> bool {
+    std::env::args().any(|a| a == "--startup-tray")
+}
+
+/// Enable/disable "Launch on Windows startup".
+///
+/// Registers (or removes) the HKCU `...\CurrentVersion\Run` entry pointing at
+/// the current executable. When `tray` is true the command line includes the
+/// `--startup-tray` argument so Windows starts ynoTV hidden in the system
+/// tray on logon; when false the app starts with its normal window. No-op on
+/// non-Windows platforms.
+#[tauri::command]
+pub fn set_launch_at_startup(enabled: bool, tray: bool) -> Result<bool, String> {
+    #[cfg(target_os = "windows")]
+    set_launch_at_startup_windows(enabled, tray)?;
+
+    #[cfg(not(target_os = "windows"))]
+    log::info!(
+        "[Tray] Launch-at-startup is only supported on Windows; ignoring toggle ({enabled}, tray: {tray})"
+    );
+
+    Ok(enabled)
+}
+
+/// Write/remove the per-user Windows startup entry. The Run key always exists
+/// under HKCU, so we only need to open it with write access.
+#[cfg(target_os = "windows")]
+fn set_launch_at_startup_windows(enabled: bool, tray: bool) -> Result<(), String> {
+    use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_SET_VALUE};
+    use winreg::RegKey;
+
+    const RUN_KEY_PATH: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+    const VALUE_NAME: &str = "ynoTV";
+
+    let exe = std::env::current_exe()
+        .map_err(|e| format!("Failed to resolve executable path: {e}"))?;
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let run_key = hkcu
+        .open_subkey_with_flags(RUN_KEY_PATH, KEY_READ | KEY_SET_VALUE)
+        .map_err(|e| format!("Failed to open Windows Run key: {e}"))?;
+
+    if enabled {
+        let command_line = if tray {
+            format!("\"{}\" --startup-tray", exe.to_string_lossy())
+        } else {
+            format!("\"{}\"", exe.to_string_lossy())
+        };
+        run_key
+            .set_value(VALUE_NAME, &command_line)
+            .map_err(|e| format!("Failed to write Windows startup entry: {e}"))?;
+        log::info!("[Tray] Launch-at-startup enabled: {command_line}");
+    } else {
+        // Ignore "value not found" — disabling an already-disabled entry is fine.
+        match run_key.delete_value(VALUE_NAME) {
+            Ok(()) => log::info!("[Tray] Launch-at-startup disabled."),
+            Err(e) => {
+                log::warn!("[Tray] Failed to remove Windows startup entry (may already be absent): {e}")
+            }
+        }
+    }
+    Ok(())
 }

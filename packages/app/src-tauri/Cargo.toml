@@ -141,6 +141,9 @@ windows = { version = "0.58", features = [
     "Win32_System_Com_StructuredStorage",
     "Win32_System_Variant",
 ] }
+# Registry access for "Launch to tray on Windows startup" (HKCU Run key);
+# already in the lockfile as a transitive dependency, so no new downloads.
+winreg = "0.55"
 
 [dev-dependencies]
 tempfile = "3"

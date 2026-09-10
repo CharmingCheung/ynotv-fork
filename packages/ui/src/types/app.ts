@@ -178,6 +178,10 @@ export interface AppSettings {
     startupHeight?: number;
     dontSaveWindowSizeOnClose?: boolean;
     minimizeToTray?: boolean;
+    // Launch on Windows startup (registers the HKCU Run entry).
+    launchOnStartup?: boolean;
+    // Launch to tray on startup (requires launchOnStartup; appends --startup-tray).
+    launchToTrayOnStartup?: boolean;
     playerControlDesign?: 'default' | 'clean';
     showVolumePercent?: boolean;
     overlayAutohideTimer?: number;

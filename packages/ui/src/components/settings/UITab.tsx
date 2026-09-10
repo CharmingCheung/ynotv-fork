@@ -12,6 +12,8 @@ interface UITabProps {
     startupHeight?: number;
     dontSaveWindowSizeOnClose?: boolean;
     minimizeToTray?: boolean;
+    launchOnStartup?: boolean;
+    launchToTrayOnStartup?: boolean;
     modernUiEnabled?: boolean | string;
     collapseSourceCategoriesOnStartup?: boolean;
     overlayAutohideTimer?: number;
@@ -36,6 +38,8 @@ interface UITabProps {
     startupHeight?: number;
     dontSaveWindowSizeOnClose?: boolean;
     minimizeToTray?: boolean;
+    launchOnStartup?: boolean;
+    launchToTrayOnStartup?: boolean;
     modernUiEnabled?: boolean | string;
     collapseSourceCategoriesOnStartup?: boolean;
     overlayAutohideTimer?: number;
@@ -308,6 +312,75 @@ export function UITab({ settings, onSettingsChange }: UITabProps) {
                       onSettingsChange({ ...settings, minimizeToTray: enabled });
                       invoke('set_minimize_to_tray', { enabled }).catch((err) =>
                         console.error('[Tray] Failed to update minimize-to-tray flag:', err)
+                      );
+                    }}
+                  />
+                  <span className="toggle-slider" />
+                </label>
+              </div>
+
+              {/* Launch on Windows startup */}
+              <div className="timeshift-toggle-row">
+                <div className="timeshift-toggle-info">
+                  <span className="timeshift-toggle-label" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {i18n.t('settings:ui.launchOnStartup')}
+                    <div className="epg-tooltip">
+                      <span className="epg-tooltip-icon">?</span>
+                      <div className="epg-tooltip-content">
+                        {i18n.t('settings:ui.launchOnStartupTooltip')}
+                      </div>
+                    </div>
+                  </span>
+                </div>
+                <label className="toggle-switch">
+                  <input
+                    type="checkbox"
+                    checked={settings.launchOnStartup ?? false}
+                    onChange={(e) => {
+                      const launchOnStartup = e.target.checked;
+                      // The tray option requires launch-on-startup; turning
+                      // launch off also turns the tray option off.
+                      const launchToTrayOnStartup =
+                        launchOnStartup && (settings.launchToTrayOnStartup ?? false);
+                      onSettingsChange({ ...settings, launchOnStartup, launchToTrayOnStartup });
+                      invoke('set_launch_at_startup', {
+                        enabled: launchOnStartup,
+                        tray: launchToTrayOnStartup,
+                      }).catch((err) =>
+                        console.error('[Tray] Failed to update launch-at-startup:', err)
+                      );
+                    }}
+                  />
+                  <span className="toggle-slider" />
+                </label>
+              </div>
+
+              {/* Launch to tray on startup (requires Launch on Windows startup) */}
+              <div className="timeshift-toggle-row" style={{ opacity: settings.launchOnStartup ? 1 : 0.5 }}>
+                <div className="timeshift-toggle-info">
+                  <span className="timeshift-toggle-label" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {i18n.t('settings:ui.launchToTrayOnStartup')}
+                    <div className="epg-tooltip">
+                      <span className="epg-tooltip-icon">?</span>
+                      <div className="epg-tooltip-content">
+                        {i18n.t('settings:ui.launchToTrayOnStartupTooltip')}
+                      </div>
+                    </div>
+                  </span>
+                </div>
+                <label className="toggle-switch">
+                  <input
+                    type="checkbox"
+                    disabled={!settings.launchOnStartup}
+                    checked={(settings.launchToTrayOnStartup ?? false) && !!settings.launchOnStartup}
+                    onChange={(e) => {
+                      const launchToTrayOnStartup = e.target.checked;
+                      onSettingsChange({ ...settings, launchToTrayOnStartup });
+                      invoke('set_launch_at_startup', {
+                        enabled: settings.launchOnStartup ?? false,
+                        tray: launchToTrayOnStartup,
+                      }).catch((err) =>
+                        console.error('[Tray] Failed to update launch-to-tray:', err)
                       );
                     }}
                   />

@@ -7919,6 +7919,7 @@ dependencies = [
  "walkdir",
  "which 7.0.3",
  "windows 0.58.0",
+ "winreg",
 ]
 
 [[package]]

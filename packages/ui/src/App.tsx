@@ -5541,6 +5541,21 @@ function useTmdbPresencePoster(
           );
         }
 
+        // Keep the Windows startup registry entry in sync with the persisted
+        // settings (handles app upgrades or exe path changes so auto-start
+        // remains valid). The tray flag implies launch, so migrate pre-split
+        // "launchToTrayOnStartup" users to both toggles on.
+        if (typeof settings.launchOnStartup === 'boolean' || typeof settings.launchToTrayOnStartup === 'boolean') {
+          const launchOnStartup = settings.launchOnStartup ?? settings.launchToTrayOnStartup ?? false;
+          const launchToTrayOnStartup = launchOnStartup && (settings.launchToTrayOnStartup ?? false);
+          invoke('set_launch_at_startup', {
+            enabled: launchOnStartup,
+            tray: launchToTrayOnStartup,
+          }).catch((err) =>
+            console.warn('[Tray] Failed to sync launch-at-startup flags on startup:', err)
+          );
+        }
+
         const requestedWidth = settings.startupWidth || 1920;
         const requestedHeight = settings.startupHeight || 1080;
 

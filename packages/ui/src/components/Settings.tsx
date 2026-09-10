@@ -472,6 +472,8 @@ export function Settings({
     startupHeight?: number;
     dontSaveWindowSizeOnClose?: boolean;
     minimizeToTray?: boolean;
+    launchOnStartup?: boolean;
+    launchToTrayOnStartup?: boolean;
     modernUiEnabled?: boolean | string;
     collapseSourceCategoriesOnStartup?: boolean;
     overlayAutohideTimer?: number;
@@ -482,6 +484,8 @@ export function Settings({
   }>({
     modernUiEnabled: 'v3',
     minimizeToTray: false,
+    launchOnStartup: false,
+    launchToTrayOnStartup: false,
     collapseSourceCategoriesOnStartup: true,
     overlayAutohideTimer: 3,
     overlayOnClickOnly: false,
@@ -976,6 +980,8 @@ export function Settings({
         startupHeight?: number;
         dontSaveWindowSizeOnClose?: boolean;
         minimizeToTray?: boolean;
+        launchOnStartup?: boolean;
+        launchToTrayOnStartup?: boolean;
         rememberLastChannels?: boolean;
         reopenLastOnStartup?: boolean;
         savedLayoutState?: SavedLayoutState;
@@ -1191,6 +1197,13 @@ export function Settings({
         startupHeight: settings.startupHeight,
         dontSaveWindowSizeOnClose: settings.dontSaveWindowSizeOnClose ?? false,
         minimizeToTray: settings.minimizeToTray ?? false,
+        // Migrate the pre-split "Launch to tray on Windows startup" toggle:
+        // users who enabled it meant both launch-on-startup AND tray, so the
+        // new launch toggle defaults on for them.
+        launchOnStartup: settings.launchOnStartup ?? settings.launchToTrayOnStartup ?? false,
+        launchToTrayOnStartup:
+          (settings.launchOnStartup ?? settings.launchToTrayOnStartup ?? false) &&
+          (settings.launchToTrayOnStartup ?? false),
         modernUiEnabled: loadedModernUi,
         collapseSourceCategoriesOnStartup: settings.collapseSourceCategoriesOnStartup ?? false,
         overlayAutohideTimer: settings.overlayAutohideTimer ?? 3,
@@ -2439,6 +2452,8 @@ export function Settings({
     startupHeight?: number;
     dontSaveWindowSizeOnClose?: boolean;
     minimizeToTray?: boolean;
+    launchOnStartup?: boolean;
+    launchToTrayOnStartup?: boolean;
     modernUiEnabled?: boolean | string;
     collapseSourceCategoriesOnStartup?: boolean;
     overlayAutohideTimer?: number;
