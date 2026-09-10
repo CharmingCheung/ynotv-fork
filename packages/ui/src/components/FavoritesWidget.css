@@ -66,6 +66,24 @@
   background: rgba(251, 191, 36, 0.2);
 }
 
+/* Currently playing channel — accent tint + left glow bar (matches the guide) */
+.favorite-channel-item.currently-playing {
+  background: rgba(251, 191, 36, 0.14);
+  box-shadow: inset 3px 0 0 #fbbf24;
+}
+
+.favorite-channel-item.currently-playing:hover {
+  background: rgba(251, 191, 36, 0.22);
+}
+
+.favorite-channel-item.currently-playing .favorite-channel-name {
+  color: #fbbf24;
+}
+
+.favorite-channel-item.currently-playing .favorite-channel-program {
+  color: rgba(251, 191, 36, 0.75);
+}
+
 .favorite-channel-name {
   font-size: 0.75rem;
   font-weight: 600;

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { getRecentChannels, onRecentChannelsUpdate, type RecentChannelEntry } from '../utils/recentChannels';
 import { useCurrentProgram } from '../hooks/useChannels';
@@ -9,9 +9,10 @@ import './RecentChannelsWidget.css';
 interface RecentChannelItemProps {
   entry: RecentChannelEntry;
   onChannelClick: (channel: StoredChannel) => void;
+  isCurrent?: boolean;
 }
 
-function RecentChannelItem({ entry, onChannelClick }: RecentChannelItemProps) {
+function RecentChannelItem({ entry, onChannelClick, isCurrent }: RecentChannelItemProps) {
   const currentProgram = useCurrentProgram(entry.streamId);
 
   const handleClick = useCallback(async () => {
@@ -23,7 +24,8 @@ function RecentChannelItem({ entry, onChannelClick }: RecentChannelItemProps) {
 
   return (
     <div
-      className="recent-channel-item"
+      className={`recent-channel-item${isCurrent ? ' currently-playing' : ''}`}
+      data-stream-id={entry.streamId}
       onClick={handleClick}
       role="button"
       tabIndex={0}
@@ -49,6 +51,7 @@ interface RecentChannelsWidgetProps {
   onChannelClick: (channel: StoredChannel) => void;
   limit?: number;
   isVod: boolean;
+  currentChannelId?: string;
   onMoveLeft?: () => void;
   onMoveRight?: () => void;
 }
@@ -59,6 +62,7 @@ export function RecentChannelsWidget({
   onChannelClick,
   limit = 10,
   isVod,
+  currentChannelId,
   onMoveLeft,
   onMoveRight,
 }: RecentChannelsWidgetProps) {
@@ -77,15 +81,30 @@ export function RecentChannelsWidget({
     return unsubscribe;
   }, []);
 
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const limitedEntries = recentEntries.slice(0, limit);
+
   // Only visible on main screen when controls are shown
   const isMainScreen = activeView === 'none';
   const isVisible = isMainScreen && showControls && recentEntries.length > 0 && !isVod;
 
+  // When the widget (re)appears or the playing channel changes, bring the
+  // currently playing channel into view so the user never has to hunt for it
+  // again after switching channels (the list remounts whenever controls hide).
+  useEffect(() => {
+    if (!isVisible || !currentChannelId || !listRef.current) return;
+    const currentEl = Array.from(listRef.current.children).find(
+      (child) => child instanceof HTMLElement && child.dataset.streamId === currentChannelId
+    );
+    if (currentEl instanceof HTMLElement) {
+      currentEl.scrollIntoView({ block: 'nearest' });
+    }
+  }, [isVisible, currentChannelId, limitedEntries.length]);
+
   if (!isVisible) {
     return null;
   }
-
-  const limitedEntries = recentEntries.slice(0, limit);
 
   return (
     <div className="recent-channels-widget">
@@ -102,12 +121,13 @@ export function RecentChannelsWidget({
           </div>
         )}
       </div>
-      <div className="recent-channels-list">
+      <div className="recent-channels-list" ref={listRef}>
         {limitedEntries.map((entry) => (
           <RecentChannelItem
             key={entry.streamId}
             entry={entry}
             onChannelClick={onChannelClick}
+            isCurrent={entry.streamId === currentChannelId}
           />
         ))}
       </div>

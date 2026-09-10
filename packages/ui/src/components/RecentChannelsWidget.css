@@ -66,6 +66,24 @@
   background: rgba(0, 212, 255, 0.2);
 }
 
+/* Currently playing channel — accent tint + left glow bar (matches the guide) */
+.recent-channel-item.currently-playing {
+  background: rgba(0, 212, 255, 0.14);
+  box-shadow: inset 3px 0 0 var(--accent-primary, #00d4ff);
+}
+
+.recent-channel-item.currently-playing:hover {
+  background: rgba(0, 212, 255, 0.22);
+}
+
+.recent-channel-item.currently-playing .recent-channel-name {
+  color: var(--accent-primary, #00d4ff);
+}
+
+.recent-channel-item.currently-playing .recent-channel-program {
+  color: rgba(0, 212, 255, 0.75);
+}
+
 .recent-channel-name {
   font-size: 0.75rem;
   font-weight: 600;

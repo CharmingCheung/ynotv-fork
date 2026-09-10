@@ -6416,6 +6416,7 @@ function useTmdbPresencePoster(
                     onChannelClick={handlePlayChannelWrapper}
                     limit={10}
                     isVod={Boolean(currentChannel?.stream_id === 'vod' || currentChannel?.stream_id?.startsWith('recording_'))}
+                    currentChannelId={currentChannel?.stream_id}
                     onMoveLeft={moveLeft}
                     onMoveRight={moveRight}
                   />
@@ -6429,6 +6430,7 @@ function useTmdbPresencePoster(
                     activeView={activeView}
                     onChannelClick={handlePlayChannelWrapper}
                     isVod={Boolean(currentChannel?.stream_id === 'vod' || currentChannel?.stream_id?.startsWith('recording_'))}
+                    currentChannelId={currentChannel?.stream_id}
                     onMoveLeft={moveLeft}
                     onMoveRight={moveRight}
                   />
@@ -6457,6 +6459,7 @@ function useTmdbPresencePoster(
                     activeView={activeView}
                     onChannelClick={handlePlayChannelWrapper}
                     isVod={Boolean(currentChannel?.stream_id === 'vod' || currentChannel?.stream_id?.startsWith('recording_'))}
+                    currentChannelId={currentChannel?.stream_id}
                     onMoveLeft={moveLeft}
                     onMoveRight={moveRight}
                   />

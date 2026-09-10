@@ -70,6 +70,24 @@
   background: rgba(139, 92, 246, 0.25);
 }
 
+/* Currently playing channel — accent tint + left glow bar (matches the guide) */
+.custom-group-widget .group-channel-item.currently-playing {
+  background: rgba(139, 92, 246, 0.2);
+  box-shadow: inset 3px 0 0 #a78bfa;
+}
+
+.custom-group-widget .group-channel-item.currently-playing:hover {
+  background: rgba(139, 92, 246, 0.28);
+}
+
+.custom-group-widget .group-channel-item.currently-playing .group-channel-name {
+  color: #a78bfa;
+}
+
+.custom-group-widget .group-channel-item.currently-playing .group-channel-program {
+  color: rgba(167, 139, 250, 0.75);
+}
+
 .group-channel-name {
   font-size: 0.75rem;
   font-weight: 600;

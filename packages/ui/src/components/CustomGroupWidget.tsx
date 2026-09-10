@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLiveQuery } from '../hooks/useSqliteLiveQuery';
 import { useCurrentProgram, useEnabledSources } from '../hooks/useChannels';
@@ -10,9 +10,10 @@ import './CustomGroupWidget.css';
 interface GroupChannelItemProps {
   channel: StoredChannel;
   onChannelClick: (channel: StoredChannel) => void;
+  isCurrent?: boolean;
 }
 
-function GroupChannelItem({ channel, onChannelClick }: GroupChannelItemProps) {
+function GroupChannelItem({ channel, onChannelClick, isCurrent }: GroupChannelItemProps) {
   const currentProgram = useCurrentProgram(channel.stream_id);
 
   const handleClick = useCallback(() => {
@@ -21,7 +22,8 @@ function GroupChannelItem({ channel, onChannelClick }: GroupChannelItemProps) {
 
   return (
     <div
-      className="group-channel-item"
+      className={`group-channel-item${isCurrent ? ' currently-playing' : ''}`}
+      data-stream-id={channel.stream_id}
       onClick={handleClick}
       role="button"
       tabIndex={0}
@@ -45,6 +47,7 @@ interface CustomGroupWidgetProps {
   activeView: string;
   onChannelClick: (channel: StoredChannel) => void;
   isVod: boolean;
+  currentChannelId?: string;
   onMoveLeft?: () => void;
   onMoveRight?: () => void;
 }
@@ -55,6 +58,7 @@ export function CustomGroupWidget({
   activeView,
   onChannelClick,
   isVod,
+  currentChannelId,
   onMoveLeft,
   onMoveRight,
 }: CustomGroupWidgetProps) {
@@ -90,8 +94,23 @@ export function CustomGroupWidget({
     'custom_group_channels'
   );
 
+  const listRef = useRef<HTMLDivElement>(null);
+
   const isMainScreen = activeView === 'none';
   const isVisible = isMainScreen && showControls && (data?.channels?.length ?? 0) > 0 && !isVod;
+
+  // When the widget (re)appears or the playing channel changes, bring the
+  // currently playing channel into view so the user never has to hunt for it
+  // again after switching channels (the list remounts whenever controls hide).
+  useEffect(() => {
+    if (!isVisible || !currentChannelId || !listRef.current) return;
+    const currentEl = Array.from(listRef.current.children).find(
+      (child) => child instanceof HTMLElement && child.dataset.streamId === currentChannelId
+    );
+    if (currentEl instanceof HTMLElement) {
+      currentEl.scrollIntoView({ block: 'nearest' });
+    }
+  }, [isVisible, currentChannelId, data?.channels?.length]);
 
   if (!isVisible) return null;
 
@@ -112,12 +131,13 @@ export function CustomGroupWidget({
           </div>
         )}
       </div>
-      <div className="custom-group-list">
+      <div className="custom-group-list" ref={listRef}>
         {data!.channels.map((ch) => (
           <GroupChannelItem
             key={ch.stream_id}
             channel={ch}
             onChannelClick={onChannelClick}
+            isCurrent={ch.stream_id === currentChannelId}
           />
         ))}
       </div>

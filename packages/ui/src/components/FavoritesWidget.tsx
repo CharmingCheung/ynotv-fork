@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { StoredChannel } from '../db';
 import { useLiveQuery } from '../hooks/useSqliteLiveQuery';
@@ -10,9 +10,10 @@ import './FavoritesWidget.css';
 interface FavoriteChannelItemProps {
   channel: StoredChannel;
   onChannelClick: (channel: StoredChannel) => void;
+  isCurrent?: boolean;
 }
 
-function FavoriteChannelItem({ channel, onChannelClick }: FavoriteChannelItemProps) {
+function FavoriteChannelItem({ channel, onChannelClick, isCurrent }: FavoriteChannelItemProps) {
   const currentProgram = useCurrentProgram(channel.stream_id);
 
   const handleClick = useCallback(() => {
@@ -21,7 +22,8 @@ function FavoriteChannelItem({ channel, onChannelClick }: FavoriteChannelItemPro
 
   return (
     <div
-      className="favorite-channel-item"
+      className={`favorite-channel-item${isCurrent ? ' currently-playing' : ''}`}
+      data-stream-id={channel.stream_id}
       onClick={handleClick}
       role="button"
       tabIndex={0}
@@ -46,6 +48,7 @@ interface FavoritesWidgetProps {
   activeView: string;
   onChannelClick: (channel: StoredChannel) => void;
   isVod: boolean;
+  currentChannelId?: string;
   onMoveLeft?: () => void;
   onMoveRight?: () => void;
 }
@@ -55,6 +58,7 @@ export function FavoritesWidget({
   activeView,
   onChannelClick,
   isVod,
+  currentChannelId,
   onMoveLeft,
   onMoveRight,
 }: FavoritesWidgetProps) {
@@ -87,9 +91,24 @@ export function FavoritesWidget({
     ['channels', 'favorites', 'categories']
   );
 
+  const listRef = useRef<HTMLDivElement>(null);
+
   // Only visible on main screen when controls are shown
   const isMainScreen = activeView === 'none';
   const isVisible = isMainScreen && showControls && (favoriteChannels?.length ?? 0) > 0 && !isVod;
+
+  // When the widget (re)appears or the playing channel changes, bring the
+  // currently playing channel into view so the user never has to hunt for it
+  // again after switching channels (the list remounts whenever controls hide).
+  useEffect(() => {
+    if (!isVisible || !currentChannelId || !listRef.current) return;
+    const currentEl = Array.from(listRef.current.children).find(
+      (child) => child instanceof HTMLElement && child.dataset.streamId === currentChannelId
+    );
+    if (currentEl instanceof HTMLElement) {
+      currentEl.scrollIntoView({ block: 'nearest' });
+    }
+  }, [isVisible, currentChannelId, favoriteChannels?.length]);
 
   if (!isVisible) {
     return null;
@@ -110,12 +129,13 @@ export function FavoritesWidget({
           </div>
         )}
       </div>
-      <div className="favorites-list">
+      <div className="favorites-list" ref={listRef}>
         {favoriteChannels?.map((channel) => (
           <FavoriteChannelItem
             key={channel.stream_id}
             channel={channel}
             onChannelClick={onChannelClick}
+            isCurrent={channel.stream_id === currentChannelId}
           />
         ))}
       </div>
