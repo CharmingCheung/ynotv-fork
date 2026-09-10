@@ -311,9 +311,11 @@ export function useSeriesDetails(seriesId: string | null) {
           (g) => g.kind === 'show' && g.key.toLowerCase() === targetKey
         );
         if (matchingGroup && matchingGroup.kind === 'show') {
-          return matchingGroup.episodes.map((ep) =>
-            localEntryToStoredEpisode(ep, seriesId, matchingGroup.head.title)
-          );
+          return matchingGroup.episodes
+            .filter((ep) => !ep.unavailable)
+            .map((ep) =>
+              localEntryToStoredEpisode(ep, seriesId, matchingGroup.head.title)
+            );
         }
         return [];
       }
@@ -683,7 +685,7 @@ export function useWindowedMovies(
           try {
             const localEntries = readLocalLibrary();
             const matchingLocalMovies = localEntries
-              .filter((e) => e.type !== 'show' && (matchesSearch(e.title, search) || matchesSearch(e.filename, search)))
+              .filter((e) => e.type !== 'show' && !e.unavailable && (matchesSearch(e.title, search) || matchesSearch(e.filename, search)))
               .map(localEntryToStoredMovie);
 
             if (matchingLocalMovies.length > 0) {
@@ -874,10 +876,11 @@ export function useWindowedSeries(
             const matchingLocalSeries = groups
               .filter((g): g is { kind: 'show'; key: string; head: LocalEntry; episodes: LocalEntry[] } => {
                 if (g.kind !== 'show') return false;
+                if (g.episodes.length > 0 && g.episodes.every((ep) => ep.unavailable)) return false;
                 return (
                   matchesSearch(g.head.title, search) ||
                   matchesSearch(g.head.filename, search) ||
-                  g.episodes.some((ep) => matchesSearch(ep.title, search) || matchesSearch(ep.filename, search))
+                  g.episodes.some((ep) => !ep.unavailable && (matchesSearch(ep.title, search) || matchesSearch(ep.filename, search)))
                 );
               })
               .map(localGroupToStoredSeries);
@@ -1238,6 +1241,7 @@ export function useRecentlyWatchedMovies(limit = 20) {
       // Populate local movies
       if (localMediaIds.size > 0) {
         for (const entry of localEntries) {
+          if (entry.unavailable) continue;
           if (entry.type === 'movie' || !entry.type) {
             const streamId = `local_${entry.id}`;
             if (localMediaIds.has(streamId)) {
@@ -1353,6 +1357,7 @@ export function useRecentlyWatchedSeries(limit = 20) {
         const groups = groupLocal(localEntries);
         for (const g of groups) {
           if (g.kind === 'show') {
+            if (g.episodes.length > 0 && g.episodes.every((e) => e.unavailable)) continue;
             const seriesId = `local_${g.key}`;
             const matchingMediaIds = Array.from(localMediaIds).filter(
               id => id.toLowerCase() === seriesId.toLowerCase() ||
@@ -1366,6 +1371,7 @@ export function useRecentlyWatchedSeries(limit = 20) {
             }
 
             const storedEpisodes: StoredEpisode[] = g.episodes
+              .filter((ep) => !ep.unavailable)
               .slice()
               .sort((a, b) => (a.season ?? 1) - (b.season ?? 1) || (a.episode ?? 1) - (b.episode ?? 1))
               .map(ep => localEntryToStoredEpisode(ep, seriesId, g.head.title));

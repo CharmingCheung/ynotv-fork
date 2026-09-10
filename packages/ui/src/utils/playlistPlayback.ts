@@ -10,6 +10,7 @@ import {
 } from '../stores/vodMetadataOverridesStore';
 import type { PlaylistItemProgress } from '../hooks/usePlaylistProgress';
 import type { VodPlayInfo } from '../types/media';
+import type { LocalEntry } from '../services/local-library/types';
 import {
   ensureLocalLibraryLoaded,
   readLocalLibrary,
@@ -20,16 +21,41 @@ import {
 } from '../services/local-library/local-library';
 
 /**
- * True when a playlist item's source has been removed or disabled, so the
- * item can't be played anymore. Items without a sourceId (rare/manual) stay
- * visible. Local library items (sourceId 'local') are always playable — they
- * don't depend on an IPTV source being enabled. While sources are still
- * loading (null) nothing is treated as hidden, so the UI never flashes items
- * away during startup.
+ * True when a playlist item's source has been removed or disabled, or when a
+ * local library item's file/storage is unavailable.
+ * Items without a sourceId (rare/manual) stay visible.
+ * While sources are still loading (null) nothing is treated as hidden due to
+ * IPTV source status, so the UI never flashes items away during startup.
  */
-export function isPlaylistItemHidden(item: PlaylistItem, enabledSources: Set<string> | null): boolean {
+export function isPlaylistItemHidden(
+  item: PlaylistItem,
+  enabledSources: Set<string> | null,
+  localLibrary?: LocalEntry[],
+): boolean {
+  if (item.sourceId === 'local') {
+    if (item.unavailable) return true;
+    const entries = localLibrary ?? readLocalLibrary();
+    if (entries.length > 0) {
+      const normUrl = item.directUrl?.toLowerCase();
+      const entry =
+        item.itemType === 'movie'
+          ? entries.find(
+              (e) =>
+                e.type === 'movie' &&
+                (`local_${e.id}` === item.mediaId ||
+                  (normUrl && e.path.toLowerCase() === normUrl)),
+            )
+          : entries.find(
+              (e) =>
+                e.id === item.mediaId ||
+                (normUrl && e.path.toLowerCase() === normUrl),
+            );
+      if (entry && entry.unavailable) return true;
+    }
+    return false;
+  }
   if (!enabledSources) return false;
-  return !!item.sourceId && item.sourceId !== 'local' && !enabledSources.has(item.sourceId);
+  return !!item.sourceId && !enabledSources.has(item.sourceId);
 }
 
 /**
@@ -134,17 +160,30 @@ async function resolveLocalPlaylistItem(item: PlaylistItem): Promise<PlaylistIte
 
   // Local movies store `local_<path>` as mediaId; local episodes store the
   // file path directly (the episode entry id).
+  const normUrl = item.directUrl?.toLowerCase();
   const entry =
     item.itemType === 'movie'
-      ? entries.find((e) => e.type === 'movie' && `local_${e.id}` === item.mediaId)
-      : entries.find((e) => e.id === item.mediaId);
+      ? entries.find(
+          (e) =>
+            e.type === 'movie' &&
+            (`local_${e.id}` === item.mediaId ||
+              (normUrl && e.path.toLowerCase() === normUrl)),
+        )
+      : entries.find(
+          (e) =>
+            e.id === item.mediaId ||
+            (normUrl && e.path.toLowerCase() === normUrl),
+        );
   if (!entry) return unresolved(item);
+
+  const isUnavailable = !!entry.unavailable;
 
   if (item.itemType === 'movie') {
     const movie = localEntryToStoredMovie(entry);
     return {
       ...item,
       unresolvableSince: undefined,
+      unavailable: isUnavailable ? true : undefined,
       title: movie.title || movie.name || item.title,
       poster: movie.stream_icon || item.poster,
       backdropUrl: movie.backdrop_path || item.backdropUrl,
@@ -165,6 +204,7 @@ async function resolveLocalPlaylistItem(item: PlaylistItem): Promise<PlaylistIte
   return {
     ...item,
     unresolvableSince: undefined,
+    unavailable: isUnavailable ? true : undefined,
     title: `${series.title || item.seriesTitle || item.title} - S${String(ep.season_num).padStart(2, '0')}E${String(ep.episode_num).padStart(2, '0')}${epTitle ? `: ${epTitle}` : ''}`,
     seriesTitle: series.title || item.seriesTitle,
     episodeTitle: epTitle || item.episodeTitle,
@@ -193,6 +233,7 @@ const RESOLVABLE_FIELDS: (keyof PlaylistItem)[] = [
   'episodeNum',
   'duration',
   'unresolvableSince',
+  'unavailable',
 ];
 
 /**

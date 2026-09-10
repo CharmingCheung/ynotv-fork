@@ -399,10 +399,11 @@ export function VodPage({ type, onPlay, onClose, vodPlayerMode, onSelectVodPlaye
             ids
           );
           // Local library movies are keyed by `local_<path>`; favorites whose
-          // ids match are loaded from the local library (never source-filtered).
-          const localMovies: StoredMovie[] = readLocalLibrary()
+          // ids match are loaded from the local library (never source-filtered),
+          // automatically hiding unavailable local files.
+          const localMovies: StoredMovie[] = localEntries
             .filter(
-              (e) => e.type === 'movie' && favoritesList.some((f) => f.id === `local_${e.id}`)
+              (e) => e.type === 'movie' && !e.unavailable && favoritesList.some((f) => f.id === `local_${e.id}`)
             )
             .map((e) => localEntryToStoredMovie(e));
           if (!cancelled) {
@@ -420,8 +421,10 @@ export function VodPage({ type, onPlay, onClose, vodPlayerMode, onSelectVodPlaye
             ids
           );
           const localSeries: StoredSeries[] = [];
-          for (const g of groupLocal(readLocalLibrary())) {
-            if (g.kind === 'show' && favoritesList.some((f) => f.id === `local_${g.key}`)) {
+          for (const g of localGroups) {
+            if (g.kind !== 'show') continue;
+            const isUnavailable = g.episodes.length > 0 && g.episodes.every((e) => e.unavailable);
+            if (!isUnavailable && favoritesList.some((f) => f.id === `local_${g.key}`)) {
               localSeries.push(localGroupToStoredSeries(g));
             }
           }
@@ -445,7 +448,7 @@ export function VodPage({ type, onPlay, onClose, vodPlayerMode, onSelectVodPlaye
 
     loadItems();
     return () => { cancelled = true; };
-  }, [selectedCategoryId, favoritesList, type, enabledSourceIds]);
+  }, [selectedCategoryId, favoritesList, type, enabledSourceIds, localEntries, localGroups]);
 
   // VOD categories
   const { categories } = useVodCategories(type);
@@ -462,11 +465,10 @@ export function VodPage({ type, onPlay, onClose, vodPlayerMode, onSelectVodPlaye
     const resolvedById = new Map(resolved.map((i) => [i.id, i]));
     const resolvedItem = resolvedById.get(item.id) ?? item;
 
-    // Skip items whose source was removed/disabled so the queue never tries to
-    // play an unavailable stream. Keeps the played item's own queue position.
-    const queueItems = enabledSourceIds
-      ? resolved.filter((i) => !isPlaylistItemHidden(i, enabledSourceIds))
-      : resolved;
+    // Skip items whose source was removed/disabled or local file is unavailable
+    // so the queue never tries to play an unavailable stream. Keeps the played
+    // item's own queue position.
+    const queueItems = resolved.filter((i) => !isPlaylistItemHidden(i, enabledSourceIds, localEntries));
     useActivePlaylistStore.getState().startPlayback(
       playlist.id,
       playlist.name,
@@ -479,7 +481,7 @@ export function VodPage({ type, onPlay, onClose, vodPlayerMode, onSelectVodPlaye
     // playback does, so playlist plays show up and resume properly.
     void recordPlaylistItemWatch(resolvedItem);
     onPlay?.(playlistItemToVodInfo(resolvedItem), vodPlayerMode);
-  }, [onPlay, vodPlayerMode, enabledSourceIds]);
+  }, [onPlay, vodPlayerMode, enabledSourceIds, localEntries]);
 
   // Get selected category name for VodBrowse
   const selectedCategory = categories.find(c => c.category_id === selectedCategoryId);

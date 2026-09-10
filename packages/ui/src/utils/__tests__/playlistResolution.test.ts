@@ -239,6 +239,36 @@ describe('resolvePlaylistItem - local library', () => {
     expect(resolved.unresolvableSince).toBeTruthy();
   });
 
+  it('marks unavailable: true on a local item when the file is unavailable', async () => {
+    const item = movieItem({ mediaId: 'local_T:/Movies/Gladiator.mkv', sourceId: 'local' });
+    localMocks.readLocalLibrary.mockReturnValue([
+      { id: 'T:/Movies/Gladiator.mkv', path: 'T:/Movies/Gladiator.mkv', type: 'movie', title: 'Gladiator', unavailable: true },
+    ]);
+    localMocks.localEntryToStoredMovie.mockReturnValue({
+      stream_id: 'local_T:/Movies/Gladiator.mkv',
+      title: 'Gladiator',
+      direct_url: 'T:/Movies/Gladiator.mkv',
+    });
+
+    const resolved = await resolvePlaylistItem(item);
+    expect(resolved.unavailable).toBe(true);
+  });
+
+  it('clears unavailable when a previously unavailable local item is restored', async () => {
+    const item = movieItem({ mediaId: 'local_T:/Movies/Gladiator.mkv', sourceId: 'local', unavailable: true });
+    localMocks.readLocalLibrary.mockReturnValue([
+      { id: 'T:/Movies/Gladiator.mkv', path: 'T:/Movies/Gladiator.mkv', type: 'movie', title: 'Gladiator', unavailable: false },
+    ]);
+    localMocks.localEntryToStoredMovie.mockReturnValue({
+      stream_id: 'local_T:/Movies/Gladiator.mkv',
+      title: 'Gladiator',
+      direct_url: 'T:/Movies/Gladiator.mkv',
+    });
+
+    const resolved = await resolvePlaylistItem(item);
+    expect(resolved.unavailable).toBeUndefined();
+  });
+
   it('persists resolved fields back into the stored playlist item', async () => {
     const store = useVodPlaylistStore.getState();
     const pl = store.createPlaylist('Persist Test');

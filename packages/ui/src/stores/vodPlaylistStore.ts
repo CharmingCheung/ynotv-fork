@@ -25,6 +25,11 @@ export interface PlaylistItem {
    * again. Used to auto-prune items whose source/file is permanently gone.
    */
   unresolvableSince?: number;
+  /**
+   * True when a local file is currently marked as unavailable (missing on disk
+   * or detached storage drive).
+   */
+  unavailable?: boolean;
 }
 
 export interface Playlist {

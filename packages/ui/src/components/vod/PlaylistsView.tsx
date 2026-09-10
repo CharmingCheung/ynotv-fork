@@ -23,6 +23,7 @@ import { useEnabledSources, useSourceNameMap } from '../../hooks/useChannels';
 import { usePlaylistItemsProgress, type PlaylistItemProgress } from '../../hooks/usePlaylistProgress';
 import { usePlaylistItemResolutions } from '../../hooks/usePlaylistItemResolution';
 import { findLastWatchedItem, isPlaylistItemHidden, sortPlaylistsByLastPlayed } from '../../utils/playlistPlayback';
+import { useLocalLibrary } from '../../services/local-library/local-library';
 import { useTranslation } from 'react-i18next';
 import i18n from '../../i18n';
 import { useModal } from '../Modal';
@@ -216,7 +217,9 @@ function HiddenPlaylistItemRow({ item, onRemove }: { item: PlaylistItem; onRemov
         <div className="playlist-item-card__details">
           <span className="playlist-item-card__title">
             {item.title}
-            <span className="playlist-item-card__hidden-badge">{i18n.t('vod:hiddenUnavailable')}</span>
+            <span className="playlist-item-card__hidden-badge">
+              {item.sourceId === 'local' ? i18n.t('vod:unavailable', 'Unavailable') : i18n.t('vod:hiddenUnavailable')}
+            </span>
           </span>
           <div className="playlist-item-card__sub">
             <span>{item.itemType === 'movie' ? i18n.t('vod:movie') : i18n.t('vod:series')}</span>
@@ -248,6 +251,7 @@ export function PlaylistsView({ onPlayPlaylistItem }: PlaylistsViewProps) {
   useTranslation();
   const sourceNameMap = useSourceNameMap();
   const enabledSources = useEnabledSources();
+  const localEntries = useLocalLibrary();
   const { showPrompt, showConfirm, ModalComponent } = useModal();
   const {
     playlists,
@@ -293,12 +297,13 @@ export function PlaylistsView({ onPlayPlaylistItem }: PlaylistsViewProps) {
   // How many shuffles can be undone for the currently open playlist
   const undoDepth = selectedPlaylist ? (randomizeHistory[selectedPlaylist.id]?.length || 0) : 0;
 
-  // Items whose source was removed or disabled can't be played; they're hidden
-  // from the list (with a banner + bulk-remove) until the source returns.
+  // Items whose source was removed or disabled, or local file is unavailable,
+  // can't be played; they're hidden from the list (with a banner + bulk-remove)
+  // until the source or file returns.
   const hiddenItems = React.useMemo(() => {
     if (!selectedPlaylist) return [];
-    return selectedPlaylist.items.filter((i) => isPlaylistItemHidden(i, enabledSources));
-  }, [selectedPlaylist, enabledSources]);
+    return selectedPlaylist.items.filter((i) => isPlaylistItemHidden(i, enabledSources, localEntries));
+  }, [selectedPlaylist, enabledSources, localEntries]);
 
   const visibleItems = React.useMemo(() => {
     if (!selectedPlaylist) return [];
@@ -426,15 +431,15 @@ export function PlaylistsView({ onPlayPlaylistItem }: PlaylistsViewProps) {
   };
 
   const handlePlaySequential = (playlist: Playlist) => {
-    // Only start from visible (playable) items — hidden ones have no source.
-    const playable = playlist.items.filter((i) => !isPlaylistItemHidden(i, enabledSources));
+    // Only start from visible (playable) items — hidden ones have no source or are unavailable.
+    const playable = playlist.items.filter((i) => !isPlaylistItemHidden(i, enabledSources, localEntries));
     if (!playable.length) return;
     const startItem = playable[0];
     onPlayPlaylistItem?.(startItem, playlist, false);
   };
 
   const handlePlayRandom = (playlist: Playlist) => {
-    const playable = playlist.items.filter((i) => !isPlaylistItemHidden(i, enabledSources));
+    const playable = playlist.items.filter((i) => !isPlaylistItemHidden(i, enabledSources, localEntries));
     if (!playable.length) return;
     const randomIndex = Math.floor(Math.random() * playable.length);
     const startItem = playable[randomIndex];
@@ -509,9 +514,11 @@ export function PlaylistsView({ onPlayPlaylistItem }: PlaylistsViewProps) {
         ) : (
           <div className="playlists-grid">
             {sortedPlaylists.map((pl) => {
-              const posters = getCardPosters(pl.items.map((i) => resolvedById.get(i.id) ?? i));
-              const watchedCount = pl.items.filter((i) => itemProgress.get(i.id)?.completed).length;
-              const lastWatched = findLastWatchedItem(pl.items, itemProgress);
+              const playableItems = pl.items.filter((i) => !isPlaylistItemHidden(i, enabledSources, localEntries));
+              const displayItems = playableItems.length > 0 ? playableItems : pl.items;
+              const posters = getCardPosters(displayItems.map((i) => resolvedById.get(i.id) ?? i));
+              const watchedCount = playableItems.filter((i) => itemProgress.get(i.id)?.completed).length;
+              const lastWatched = findLastWatchedItem(playableItems, itemProgress);
               const lastWatchedProgress = lastWatched ? itemProgress.get(lastWatched.id) : null;
               const canResume =
                 !!lastWatchedProgress && lastWatchedProgress.progressSeconds > 10 && !lastWatchedProgress.completed;
@@ -519,15 +526,15 @@ export function PlaylistsView({ onPlayPlaylistItem }: PlaylistsViewProps) {
               return (
                 <div key={pl.id} className="playlist-card" onClick={() => setSelectedPlaylistId(pl.id)}>
                   <div className="playlist-card__posters">
-                    {pl.items.length > 0 && (
+                    {playableItems.length > 0 && (
                       <span
                         className={`playlist-card__watched-badge${watchedCount === 0 ? ' playlist-card__watched-badge--empty' : ''}`}
-                        title={i18n.t('vod:watchedCount', { count: watchedCount, total: pl.items.length })}
+                        title={i18n.t('vod:watchedCount', { count: watchedCount, total: playableItems.length })}
                       >
                         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
                           <polyline points="20 6 9 17 4 12" />
                         </svg>
-                        {watchedCount}/{pl.items.length}
+                        {watchedCount}/{playableItems.length}
                       </span>
                     )}
                     {posters.length === 0 ? (

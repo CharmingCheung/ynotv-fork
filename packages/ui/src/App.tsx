@@ -64,6 +64,7 @@ import { jellyfinEmbedNotifyPlaybackEnded } from './services/jellyfin';
 import { useSportsSettingsStore } from './stores/sportsSettingsStore';
 import { useSportsPolling, isSportsCacheFresh } from './hooks/useSportsPolling';
 import { useActiveTmdbToken } from './hooks/useTmdbLists';
+import { useAutoLocalSync } from './services/local-library/auto-sync';
 import { getTmdbImageUrl, searchMovies, searchTvShows, getMovieDetails, getTvShowDetails } from './services/tmdb';
 import { cleanTitleForSearch } from './utils/cleanTitle';
 import { clearLiveQueryCache } from './hooks/useSqliteLiveQuery';
@@ -1600,6 +1601,7 @@ function useTmdbPresencePoster(
   );
 
   const activeTmdbToken = useActiveTmdbToken();
+  useAutoLocalSync(activeTmdbToken);
   const tmdbPresencePoster = useTmdbPresencePoster(vodInfo, activeTmdbToken);
 
   // Discord Rich Presence integration

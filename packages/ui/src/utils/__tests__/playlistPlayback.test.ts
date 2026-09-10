@@ -8,7 +8,13 @@ vi.mock('../../db', () => ({
   getEpisodeProgress: vi.fn(),
 }));
 
-import { buildPlaylistProgressMap, findLastWatchedItem, snapshotPlaylistProgress, sortPlaylistsByLastPlayed } from '../playlistPlayback';
+import {
+  buildPlaylistProgressMap,
+  findLastWatchedItem,
+  snapshotPlaylistProgress,
+  sortPlaylistsByLastPlayed,
+  isPlaylistItemHidden,
+} from '../playlistPlayback';
 import type { Playlist, PlaylistItem } from '../../stores/vodPlaylistStore';
 import type { PlaylistItemProgress } from '../../hooks/usePlaylistProgress';
 import { useActivePlaylistStore } from '../../stores/activePlaylistStore';
@@ -264,5 +270,79 @@ describe('snapshotPlaylistProgress', () => {
     });
     snapshotPlaylistProgress(vodInfoFor(item), 300, 600);
     expect(useVodPlaylistProgressStore.getState().byItemId).toEqual({});
+  });
+});
+
+describe('isPlaylistItemHidden', () => {
+  it('returns false when enabledSources is null (startup) for remote items', () => {
+    const item = makeItem('Remote');
+    item.sourceId = 'src_1';
+    expect(isPlaylistItemHidden(item, null)).toBe(false);
+  });
+
+  it('returns true when item source is not in enabledSources', () => {
+    const item = makeItem('Remote');
+    item.sourceId = 'disabled_src';
+    expect(isPlaylistItemHidden(item, new Set(['src_1']))).toBe(true);
+  });
+
+  it('returns false when item source is in enabledSources', () => {
+    const item = makeItem('Remote');
+    item.sourceId = 'src_1';
+    expect(isPlaylistItemHidden(item, new Set(['src_1']))).toBe(false);
+  });
+
+  it('returns false for items with no sourceId', () => {
+    const item = makeItem('No Source');
+    item.sourceId = undefined;
+    expect(isPlaylistItemHidden(item, new Set(['src_1']))).toBe(false);
+  });
+
+  it('returns false for local items when available', () => {
+    const item = makeItem('Local Movie');
+    item.sourceId = 'local';
+    item.itemType = 'movie';
+    item.mediaId = 'local_file_1';
+    item.directUrl = '/path/to/movie.mkv';
+
+    const localLib = [
+      { id: 'file_1', path: '/path/to/movie.mkv', type: 'movie', title: 'Movie 1', unavailable: false },
+    ] as any;
+
+    expect(isPlaylistItemHidden(item, new Set(['src_1']), localLib)).toBe(false);
+  });
+
+  it('returns true for local items when item.unavailable is true', () => {
+    const item = makeItem('Local Unavailable');
+    item.sourceId = 'local';
+    item.unavailable = true;
+    expect(isPlaylistItemHidden(item, new Set(['src_1']))).toBe(true);
+  });
+
+  it('returns true for local items when local library entry has unavailable: true', () => {
+    const item = makeItem('Local Movie');
+    item.sourceId = 'local';
+    item.itemType = 'movie';
+    item.mediaId = 'local_file_1';
+
+    const localLib = [
+      { id: 'file_1', path: '/path/to/movie.mkv', type: 'movie', title: 'Movie 1', unavailable: true },
+    ] as any;
+
+    expect(isPlaylistItemHidden(item, new Set(['src_1']), localLib)).toBe(true);
+  });
+
+  it('returns true for local episode when matched by directUrl and marked unavailable', () => {
+    const item = makeItem('Local Ep');
+    item.sourceId = 'local';
+    item.itemType = 'episode';
+    item.mediaId = 'file_ep1';
+    item.directUrl = '/path/to/show/s01e01.mkv';
+
+    const localLib = [
+      { id: 'different_id', path: '/path/to/show/s01e01.mkv', type: 'show', title: 'Ep 1', unavailable: true },
+    ] as any;
+
+    expect(isPlaylistItemHidden(item, new Set(), localLib)).toBe(true);
   });
 });
