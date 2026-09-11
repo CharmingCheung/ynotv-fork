@@ -861,72 +861,160 @@ export class StalkerClient {
         }));
     }
 
-    async getVodStreams(categoryId?: string, onProgress?: StalkerPageProgress, concurrency = 4): Promise<Channel[]> {
-        await this.ensureToken();
-        console.log('[Stalker] getVodStreams: fetching with parallel pagination...');
-
-        const catId = categoryId ? categoryId.replace(`${this.sourceId}_vod_`, '').replace(`${this.sourceId}_`, '') : '*';
-
-        // Fetch pages in parallel batches for faster loading. The batch size is
-        // configurable via Settings -> Sources -> Stalker Preferences (default 4).
-        // Note: Stalker uses 0-indexed pages (p=0 is first page)
-        const allItems: any[] = [];
-        let page = 0;
-        let hasMore = true;
-        let pagesFetched = 0; // 1-indexed count of pages actually retrieved (for the "Page X of Y" display)
-        let totalPages: number | undefined;
+    /**
+     * Fetch paginated ordered list items in parallel batches with per-page error tolerance,
+     * bounded batch size, and an end-of-batch retry pass for any pages that failed during
+     * initial parallel execution.
+     *
+     * Page 0 is probed on its own first so `totalPages` (when the portal reports it) is known
+     * before any fan-out: every later batch is then clamped to the real end of the category,
+     * so out-of-range pages are never requested or appended. Returns the whole category or
+     * throws — callers must never cache a partially-fetched category as if it were complete.
+     */
+    private async fetchOrderedListPages(
+        type: 'vod' | 'series',
+        baseParams: Record<string, string>,
+        concurrency: number,
+        onProgress?: StalkerPageProgress
+    ): Promise<any[]> {
+        const pageItemsMap = new Map<number, any[]>();
+        const pendingFailedPages = new Set<number>();
+        const seenItemIds = new Set<string | number>();
         const BATCH_SIZE = Math.max(1, Math.min(12, Math.floor(concurrency) || 4));
+        // Runaway bound for buggy metadata-free portals that never report total_items.
+        // Kept deliberately high because the category='*' fallback legitimately walks an
+        // entire portal; the cycle detection below stops well before this in practice.
+        const MAX_PAGES_SAFETY_CAP = 10000;
+
+        const fetchPage = (p: number): Promise<any> =>
+            this.fetchStalker<any>('get_ordered_list', type, {
+                ...baseParams,
+                p: p.toString(),
+            });
+
+        // --- Probe page 0 (mandatory). A retry here means a transient failure doesn't abort
+        // before we know whether there is anything else to fetch. ---
+        let page0Response: any = null;
+        for (let attempt = 0; attempt < 2 && page0Response == null; attempt++) {
+            if (attempt > 0) await new Promise(r => setTimeout(r, 250));
+            try {
+                page0Response = await fetchPage(0);
+            } catch (err) {
+                console.warn(`[Stalker] Failed to fetch page 0 (${type}) attempt ${attempt + 1}:`, err);
+            }
+        }
+        if (page0Response == null) {
+            throw new Error(`Failed to load ${type} category: page 0 could not be retrieved`);
+        }
+
+        const { items: page0Items, total_items: page0Total, max_page_items: page0Max, pages: page0Pages } =
+            this.extractOrderedList(page0Response);
+        const page0Size = page0Max || 14;
+        let totalPages: number | undefined;
+        if (page0Pages) totalPages = page0Pages;
+        else if (page0Total != null) totalPages = Math.max(1, Math.ceil(page0Total / page0Size));
+
+        let pagesFetched = 0;
+        if (page0Items.length > 0) {
+            pageItemsMap.set(0, page0Items);
+            for (const item of page0Items) {
+                if (item?.id != null) seenItemIds.add(item.id);
+            }
+            pagesFetched++;
+        }
+
+        // A short (or empty) first page means there is nothing more to fetch.
+        let page = 1;
+        let hasMore = page0Items.length > 0 && page0Items.length >= page0Size;
+        if (totalPages != null && page >= totalPages) hasMore = false;
 
         while (hasMore) {
-            // Fetch BATCH_SIZE pages in parallel
-            const batchPromises = [];
-            for (let i = 0; i < BATCH_SIZE; i++) {
-                batchPromises.push(
-                    this.fetchStalker<any>('get_ordered_list', 'vod', {
-                        category: catId,
-                        sortby: 'number',
-                        p: (page + i).toString(),
-                        include_censored: '1',
-                        censored: '1'
-                    })
-                );
+            // Safety bound: if totalPages is known and we've reached it, terminate
+            if (totalPages != null && page >= totalPages) {
+                hasMore = false;
+                break;
             }
 
-            const responses = await Promise.all(batchPromises);
+            // Ultimate runaway bound for buggy metadata-free portals
+            if (page >= MAX_PAGES_SAFETY_CAP) {
+                console.warn(`[Stalker] Reached safety cap of ${MAX_PAGES_SAFETY_CAP} pages with no provider total_items; stopping pagination.`);
+                hasMore = false;
+                break;
+            }
+
+            // Never request more pages in the batch than remain before the real end.
+            const pagesToFetch = totalPages != null
+                ? Math.max(1, Math.min(BATCH_SIZE, totalPages - page))
+                : BATCH_SIZE;
+
+            const pageNumbers: number[] = [];
+            const batchPromises = [];
+            for (let i = 0; i < pagesToFetch; i++) {
+                const p = page + i;
+                pageNumbers.push(p);
+                batchPromises.push(fetchPage(p));
+            }
+
+            const results = await Promise.allSettled(batchPromises);
             let itemsInBatch = 0;
 
-            for (let i = 0; i < responses.length; i++) {
-                const response = responses[i];
-                const { items: vodItems, total_items, max_page_items, pages } = this.extractOrderedList(response);
-                const pageSize = max_page_items || 14;
+            for (let i = 0; i < results.length; i++) {
+                const res = results[i];
+                const p = pageNumbers[i];
 
-                if (!totalPages && pages) totalPages = pages;
-                if (!totalPages && total_items != null) {
-                    totalPages = Math.max(1, Math.ceil(total_items / pageSize));
+                if (res.status === 'rejected') {
+                    console.warn(`[Stalker] Failed to fetch page ${p} (${type}):`, res.reason);
+                    pendingFailedPages.add(p);
+                    continue;
                 }
 
-                if (vodItems.length > 0) {
-                    allItems.push(...vodItems);
-                    itemsInBatch += vodItems.length;
-                    pagesFetched++;
+                const { items: pageItems, max_page_items } = this.extractOrderedList(res.value);
+                const pageSize = max_page_items || page0Size;
 
-                    // If any page has less than a full page of items, we've reached the end
-                    if (vodItems.length < pageSize) {
-                        hasMore = false;
-                        break;
-                    }
-                } else {
+                if (pageItems.length === 0) {
                     // Empty response means no more pages
+                    hasMore = false;
+                    break;
+                }
+
+                // Cycle / duplicate detection: a page made up entirely of items we've already
+                // seen means the portal wrapped around or is repeating a default page for an
+                // out-of-range offset — stop instead of appending duplicates.
+                const duplicateCount = pageItems.filter((item: any) => item?.id != null && seenItemIds.has(item.id)).length;
+                if (duplicateCount === pageItems.length) {
+                    console.warn(`[Stalker] Detected repeated page at offset p=${p} (${duplicateCount} duplicate items); stopping pagination.`);
+                    hasMore = false;
+                    break;
+                }
+
+                // Drop any individual items already seen on an earlier page so the flattened
+                // result never contains duplicates.
+                const newItems = pageItems.filter((item: any) => item?.id == null || !seenItemIds.has(item.id));
+                for (const item of newItems) {
+                    if (item?.id != null) seenItemIds.add(item.id);
+                }
+
+                pageItemsMap.set(p, newItems);
+                itemsInBatch += newItems.length;
+                pagesFetched++;
+
+                // If any page has less than a full page of items, we've reached the end
+                if (pageItems.length < pageSize) {
                     hasMore = false;
                     break;
                 }
             }
 
-            // If we got no items in this batch, stop
+            // If we got no items in this batch, stop forward pagination and let retry pass handle any failed pages
             if (itemsInBatch === 0) {
                 hasMore = false;
             } else {
-                page += BATCH_SIZE;
+                page += pagesToFetch;
+            }
+
+            // Safety check against totalPages
+            if (totalPages != null && page >= totalPages) {
+                hasMore = false;
             }
 
             // Report progress so the UI can show "Page X of Y" while lazy-loading
@@ -936,7 +1024,81 @@ export class StalkerClient {
             }
         }
 
-        console.log(`[Stalker] Fetched ${allItems.length} total VOD items from ${pagesFetched} page(s)`);
+        // Retry any failed pages at the end with a small delay and low concurrency
+        // to avoid overwhelming a rate-limited or congested portal
+        if (pendingFailedPages.size > 0) {
+            const failedList = Array.from(pendingFailedPages).sort((a, b) => a - b);
+            console.log(`[Stalker] Retrying ${failedList.length} failed page(s): ${failedList.join(', ')}...`);
+            const RETRY_CONCURRENCY = 2;
+            for (let i = 0; i < failedList.length; i += RETRY_CONCURRENCY) {
+                const retryBatch = failedList.slice(i, i + RETRY_CONCURRENCY);
+                await new Promise(r => setTimeout(r, 250));
+                const retryResults = await Promise.allSettled(
+                    retryBatch.map(p => fetchPage(p))
+                );
+
+                for (let j = 0; j < retryResults.length; j++) {
+                    const res = retryResults[j];
+                    const p = retryBatch[j];
+                    if (res.status === 'fulfilled') {
+                        const { items: pageItems } = this.extractOrderedList(res.value);
+                        if (pageItems.length > 0) {
+                            const newItems = pageItems.filter((item: any) => item?.id == null || !seenItemIds.has(item.id));
+                            for (const item of newItems) {
+                                if (item?.id != null) seenItemIds.add(item.id);
+                            }
+                            pageItemsMap.set(p, newItems);
+                            pagesFetched++;
+                            pendingFailedPages.delete(p);
+                            console.log(`[Stalker] Retry succeeded for page ${p} (${newItems.length} items)`);
+                        }
+                    } else {
+                        console.error(`[Stalker] Retry failed permanently for page ${p}:`, res.reason);
+                    }
+                }
+            }
+        }
+
+        // Integrity validation: a category is only ever returned whole. Any page still
+        // missing after the retry pass aborts the fetch. This includes a failed *trailing*
+        // page, which a walk up to the highest fetched page would silently ignore and thus
+        // let callers cache a truncated category as if it were complete.
+        if (pendingFailedPages.size > 0) {
+            const missing = Array.from(pendingFailedPages).sort((a, b) => a - b);
+            const label = missing.length === 1 ? `page ${missing[0]}` : `pages ${missing.join(', ')}`;
+            throw new Error(`Failed to load ${type} category: ${label} could not be retrieved after retries`);
+        }
+
+        // Flatten map in natural page order (0, 1, 2, ...) so items stay in proper sequence
+        const allItems: any[] = [];
+        const sortedPages = Array.from(pageItemsMap.keys()).sort((a, b) => a - b);
+        for (const p of sortedPages) {
+            const pItems = pageItemsMap.get(p);
+            if (pItems) allItems.push(...pItems);
+        }
+
+        return allItems;
+    }
+
+    async getVodStreams(categoryId?: string, onProgress?: StalkerPageProgress, concurrency = 4): Promise<Channel[]> {
+        await this.ensureToken();
+        console.log('[Stalker] getVodStreams: fetching with parallel pagination...');
+
+        const catId = categoryId ? categoryId.replace(`${this.sourceId}_vod_`, '').replace(`${this.sourceId}_`, '') : '*';
+
+        const allItems = await this.fetchOrderedListPages(
+            'vod',
+            {
+                category: catId,
+                sortby: 'number',
+                include_censored: '1',
+                censored: '1'
+            },
+            concurrency,
+            onProgress
+        );
+
+        console.log(`[Stalker] Fetched ${allItems.length} total VOD items`);
 
         // Filter for movies only (is_series!="1")
         const filteredMovies = allItems.filter((item: any) => {
@@ -1038,78 +1200,28 @@ export class StalkerClient {
         const catId = categoryId ? categoryId.replace(`${this.sourceId}_series_`, '').replace(`${this.sourceId}_`, '') : '*';
 
         // Helper: fetch all pages from a given endpoint+type+category combo
+        let lastError: any = null;
         const fetchAllPages = async (type: 'series' | 'vod', cat: string): Promise<any[]> => {
-            const items: any[] = [];
-            let page = 0;
-            let hasMore = true;
-            let pagesFetched = 0; // 1-indexed count of pages retrieved so far
-            let totalPages: number | undefined;
-            const BATCH_SIZE = Math.max(1, Math.min(12, Math.floor(concurrency) || 4));
-
-            while (hasMore) {
-                const batchPromises = [];
-                for (let i = 0; i < BATCH_SIZE; i++) {
-                    const extraParams: Record<string, string> = {
-                        category: cat,
-                        sortby: 'number',
-                        p: (page + i).toString(),
-                        include_censored: '1',
-                        censored: '1'
-                    };
-
-                    if (type === 'series') {
-                        extraParams.movie_id = '0';
-                        extraParams.season_id = '0';
-                        extraParams.episode_id = '0';
-                    }
-
-                    batchPromises.push(
-                        this.fetchStalker<any>('get_ordered_list', type, extraParams)
-                    );
-                }
-
-                const responses = await Promise.all(batchPromises);
-                let itemsInBatch = 0;
-
-                for (let i = 0; i < responses.length; i++) {
-                    const response = responses[i];
-                    const { items: pageItems, total_items, max_page_items, pages } = this.extractOrderedList(response);
-                    const pageSize = max_page_items || 14;
-
-                    if (!totalPages && pages) totalPages = pages;
-                    if (!totalPages && total_items != null) {
-                        totalPages = Math.max(1, Math.ceil(total_items / pageSize));
-                    }
-
-                    if (pageItems.length > 0) {
-                        items.push(...pageItems);
-                        itemsInBatch += pageItems.length;
-                        pagesFetched++;
-
-                        if (pageItems.length < pageSize) {
-                            hasMore = false;
-                            break;
-                        }
-                    } else {
-                        hasMore = false;
-                        break;
-                    }
-                }
-
-                if (itemsInBatch === 0) {
-                    hasMore = false;
-                } else {
-                    page += BATCH_SIZE;
-                }
-
-                // Report progress so the UI can show "Page X of Y" while lazy-loading
-                if (onProgress) {
-                    const percent = totalPages ? Math.min(100, Math.round((pagesFetched / totalPages) * 100)) : 0;
-                    onProgress(percent, pagesFetched, totalPages);
-                }
+            const extraParams: Record<string, string> = {
+                category: cat,
+                sortby: 'number',
+                include_censored: '1',
+                censored: '1'
+            };
+            if (type === 'series') {
+                extraParams.movie_id = '0';
+                extraParams.season_id = '0';
+                extraParams.episode_id = '0';
             }
-
-            return items;
+            try {
+                const res = await this.fetchOrderedListPages(type, extraParams, concurrency, onProgress);
+                lastError = null;
+                return res;
+            } catch (err) {
+                lastError = err;
+                console.warn(`[Stalker] fetchAllPages failed for type=${type}, category=${cat}:`, err);
+                return [];
+            }
         };
 
         // --- Attempt 1: type=series, specific category ---
@@ -1175,6 +1287,10 @@ export class StalkerClient {
                     activeType = 'vod';
                 }
             }
+        }
+
+        if (allItems.length === 0 && lastError) {
+            throw lastError;
         }
 
         console.log(`[Stalker] Fetched ${allItems.length} total items (before series filter, activeType=${activeType})`);

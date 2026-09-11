@@ -178,6 +178,27 @@ export function VerticalSidebar({
     const [isV3, setIsV3] = useState(false);
     const isFirstLoad = useRef(true);
     const prevSelectedIdRef = useRef(selectedId);
+    const hasAutoExpandedOnMountRef = useRef(false);
+    const prevTypeRef = useRef(type);
+    const scrollableRef = useRef<HTMLDivElement>(null);
+
+    // Scroll the selected category into view. Deliberately a stable callback that is
+    // invoked from a few specific effects rather than keyed to expandedSources: expanding
+    // or collapsing an unrelated source to browse must not yank the list back to the
+    // active category.
+    const scrollActiveIntoView = useCallback(() => {
+        const scrollContainer = scrollableRef.current;
+        if (!scrollContainer) return;
+        const activeEl = scrollContainer.querySelector<HTMLElement>('.vertical-sidebar__item.active');
+        if (activeEl) activeEl.scrollIntoView({ block: 'nearest' });
+    }, []);
+
+    useEffect(() => {
+        if (type !== prevTypeRef.current) {
+            prevTypeRef.current = type;
+            hasAutoExpandedOnMountRef.current = false;
+        }
+    }, [type]);
 
     useEffect(() => {
         setIsV3(document.documentElement.classList.contains('modern-ui-v3'));
@@ -194,13 +215,17 @@ export function VerticalSidebar({
     // (authoritative, hydrated) setting is known — reactive on the setting so
     // the boot race (store still at its hardcoded default while hydration
     // reconciles the real value) can't burn the flag with a stale read.
+    // If a category is already selected, its parent source is preserved.
     const collapseOnStartup = useSettingsStore((s) => s.collapseSourceCategoriesOnStartup);
     useEffect(() => {
         if (collapseOnStartup && isFirstLoad.current) {
-            setExpandedSources({});
+            const activeSourceId = selectedId && categories.length > 0
+                ? categories.find(c => c.id === selectedId)?.source_id
+                : null;
+            setExpandedSources(activeSourceId ? { [activeSourceId]: true } : {});
             isFirstLoad.current = false;
         }
-    }, [collapseOnStartup]);
+    }, [collapseOnStartup, selectedId, categories]);
 
     // Track mouse position for hover-to-show sidebar button
     const [mouseX, setMouseX] = useState(0);
@@ -273,19 +298,31 @@ export function VerticalSidebar({
         fetchSources();
     }, []);
 
-    // Auto-expand parent source ONLY when user selects a new category (selectedId changes)
+    // Auto-expand parent source on initial mount / page reopen, or when user selects a new category
     useEffect(() => {
-        if (selectedId && selectedId !== prevSelectedIdRef.current && categories.length > 0) {
+        if (!selectedId || categories.length === 0) return;
+
+        const isNewSelection = selectedId !== prevSelectedIdRef.current;
+        const needsMountExpansion = !hasAutoExpandedOnMountRef.current;
+
+        if (isNewSelection || needsMountExpansion) {
             const selectedCat = categories.find(c => c.id === selectedId);
             if (selectedCat?.source_id) {
-                setExpandedSources(prev => ({
-                    ...prev,
-                    [selectedCat.source_id!]: true
-                }));
+                setExpandedSources(prev => {
+                    if (prev[selectedCat.source_id!] === true) return prev;
+                    return {
+                        ...prev,
+                        [selectedCat.source_id!]: true
+                    };
+                });
+                hasAutoExpandedOnMountRef.current = true;
+                // The source expands on the next render; wait a frame so the active row
+                // exists before scrolling to it.
+                requestAnimationFrame(scrollActiveIntoView);
             }
         }
         prevSelectedIdRef.current = selectedId;
-    }, [selectedId, categories]);
+    }, [selectedId, categories, scrollActiveIntoView]);
 
     const toggleSource = (sourceId: string) => {
         setExpandedSources(prev => ({
@@ -326,6 +363,15 @@ export function VerticalSidebar({
     }, [sidebarDragHotkey]);
 
     const isDragActive = sidebarDragHotkey === 'None' || isDragKeyPressed;
+
+    // Scroll the active item into view when the sidebar becomes visible or the selection
+    // changes. Expansion-driven scrolls are scheduled by the auto-expand effect above, so
+    // user-driven source toggles never move the list.
+    useEffect(() => {
+        if (!visible || !selectedId || isDragActive) return;
+        const rafId = requestAnimationFrame(scrollActiveIntoView);
+        return () => cancelAnimationFrame(rafId);
+    }, [selectedId, visible, isDragActive, scrollActiveIntoView]);
 
     const dndSensors = useSensors(
         useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -779,7 +825,7 @@ export function VerticalSidebar({
             </div>
 
             {/* Scrollable Bottom Section: Source Groups */}
-            <div className={`vertical-sidebar__scrollable ${isDragActive ? 'vod-drag-active' : ''}`}>
+            <div ref={scrollableRef} className={`vertical-sidebar__scrollable ${isDragActive ? 'vod-drag-active' : ''}`}>
                 {/* Sources (reorderable with the drag hotkey) each containing their categories */}
                 <DndContext
                     sensors={dndSensors}
