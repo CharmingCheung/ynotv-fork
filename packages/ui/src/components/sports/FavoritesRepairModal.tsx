@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import type { SportsTeam } from '@ynotv/core';
@@ -19,17 +19,24 @@ function normalize(value: string): string {
 export function FavoritesRepairModal({ favorites, onResolve, onSkip }: FavoritesRepairModalProps) {
   const { t } = useTranslation('sports');
   const leagues = useMemo(() => getAvailableLeagues(), []);
-  const [activeIndex, setActiveIndex] = useState(0);
   const [selectedLeague, setSelectedLeague] = useState('');
   const [candidates, setCandidates] = useState<SportsTeam[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const favorite = favorites[activeIndex];
+  // Always work on the head of the remaining unresolved list. Resolving a
+  // favorite clears its `needsLeagueResolution` flag, so the parent's filtered
+  // list drops it and the next unresolved favorite becomes the head. Indexing
+  // into that shrinking array (the previous approach) advanced the cursor at
+  // the same time the list shrank, skipping every other favorite.
+  const favorite = favorites[0];
+  // Captured once: the modal mounts with the full unresolved set, so this keeps
+  // "current of total" stable while the list drains.
+  const totalRef = useRef(favorites.length);
 
   useEffect(() => {
     setSelectedLeague('');
     setCandidates([]);
-  }, [favorite?.addedAt]);
+  }, [favorite]);
 
   useEffect(() => {
     if (!selectedLeague || !favorite) return;
@@ -60,12 +67,12 @@ export function FavoritesRepairModal({ favorites, onResolve, onSkip }: Favorites
   if (!favorite) return null;
 
   const resolve = (team: SportsTeam) => {
+    // No cursor bookkeeping: `onResolve` removes this favorite from the
+    // unresolved list, so the next one is already the head on the next render.
+    // Dismiss the prompt only once the last one has been resolved.
+    const isLast = favorites.length <= 1;
     onResolve(favorite, { ...team, leagueId: selectedLeague });
-    if (activeIndex >= favorites.length - 1) {
-      onSkip();
-    } else {
-      setActiveIndex((index) => index + 1);
-    }
+    if (isLast) onSkip();
   };
 
   const useOriginalIdentity = () => {
@@ -90,7 +97,11 @@ export function FavoritesRepairModal({ favorites, onResolve, onSkip }: Favorites
         </div>
 
         <div className="sports-favorites-repair-progress">
-          {t('repairFavoritesProgress', { defaultValue: '{{current}} of {{total}}', current: activeIndex + 1, total: favorites.length })}
+          {t('repairFavoritesProgress', {
+            defaultValue: '{{current}} of {{total}}',
+            current: Math.max(totalRef.current - favorites.length + 1, 1),
+            total: Math.max(totalRef.current, favorites.length),
+          })}
         </div>
 
         <div className="sports-favorites-repair-team">
