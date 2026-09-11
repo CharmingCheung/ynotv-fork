@@ -310,9 +310,118 @@ fn create_m3u_category_id(source_id: &str, category_name: &str) -> String {
     format!("{}_{}", source_id, slug)
 }
 
+/// True when an unquoted remainder reads as the *next* attribute assignment
+/// (`name="value"` or `name=value`) rather than as this attribute's value.
+///
+/// This is what tells an attribute written without a value apart from a
+/// legitimate unquoted value that merely contains '='. In
+/// `tvg-id= tvg-name="A"` the space terminates an empty value and `tvg-name`
+/// starts the next attribute, so the remainder must be rejected; but
+/// `url-tvg=http://epg.example/x.xml?token=abc` is a real value, and its scheme /
+/// query punctuation means no bare attribute name precedes the '='.
+fn looks_like_attribute_assignment(val: &str) -> bool {
+    let Some(eq_pos) = val.find('=') else {
+        return false;
+    };
+
+    let name = &val[..eq_pos];
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+}
+
+pub(crate) fn extract_m3u_attr(text: &str, keys: &[&str]) -> String {
+    let lower = text.to_ascii_lowercase();
+
+    for key in keys {
+        let key_lower = key.to_ascii_lowercase();
+        let key_len = key_lower.len();
+        let mut search_from = 0;
+
+        while let Some(rel_pos) = lower[search_from..].find(&key_lower) {
+            let key_pos = search_from + rel_pos;
+            search_from = key_pos + key_len;
+
+            // Word boundary check before key:
+            // Must be start of string or preceded by whitespace/delimiter (not inside another identifier or URL)
+            if key_pos > 0 {
+                let prev_char = text[..key_pos].chars().next_back().unwrap();
+                if !prev_char.is_whitespace()
+                    && prev_char != ','
+                    && prev_char != ':'
+                    && prev_char != ';'
+                    && prev_char != '"'
+                    && prev_char != '\''
+                    && prev_char != '['
+                    && prev_char != '('
+                {
+                    continue;
+                }
+            }
+
+            // Key must be followed by optional whitespace, then '='
+            let remainder = &text[key_pos + key_len..];
+            let trimmed_leading = remainder.trim_start();
+            if !trimmed_leading.starts_with('=') {
+                continue;
+            }
+
+            // Skip '=' and any optional whitespace after '='
+            let after_eq = trimmed_leading[1..].trim_start();
+            if after_eq.is_empty() {
+                continue;
+            }
+
+            // Extract value: double quoted, single quoted, or unquoted
+            if let Some(after_quote) = after_eq.strip_prefix('"') {
+                if let Some(end) = after_quote.find('"') {
+                    let val = after_quote[..end].trim();
+                    if !val.is_empty() {
+                        return val.to_string();
+                    }
+                } else {
+                    // Unclosed double quote - stop at comma or end of string
+                    let end = after_quote.find(',').unwrap_or(after_quote.len());
+                    let val = after_quote[..end].trim().trim_matches('"');
+                    if !val.is_empty() {
+                        return val.to_string();
+                    }
+                }
+            } else if let Some(after_quote) = after_eq.strip_prefix('\'') {
+                if let Some(end) = after_quote.find('\'') {
+                    let val = after_quote[..end].trim();
+                    if !val.is_empty() {
+                        return val.to_string();
+                    }
+                } else {
+                    // Unclosed single quote - stop at comma or end of string
+                    let end = after_quote.find(',').unwrap_or(after_quote.len());
+                    let val = after_quote[..end].trim().trim_matches('\'');
+                    if !val.is_empty() {
+                        return val.to_string();
+                    }
+                }
+            } else {
+                // Unquoted: terminated by whitespace or comma
+                let end = after_eq.find(|c: char| c.is_whitespace() || c == ',').unwrap_or(after_eq.len());
+                let val = after_eq[..end].trim().trim_matches('"').trim_matches('\'');
+                // An empty unquoted value must not swallow the next attribute:
+                // `tvg-id= tvg-name="A"` has no value, so returning the whole
+                // `tvg-name="A"` remainder would poison epg_channel_id.
+                if !val.is_empty() && !looks_like_attribute_assignment(val) {
+                    return val.to_string();
+                }
+            }
+        }
+    }
+
+    "".to_string()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::create_m3u_category_id;
+    use super::{create_m3u_category_id, extract_m3u_attr};
 
     #[test]
     fn creates_distinct_ids_for_cyrillic_m3u_groups() {
@@ -338,6 +447,108 @@ mod tests {
 
         assert!(category_id.starts_with("source_category-"));
         assert_ne!(category_id, "source_");
+    }
+
+    #[test]
+    fn extracts_tvg_id_case_insensitively() {
+        let line1 = r#"#EXTINF:-1 tvg-id="channel26.ar" tvg-name="Channel 26",Channel 26"#;
+        assert_eq!(extract_m3u_attr(line1, &["tvg-id"]), "channel26.ar");
+
+        let line2 = r#"#EXTINF:-1 tvg-ID="channel26.ar" tvg-name="Channel 26",Channel 26"#;
+        assert_eq!(extract_m3u_attr(line2, &["tvg-id"]), "channel26.ar");
+
+        let line3 = r#"#EXTINF:-1 TVG-ID="channel26.ar" tvg-name="Channel 26",Channel 26"#;
+        assert_eq!(extract_m3u_attr(line3, &["tvg-id"]), "channel26.ar");
+
+        let line4 = r#"#EXTINF:-1 tvg-Id="channel26.ar" tvg-name="Channel 26",Channel 26"#;
+        assert_eq!(extract_m3u_attr(line4, &["tvg-id"]), "channel26.ar");
+    }
+
+    #[test]
+    fn extracts_attributes_with_whitespace_around_equals() {
+        let line1 = r#"#EXTINF:-1 tvg-ID = "channel26.ar",Channel 26"#;
+        assert_eq!(extract_m3u_attr(line1, &["tvg-id"]), "channel26.ar");
+
+        let line2 = r#"#EXTINF:-1 tvg-ID= "channel26.ar",Channel 26"#;
+        assert_eq!(extract_m3u_attr(line2, &["tvg-id"]), "channel26.ar");
+
+        let line3 = r#"#EXTINF:-1 tvg-ID ="channel26.ar",Channel 26"#;
+        assert_eq!(extract_m3u_attr(line3, &["tvg-id"]), "channel26.ar");
+
+        let line4 = r#"#EXTINF:-1 tvg-ID   =   "channel26.ar",Channel 26"#;
+        assert_eq!(extract_m3u_attr(line4, &["tvg-id"]), "channel26.ar");
+    }
+
+    #[test]
+    fn extracts_single_quoted_and_unquoted_values() {
+        let line1 = r#"#EXTINF:-1 tvg-ID='channel26.ar',Channel 26"#;
+        assert_eq!(extract_m3u_attr(line1, &["tvg-id"]), "channel26.ar");
+
+        let line2 = r#"#EXTINF:-1 tvg-ID=channel26.ar,Channel 26"#;
+        assert_eq!(extract_m3u_attr(line2, &["tvg-id"]), "channel26.ar");
+
+        let line3 = r#"#EXTINF:-1 tvg-ID=channel26.ar tvg-name="Channel 26",Channel 26"#;
+        assert_eq!(extract_m3u_attr(line3, &["tvg-id"]), "channel26.ar");
+    }
+
+    #[test]
+    fn preserves_value_casing_and_unicode() {
+        let line = r#"#EXTINF:-1 tvg-id="Channel26.AR" group-title="PELÍCULAS",Películas"#;
+        assert_eq!(extract_m3u_attr(line, &["tvg-id"]), "Channel26.AR");
+        assert_eq!(extract_m3u_attr(line, &["group-title"]), "PELÍCULAS");
+    }
+
+    #[test]
+    fn respects_word_boundaries_and_fallback_keys() {
+        let line1 = r#"#EXTINF:-1 custom-tvg-id="wrong" tvg-id="correct",Channel"#;
+        assert_eq!(extract_m3u_attr(line1, &["tvg-id"]), "correct");
+
+        let line2 = r#"#EXTINF:-1 catchup-type="flussonic",Channel"#;
+        assert_eq!(extract_m3u_attr(line2, &["catchup"]), "");
+        assert_eq!(extract_m3u_attr(line2, &["catchup-type"]), "flussonic");
+        assert_eq!(extract_m3u_attr(line2, &["catchup", "catchup-type"]), "flussonic");
+
+        let line3 = r#"#EXTINF:-1 tvg-logo="" tvg-icon="http://example.com/icon.png",Channel"#;
+        assert_eq!(extract_m3u_attr(line3, &["tvg-logo", "tvg-icon"]), "http://example.com/icon.png");
+
+        let line4 = r#"#EXTINF:-1 tvg-logo="http://server.com/img?logo=bar&tvg-id=wrong" tvg-id="right",Channel"#;
+        assert_eq!(extract_m3u_attr(line4, &["tvg-id"]), "right");
+    }
+
+    #[test]
+    fn empty_unquoted_value_does_not_swallow_the_next_attribute() {
+        // No value between '=' and the next attribute: must yield "", not the
+        // next attribute's name=value text (which would poison epg_channel_id).
+        let line1 = r#"#EXTINF:-1 tvg-id= tvg-name="Channel 26",Channel 26"#;
+        assert_eq!(extract_m3u_attr(line1, &["tvg-id"]), "");
+        assert_eq!(extract_m3u_attr(line1, &["tvg-name"]), "Channel 26");
+
+        // Same when the following attribute is unquoted, and for a fallback key.
+        let line2 = r#"#EXTINF:-1 group-title= group="News",Channel"#;
+        assert_eq!(extract_m3u_attr(line2, &["group-title"]), "");
+        assert_eq!(extract_m3u_attr(line2, &["group"]), "News");
+
+        let line3 = r#"#EXTINF:-1 tvg-id= tvg-name=A,Channel"#;
+        assert_eq!(extract_m3u_attr(line3, &["tvg-id"]), "");
+
+        // Whitespace around '=' is still fine when a real value follows.
+        let line4 = r#"#EXTINF:-1 tvg-id= "channel26.ar",Channel"#;
+        assert_eq!(extract_m3u_attr(line4, &["tvg-id"]), "channel26.ar");
+        let line5 = r#"#EXTINF:-1 tvg-chno= 5,Channel"#;
+        assert_eq!(extract_m3u_attr(line5, &["tvg-chno"]), "5");
+
+        // Unquoted values that legitimately contain '=' (URL query params) are
+        // preserved - only a bare `name=` prefix marks the next attribute.
+        let line6 = r#"#EXTM3U url-tvg=http://epg.example/x.xml?token=abc"#;
+        assert_eq!(
+            extract_m3u_attr(line6, &["url-tvg"]),
+            "http://epg.example/x.xml?token=abc"
+        );
+        let line7 = r#"#EXTINF:-1 catchup-source=http://x/ts?utc={utc}&lutc={lutc},Channel"#;
+        assert_eq!(
+            extract_m3u_attr(line7, &["catchup-source"]),
+            "http://x/ts?utc={utc}&lutc={lutc}"
+        );
     }
 }
 
@@ -555,36 +766,7 @@ pub async fn sync_m3u_source(
     let mut header_catchup_source: Option<String> = None;
     let mut header_catchup_days: Option<i32> = None;
 
-    let extract_attr = |text: &str, keys: &[&str]| -> String {
-        for key in keys {
-            let dquote_prefix = format!("{}=\"", key);
-            if let Some(start) = text.find(&dquote_prefix) {
-                let substr = &text[start + dquote_prefix.len()..];
-                if let Some(end) = substr.find('"') {
-                    return substr[..end].trim().to_string();
-                }
-            }
-
-            let squote_prefix = format!("{}='", key);
-            if let Some(start) = text.find(&squote_prefix) {
-                let substr = &text[start + squote_prefix.len()..];
-                if let Some(end) = substr.find('\'') {
-                    return substr[..end].trim().to_string();
-                }
-            }
-
-            let unquoted_prefix = format!("{}=", key);
-            if let Some(start) = text.find(&unquoted_prefix) {
-                let substr = &text[start + unquoted_prefix.len()..];
-                let end = substr.find(|c: char| c.is_whitespace() || c == ',').unwrap_or(substr.len());
-                let val = substr[..end].trim().trim_matches('"').trim_matches('\'');
-                if !val.is_empty() {
-                    return val.to_string();
-                }
-            }
-        }
-        "".to_string()
-    };
+    let extract_attr = extract_m3u_attr;
 
     for line in content.lines().map(|l| l.trim()) {
         if line.is_empty() { continue; }
