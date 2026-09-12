@@ -17,12 +17,34 @@ describe('readStalkerCategoryCacheMarker', () => {
   });
 
   it('round-trips a versioned marker without flagging it legacy', () => {
-    const raw = writeStalkerCategoryCacheMarker(LEGACY_TS);
+    const raw = writeStalkerCategoryCacheMarker({ syncedAt: LEGACY_TS });
     expect(JSON.parse(raw)).toEqual({ v: STALKER_CATEGORY_CACHE_VERSION, ts: LEGACY_TS });
 
     const marker = readStalkerCategoryCacheMarker(raw);
     expect(marker.syncedAt).toBe(LEGACY_TS);
     expect(marker.legacy).toBe(false);
+    expect(marker.healAttemptedAt).toBeNull();
+  });
+
+  it('keeps the truncation suspicion and the heal attempt across a forced refetch', () => {
+    const raw = writeStalkerCategoryCacheMarker({
+      syncedAt: LEGACY_TS,
+      legacy: true,
+      healAttemptedAt: LEGACY_TS + 60_000,
+    });
+
+    const marker = readStalkerCategoryCacheMarker(raw);
+    // The original sync time is preserved so the normal cache timer still expires on schedule,
+    // and the suspicion survives so a deferred/failed refetch isn't mistaken for a repair.
+    expect(marker.syncedAt).toBe(LEGACY_TS);
+    expect(marker.legacy).toBe(true);
+    expect(marker.healAttemptedAt).toBe(LEGACY_TS + 60_000);
+  });
+
+  it('ignores a malformed heal timestamp', () => {
+    const marker = readStalkerCategoryCacheMarker('{"v":2,"ts":1700000000000,"legacy":true,"heal":"soon"}');
+    expect(marker.legacy).toBe(true);
+    expect(marker.healAttemptedAt).toBeNull();
   });
 
   it('treats a missing or empty marker as never synced', () => {
@@ -49,8 +71,8 @@ describe('readStalkerCategoryCacheMarker', () => {
 });
 
 describe('isLikelyTruncatedStalkerCache', () => {
-  const legacy = { syncedAt: LEGACY_TS, legacy: true };
-  const current = { syncedAt: LEGACY_TS, legacy: false };
+  const legacy = { syncedAt: LEGACY_TS, legacy: true, healAttemptedAt: null };
+  const current = { syncedAt: LEGACY_TS, legacy: false, healAttemptedAt: null };
 
   it('flags a legacy cache holding exactly one page of items', () => {
     expect(isLikelyTruncatedStalkerCache(legacy, STALKER_SINGLE_PAGE_ITEM_COUNT)).toBe(true);
@@ -69,5 +91,13 @@ describe('isLikelyTruncatedStalkerCache', () => {
     expect(isLikelyTruncatedStalkerCache(legacy, 0)).toBe(false);
     expect(isLikelyTruncatedStalkerCache(current, STALKER_SINGLE_PAGE_ITEM_COUNT)).toBe(false);
     expect(isLikelyTruncatedStalkerCache(current, 0)).toBe(false);
+  });
+
+  it('still reports truncation after a refetch was attempted (the caller gates the retry)', () => {
+    const matching = readStalkerCategoryCacheMarker(
+      writeStalkerCategoryCacheMarker({ syncedAt: LEGACY_TS, legacy: true, healAttemptedAt: LEGACY_TS }),
+    );
+    expect(isLikelyTruncatedStalkerCache(matching, STALKER_SINGLE_PAGE_ITEM_COUNT)).toBe(true);
+    expect(matching.healAttemptedAt).not.toBeNull();
   });
 });

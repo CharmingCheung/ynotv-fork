@@ -1052,6 +1052,12 @@ export class StalkerClient {
                 const { items: pageItems, max_page_items } = this.extractOrderedList(res.value);
                 const pageSize = max_page_items || page0Size;
 
+                // The page resolved, so it is no longer missing — drop any earlier failure
+                // recorded for it (the page 1 probe records one) so the retry pass doesn't
+                // re-request it. An empty response counts as resolved too: it means the page
+                // holds no items, which is how a category past its end answers.
+                pendingFailedPages.delete(index);
+
                 if (pageItems.length === 0) {
                     // Empty response means no more pages
                     hasMore = false;
@@ -1156,9 +1162,12 @@ export class StalkerClient {
                                 pageItemsMap.set(index, newItems);
                                 pagesFetched++;
                             }
-                            pendingFailedPages.delete(index);
                             console.log(`[Stalker] Retry succeeded for page ${index} (${newItems.length} items)`);
                         }
+                        // Resolved either way: an empty page holds no items (typically past the
+                        // end of a category whose total the portal never reported), so it is not
+                        // a gap that should fail the whole category.
+                        pendingFailedPages.delete(index);
                     } else {
                         console.error(`[Stalker] Retry failed permanently for page ${index}:`, res.reason);
                     }

@@ -337,6 +337,12 @@ describe('StalkerClient fetchOrderedListPages', () => {
                 if (page1Calls <= 2) {
                     throw new Error('Transient probe failure');
                 }
+                // Any further request for page 1 is the redundant retry this test exists to rule out.
+                // Failing it (rather than answering with the duplicate page) means a regression can't
+                // be hidden by a lucky mock response: it would leave the page pending and abort.
+                if (page1Calls > 3) {
+                    throw new Error('Unexpected extra request for page 1');
+                }
             }
             const page = Math.max(1, Math.min(requested, 3));
             return {
@@ -350,11 +356,54 @@ describe('StalkerClient fetchOrderedListPages', () => {
 
         const items = await (client as any).fetchOrderedListPages('vod', { category: '63' }, 2);
 
-        expect(page1Calls).toBeGreaterThanOrEqual(3);
+        // Two probe attempts plus the walk's own read of page 1. The walk resolving the page
+        // must clear the failure the probe recorded, so the retry pass does not re-request it.
+        expect(page1Calls).toBe(3);
         expect(items.length).toBe(42);
         expect(new Set(items.map((i: any) => i.id)).size).toBe(42);
         expect(items[0].id).toBe('item_1_0');
         expect(items[41].id).toBe('item_3_13');
+    });
+
+    it('does not abort a category whose page 1 probe failed but which the walk then fetched', async () => {
+        const client = new StalkerClient({ baseUrl: 'http://test.portal/c/', mac: '00:1A:79:00:00:16' }, 'source_probe_then_walk');
+
+        let page1Calls = 0;
+        vi.spyOn(client as any, 'fetchStalker').mockImplementation(async (_action: any, _type: any, params: any) => {
+            const requested = parseInt(params.p, 10);
+            if (requested === 1) {
+                page1Calls++;
+                // Both probe attempts fail (transient outage), then this portal is 0-based so the
+                // walk's own request for p=1 is a genuine page and succeeds.
+                if (page1Calls <= 2) {
+                    throw new Error('Transient probe failure');
+                }
+                // A second request for the walk's page would be the redundant retry, and it fails:
+                // without the walk clearing the probe's failure this aborts the whole category.
+                if (page1Calls > 3) {
+                    throw new Error('Unexpected extra request for page 1');
+                }
+            }
+            // Genuinely 0-based: p=0 is page 1, so p=1 is a real second page, not a repeat.
+            const page = Math.min(requested + 1, 3);
+            return {
+                js: {
+                    total_items: 42,
+                    max_page_items: 14,
+                    data: Array.from({ length: 14 }, (_, i) => ({ id: `item_${page}_${i}` })),
+                },
+            };
+        });
+
+        const items = await (client as any).fetchOrderedListPages('vod', { category: '63' }, 2);
+
+        expect(page1Calls).toBe(3);
+        expect(items.length).toBe(42);
+        expect(items.map((i: any) => i.id)).toEqual([
+            ...Array.from({ length: 14 }, (_, i) => `item_1_${i}`),
+            ...Array.from({ length: 14 }, (_, i) => `item_2_${i}`),
+            ...Array.from({ length: 14 }, (_, i) => `item_3_${i}`),
+        ]);
     });
 
     it('walks the whole category on a metadata-free 1-based portal (no total_items)', async () => {
@@ -409,5 +458,43 @@ describe('StalkerClient fetchOrderedListPages', () => {
 
         expect(items.length).toBe(14);
         expect(fetchedPages.length).toBeLessThan(10);
+    });
+
+    it('treats an empty retry response as the end of the category, not as a missing page', async () => {
+        const client = new StalkerClient({ baseUrl: 'http://test.portal/c/', mac: '00:1A:79:00:00:15' }, 'source_empty_retry');
+
+        // No total_items/pages metadata, so the walk can't know where the category ends and
+        // speculatively requests one page past it.
+        let page3Calls = 0;
+        vi.spyOn(client as any, 'fetchStalker').mockImplementation(async (_action: any, _type: any, params: any) => {
+            const pageNum = parseInt(params.p, 10);
+            if (pageNum === 3) {
+                page3Calls++;
+                // The speculative request past the end fails; the retry gets the empty list the
+                // portal serves for an out-of-range page.
+                if (page3Calls === 1) {
+                    throw new Error('Transient error past the end of the category');
+                }
+                return { js: { max_page_items: 14, data: [] } };
+            }
+            return {
+                js: {
+                    max_page_items: 14,
+                    data: pageNum <= 2
+                        ? Array.from({ length: 14 }, (_, i) => ({ id: `item_${pageNum}_${i}` }))
+                        : [],
+                },
+            };
+        });
+
+        const items = await (client as any).fetchOrderedListPages('vod', { category: '1' }, 2);
+
+        // The three real pages (p=0, 1, 2) are returned whole; the empty answer for the page the
+        // speculative request failed on is treated as past-the-end instead of aborting the load.
+        expect(page3Calls).toBe(2);
+        expect(items.length).toBe(42);
+        expect(items[0].id).toBe('item_0_0');
+        expect(items[14].id).toBe('item_1_0');
+        expect(items[28].id).toBe('item_2_0');
     });
 });

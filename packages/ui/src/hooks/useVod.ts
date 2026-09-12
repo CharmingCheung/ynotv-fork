@@ -1107,14 +1107,23 @@ export function useLazyStalkerLoader(type: 'movies' | 'series', categoryId: stri
 
           // Markers written before the Stalker page-offset fix can't prove their rows came from
           // offset-correct pagination, and a category cached as a single page (14 items) is the
-          // signature of that truncation. Refetch it now rather than waiting out the cache TTL —
-          // afterwards the marker is versioned, so this runs at most once per category.
-          if (marker.legacy) {
+          // signature of that truncation. Refetch it now rather than waiting out the cache TTL.
+          //
+          // The forced refetch happens once per marker. It records the attempt while keeping the
+          // "may be truncated" flag, so a refetch that fails or is deferred leaves the suspicion
+          // in place (the count check above still applies to the next marker) but does not force
+          // a sync — and an error toast — on every single open; the cache timer takes over.
+          if (marker.legacy && marker.healAttemptedAt == null) {
             const storedItemCount = await table.where('category_ids').equals(categoryId).count();
             if (cancelled) return;
-            cacheLooksTruncated = isLikelyTruncatedStalkerCache(marker, storedItemCount);
-            if (cacheLooksTruncated) {
+            if (isLikelyTruncatedStalkerCache(marker, storedItemCount)) {
+              cacheLooksTruncated = true;
               console.log(`[useLazyStalkerLoader] ${type} cache for ${categoryId} looks truncated (${storedItemCount} items); refetching now`);
+              localStorage.setItem(syncTimestampKey, writeStalkerCategoryCacheMarker({
+                syncedAt: marker.syncedAt ?? undefined,
+                legacy: true,
+                healAttemptedAt: Date.now(),
+              }));
             }
           }
         }
@@ -1144,8 +1153,8 @@ export function useLazyStalkerLoader(type: 'movies' | 'series', categoryId: stri
             setMessage(msg);
           });
           if (cancelled) return;
-          // Record a successful sync so the cache check works next time. The versioned marker
-          // also records that these rows came from offset-correct pagination.
+          // Record a successful sync so the cache check works next time. This writes a clean
+          // marker, which also clears any leftover "rows may be truncated" suspicion.
           if (syncTimestampKey) {
             localStorage.setItem(syncTimestampKey, writeStalkerCategoryCacheMarker());
           }

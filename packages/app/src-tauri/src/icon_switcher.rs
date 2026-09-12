@@ -1,3 +1,5 @@
+// Only the Windows icon path keeps handles alive, so the import follows the same cfg.
+#[cfg(target_os = "windows")]
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 
@@ -12,10 +14,32 @@ use windows::Win32::{
     },
 };
 
-// Keep active HICON handles alive in memory so Windows Explorer / DWM does not
+// Keep installed HICON handles alive in memory so Windows Explorer / DWM does not
 // read dangling pointers when repainting the taskbar / Alt+Tab.
+//
+// Flat list, two entries per switch (big, small), newest last. The previous generation is
+// deliberately retained as well: handing the shell a new icon does not mean it has finished
+// painting the button it last read the old handle from, and freeing that handle mid-paint is
+// exactly the "blank icon" failure this module exists to prevent. Two generations cost roughly
+// 300 KB per switch and the process frees them on exit.
 #[cfg(target_os = "windows")]
 static ACTIVE_ICONS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+
+/// Generations to keep before freeing: the installed one plus its predecessor.
+#[cfg(target_os = "windows")]
+const ICON_GENERATIONS_KEPT: usize = 2;
+
+/// Drop everything except the newest `generations` generations (two handles each) from `handles`,
+/// returning the handles the caller must destroy. Split out from the Win32 sequence so the
+/// retention policy can be unit tested.
+#[cfg(target_os = "windows")]
+fn stale_icon_handles(handles: &mut Vec<usize>, generations: usize) -> Vec<usize> {
+    let keep = generations * 2;
+    if handles.len() <= keep {
+        return Vec::new();
+    }
+    handles.drain(..handles.len() - keep).collect()
+}
 
 pub const ICONS: &[(&str, &[u8])] = &[
     ("midnight-4b", include_bytes!("../icons/switcher/midnight-4b.png")),
@@ -50,16 +74,22 @@ fn update_windows_icons(app: &AppHandle, icon_bytes: &[u8]) -> Result<(), String
         )
         .map_err(|e| format!("Failed to create Win32 big icon: {e}"))?;
 
-        // Small icon pre-scaled to system metric for titlebar / small icons
-        let hicon_small = CreateIconFromResourceEx(
+        // Small icon pre-scaled to system metric for titlebar / small icons.
+        // On failure, destroy the big icon we already created rather than orphaning its handle.
+        let hicon_small = match CreateIconFromResourceEx(
             icon_bytes,
             true,
             0x00030000,
             small_cx,
             small_cy,
             LR_DEFAULTCOLOR,
-        )
-        .map_err(|e| format!("Failed to create Win32 small icon: {e}"))?;
+        ) {
+            Ok(handle) => handle,
+            Err(e) => {
+                let _ = DestroyIcon(hicon_big);
+                return Err(format!("Failed to create Win32 small icon: {e}"));
+            }
+        };
 
         let windows = app.webview_windows();
         for (_, win) in windows {
@@ -96,13 +126,13 @@ fn update_windows_icons(app: &AppHandle, icon_bytes: &[u8]) -> Result<(), String
             }
         }
 
-        // Manage lifecycle: destroy old handles after assigning new ones, and preserve new ones
-        for &old_handle in lock.iter() {
-            let _ = DestroyIcon(HICON(old_handle as *mut _));
-        }
-        lock.clear();
+        // Adopt the new handles, then free anything older than the generations we retain — the
+        // previous generation stays alive so a shell mid-repaint can still read its handle.
         lock.push(hicon_big.0 as usize);
         lock.push(hicon_small.0 as usize);
+        for stale_handle in stale_icon_handles(&mut lock, ICON_GENERATIONS_KEPT) {
+            let _ = DestroyIcon(HICON(stale_handle as *mut _));
+        }
     }
     Ok(())
 }
@@ -187,6 +217,26 @@ mod tests {
                 let _ = DestroyIcon(small.unwrap());
             }
         }
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn keeps_the_previous_icon_generation_alive() {
+        // Two handles per switch (big, small), newest last. Values are never passed to Win32 here.
+        let mut handles: Vec<usize> = Vec::new();
+
+        // First and second switch: nothing is old enough to free, so a shell mid-repaint can
+        // still be reading the handle it last saw.
+        handles.extend([1, 2]);
+        assert!(stale_icon_handles(&mut handles, ICON_GENERATIONS_KEPT).is_empty());
+        handles.extend([3, 4]);
+        assert!(stale_icon_handles(&mut handles, ICON_GENERATIONS_KEPT).is_empty());
+        assert_eq!(handles, vec![1, 2, 3, 4]);
+
+        // Third switch: only the generation from two switches back is released.
+        handles.extend([5, 6]);
+        assert_eq!(stale_icon_handles(&mut handles, ICON_GENERATIONS_KEPT), vec![1, 2]);
+        assert_eq!(handles, vec![3, 4, 5, 6]);
     }
 
     #[test]
