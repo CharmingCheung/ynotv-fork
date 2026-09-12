@@ -1,6 +1,13 @@
 # Changelog
 
-## v2.5.4
+## v2.5.5
+
+### Fixed
+
+- **App icon disappearing** - Fixed a bug where app icon would disappear, showing a blank default icon. 
+- **Stalker VOD Categories not loading past 1st 14 items** - Fixed a bug where only the first 14 items where shown
+
+### v2.5.4
 
 ### Added
 
