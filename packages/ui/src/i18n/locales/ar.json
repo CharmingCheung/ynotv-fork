@@ -2656,6 +2656,7 @@
     }
   },
   "time": {
+    "durationS": "{{seconds}}ث",
     "today": "اليوم",
     "tomorrow": "غدًا",
     "yesterday": "أمس",
@@ -3513,6 +3514,13 @@
     "someEpisodesAlreadyInPlaylistMsg": "{{count}} من أصل {{total}} حلقة محددة موجودة بالفعل في {{name}}. هل تريد الإضافة على أي حال؟"
   },
   "dvr": {
+    "scheduleOptionsTitle": "جدولة التسجيل",
+    "scheduleOptionsSubtitle": "اضبط العنوان والتكرار والهامش",
+    "paddingSettings": "إعدادات الهامش",
+    "resetTitle": "إعادة تعيين",
+    "paddingOnTime": "في الموعد ({{duration}})",
+    "paddingStartsEarly": "قبل الموعد بـ{{duration}}",
+    "paddingEndsLate": "بعد الموعد بـ{{duration}}",
     "title": "التسجيل والتنزيلات",
     "scheduled": "مجدولة",
     "recordings": "التسجيلات",

@@ -2656,6 +2656,7 @@
     }
   },
   "time": {
+    "durationS": "{{seconds}}سیکنڈ",
     "today": "آج",
     "tomorrow": "آنے والا کل",
     "yesterday": "کل",
@@ -3513,6 +3514,13 @@
     "someEpisodesAlreadyInPlaylistMsg": "{{total}} منتخب اقساط میں سے {{count}} پہلے سے {{name}} میں موجود ہیں۔ پھر بھی شامل کریں؟"
   },
   "dvr": {
+    "scheduleOptionsTitle": "ریکارڈنگ شیڈول کریں",
+    "scheduleOptionsSubtitle": "عنوان، تکرار اور پیڈنگ ترتیب دیں",
+    "paddingSettings": "پیڈنگ کی ترتیبات",
+    "resetTitle": "ری سیٹ",
+    "paddingOnTime": "وقت پر ({{duration}})",
+    "paddingStartsEarly": "{{duration}} پہلے",
+    "paddingEndsLate": "{{duration}} زائد",
     "title": "ڈی وی آر اور ڈاؤن لوڈز",
     "scheduled": "طے شدہ",
     "recordings": "ریکارڈنگز",

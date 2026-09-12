@@ -2656,6 +2656,7 @@
     }
   },
   "time": {
+    "durationS": "{{seconds}}s",
     "today": "Danas",
     "tomorrow": "Sutra",
     "yesterday": "Juče",
@@ -3513,6 +3514,13 @@
     "someEpisodesAlreadyInPlaylistMsg": "{{count}} od {{total}} izabranih epizoda je već u listi {{name}}. Dodati svejedno?"
   },
   "dvr": {
+    "scheduleOptionsTitle": "Zakazivanje snimanja",
+    "scheduleOptionsSubtitle": "Podesite naslov, ponavljanje i marginu",
+    "paddingSettings": "Postavke margine",
+    "resetTitle": "Resetuj",
+    "paddingOnTime": "Na vrijeme ({{duration}})",
+    "paddingStartsEarly": "-{{duration}} ranije",
+    "paddingEndsLate": "+{{duration}} dodatno",
     "title": "DVR i preuzimanje",
     "scheduled": "Zakazano",
     "recordings": "Snimci",

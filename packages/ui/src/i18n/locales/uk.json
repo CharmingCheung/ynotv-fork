@@ -2656,6 +2656,7 @@
     }
   },
   "time": {
+    "durationS": "{{seconds}}с",
     "today": "Сьогодні",
     "tomorrow": "Завтра",
     "yesterday": "Вчора",
@@ -3513,6 +3514,13 @@
     "someEpisodesAlreadyInPlaylistMsg": "{{count}} з {{total}} вибраних серій вже є в {{name}}. Все одно додати?"
   },
   "dvr": {
+    "scheduleOptionsTitle": "Планування запису",
+    "scheduleOptionsSubtitle": "Налаштуйте назву, повторення та запас",
+    "paddingSettings": "Налаштування запасу",
+    "resetTitle": "Скинути",
+    "paddingOnTime": "Вчасно ({{duration}})",
+    "paddingStartsEarly": "-{{duration}} раніше",
+    "paddingEndsLate": "+{{duration}} запасу",
     "title": "DVR і завантаження",
     "scheduled": "Заплановано",
     "recordings": "Записи",

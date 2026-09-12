@@ -2656,6 +2656,7 @@
     }
   },
   "time": {
+    "durationS": "{{seconds}}s",
     "today": "Aujourd'hui",
     "tomorrow": "Demain",
     "yesterday": "Hier",
@@ -3513,6 +3514,13 @@
     "someEpisodesAlreadyInPlaylistMsg": "{{count}} des {{total}} épisodes sélectionnés sont déjà dans {{name}}. Les ajouter quand même ?"
   },
   "dvr": {
+    "scheduleOptionsTitle": "Programmer un enregistrement",
+    "scheduleOptionsSubtitle": "Configurez le titre, la répétition et la marge",
+    "paddingSettings": "Paramètres de marge",
+    "resetTitle": "Réinitialiser",
+    "paddingOnTime": "À l'heure ({{duration}})",
+    "paddingStartsEarly": "-{{duration}} en avance",
+    "paddingEndsLate": "+{{duration}} de marge",
     "title": "DVR et Téléchargements",
     "scheduled": "Programmé",
     "recordings": "Enregistrements",

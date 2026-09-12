@@ -2656,6 +2656,7 @@
     }
   },
   "time": {
+    "durationS": "{{seconds}}s",
     "today": "Today",
     "tomorrow": "Tomorrow",
     "yesterday": "Yesterday",
@@ -3513,6 +3514,13 @@
     "recentlyAdded": "Recently Added"
   },
   "dvr": {
+    "scheduleOptionsTitle": "Schedule Recording",
+    "scheduleOptionsSubtitle": "Configure title, recurrence, and padding",
+    "paddingSettings": "Padding Settings",
+    "resetTitle": "Reset",
+    "paddingOnTime": "On time ({{duration}})",
+    "paddingStartsEarly": "-{{duration}} early",
+    "paddingEndsLate": "+{{duration}} cushion",
     "title": "DVR & Downloads",
     "scheduled": "Scheduled",
     "recordings": "Recordings",

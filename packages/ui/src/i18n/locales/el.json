@@ -2656,6 +2656,7 @@
     }
   },
   "time": {
+    "durationS": "{{seconds}}δ",
     "today": "Σήμερα",
     "tomorrow": "Αύριο",
     "yesterday": "Χθες",
@@ -3513,6 +3514,13 @@
     "someEpisodesAlreadyInPlaylistMsg": "{{count}} από τα {{total}} επιλεγμένα επεισόδια υπάρχουν ήδη στη {{name}}. Να προστεθούν ούτως ή άλλως;"
   },
   "dvr": {
+    "scheduleOptionsTitle": "Προγραμματισμός εγγραφής",
+    "scheduleOptionsSubtitle": "Ρυθμίστε τίτλο, επανάληψη και περιθώριο",
+    "paddingSettings": "Ρυθμίσεις περιθωρίου",
+    "resetTitle": "Επαναφορά",
+    "paddingOnTime": "Στην ώρα ({{duration}})",
+    "paddingStartsEarly": "-{{duration}} νωρίτερα",
+    "paddingEndsLate": "+{{duration}} περιθώριο",
     "title": "DVR & Λήψεις",
     "scheduled": "Προγραμματισμένα",
     "recordings": "Εγγραφές",

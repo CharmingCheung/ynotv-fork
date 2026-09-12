@@ -466,6 +466,13 @@
     "syncPerformanceNote": "Trong khi đồng bộ, hiệu suất có thể chậm hơn."
   },
   "dvr": {
+    "scheduleOptionsTitle": "Lên lịch ghi",
+    "scheduleOptionsSubtitle": "Cấu hình tiêu đề, lặp lại và khoảng đệm",
+    "paddingSettings": "Cài đặt khoảng đệm",
+    "resetTitle": "Đặt lại",
+    "paddingOnTime": "Đúng giờ ({{duration}})",
+    "paddingStartsEarly": "-{{duration}} sớm",
+    "paddingEndsLate": "+{{duration}} đệm thêm",
     "title": "DVR & Tải Xuống",
     "scheduled": "Đã Lên Lịch",
     "recordings": "Bản Ghi",
@@ -1448,6 +1455,7 @@
     }
   },
   "time": {
+    "durationS": "{{seconds}}giây",
     "today": "Hôm nay",
     "tomorrow": "Ngày mai",
     "yesterday": "Hôm Qua",

@@ -2656,6 +2656,7 @@
     }
   },
   "time": {
+    "durationS": "{{seconds}}秒",
     "today": "今天",
     "tomorrow": "明天",
     "yesterday": "昨天",
@@ -3513,6 +3514,13 @@
     "someEpisodesAlreadyInPlaylistMsg": "選取的 {{total}} 集中有 {{count}} 集已在 {{name}} 中。仍然新增？"
   },
   "dvr": {
+    "scheduleOptionsTitle": "安排錄製",
+    "scheduleOptionsSubtitle": "設定標題、重複與填充",
+    "paddingSettings": "填充設定",
+    "resetTitle": "重設",
+    "paddingOnTime": "準時（{{duration}}）",
+    "paddingStartsEarly": "提前 {{duration}}",
+    "paddingEndsLate": "延後 {{duration}}",
     "title": "DVR 與下載",
     "scheduled": "已安排",
     "recordings": "錄製",

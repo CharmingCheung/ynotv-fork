@@ -2656,6 +2656,7 @@
     }
   },
   "time": {
+    "durationS": "{{seconds}}सेकंड",
     "today": "आज",
     "tomorrow": "कल",
     "yesterday": "कल",
@@ -3513,6 +3514,13 @@
     "someEpisodesAlreadyInPlaylistMsg": "{{total}} चयनित एपिसोड में से {{count}} पहले से {{name}} में मौजूद हैं। फिर भी जोड़ें?"
   },
   "dvr": {
+    "scheduleOptionsTitle": "रिकॉर्डिंग शेड्यूल करें",
+    "scheduleOptionsSubtitle": "शीर्षक, पुनरावृत्ति और पैडिंग कॉन्फ़िगर करें",
+    "paddingSettings": "पैडिंग सेटिंग्स",
+    "resetTitle": "रीसेट",
+    "paddingOnTime": "समय पर ({{duration}})",
+    "paddingStartsEarly": "{{duration}} पहले",
+    "paddingEndsLate": "{{duration}} अतिरिक्त",
     "title": "DVR और डाउनलोड",
     "scheduled": "निर्धारित",
     "recordings": "रिकॉर्डिंग",

@@ -2656,6 +2656,7 @@
     }
   },
   "time": {
+    "durationS": "{{seconds}}mp",
     "today": "Ma",
     "tomorrow": "Holnap",
     "yesterday": "Tegnap",
@@ -3513,6 +3514,13 @@
     "someEpisodesAlreadyInPlaylistMsg": "A kijelölt {{total}} epizódból {{count}} már szerepel ebben: {{name}}. Hozzáadja így is?"
   },
   "dvr": {
+    "scheduleOptionsTitle": "Felvétel ütemezése",
+    "scheduleOptionsSubtitle": "Cím, ismétlés és ráhagyás beállítása",
+    "paddingSettings": "Ráhagyás beállításai",
+    "resetTitle": "Visszaállítás",
+    "paddingOnTime": "Pontosan ({{duration}})",
+    "paddingStartsEarly": "-{{duration}} korábban",
+    "paddingEndsLate": "+{{duration}} ráhagyás",
     "title": "DVR és letöltések",
     "scheduled": "Ütemezett",
     "recordings": "Felvételek",

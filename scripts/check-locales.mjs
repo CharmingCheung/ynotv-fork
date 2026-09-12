@@ -146,6 +146,9 @@ const UNTRANSLATED_ALLOWLIST = new Set([
   'common.contextMenu.min_other', 'common.contextMenu.min_few', 'common.contextMenu.min_many',
   'common.contextMenu.min_two', 'common.contextMenu.min_zero', 'settings.playback.minUnit',
   'settings.playback.secUnit', 'settings.dvr.min_one', 'tvShows.minutes_one',
+  // "s" is the correct seconds abbreviation in bs/de/es/fr/hr/it/nl/pl/pt-BR/sq,
+  // exactly as it already is for time.secAgo in those locales.
+  'time.durationS',
   'time.durationM', 'time.durationH', 'time.durationHM', 'time.lessThanMinute', 'vod.durationHM',
   'probe.progressCount', 'probe.msValue', 'probe.fpsValue', 'probe.eta', 'probe.chPerSec',
   'probe.ok', 'probe.drm', 'probe.quality4k', 'probe.quality1080p', 'probe.quality720p', 'probe.qualitySd',
