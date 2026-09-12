@@ -22,13 +22,13 @@ A feature-rich, open source IPTV player for Windows built on [Tauri v2](https://
 
 | EPG with preview | VOD |
 | :-------------------------------------: | :--------------------------------------: |
-| ![EPG with preview](https://i.ibb.co/207znsrw/ynotv-go-Ckngt-Ezr.png) | ![VOD](https://i.imgur.com/eR2b3jb.jpeg) |
+| ![EPG with preview](https://i.ibb.co/207znsrw/ynotv-go-Ckngt-Ezr.png) | ![VOD](https://i.ibb.co/FbsQg842/e-R2b3jb.jpg) |
 | Playlist Editor | EPG Editor |
-| ![Playlist Editor](https://i.imgur.com/oMc7ecE.png) | ![EPG Editor](https://i.imgur.com/rv2ewdz.png) |
+| ![Playlist Editor](https://i.ibb.co/pjh43VPL/o-Mc7ec-E.png) | ![EPG Editor](https://i.ibb.co/m3jbML0/SPsv-GGe.png) |
 | Watchlist Option with autoswitch | Strem View |
-| ![Watchlist Option with autoswitch](https://i.imgur.com/7PzZPz0.png) | ![Strem View](https://i.imgur.com/2woHM6m.jpeg) |
+| ![Watchlist Option with autoswitch](https://i.ibb.co/LXKnnMc6/7Pz-ZPz0.png) | ![Strem View](https://i.ibb.co/0RX8SFMP/2wo-HM6m.jpg) |
 | Sports View | Themes |
-| ![Sports View](https://i.imgur.com/Hr6wtiY.png) | ![Themes](https://i.imgur.com/WDjMMSh.png) |
+| ![Sports View](https://i.ibb.co/NdgQKsbW/Hr6wti-Y.png) | ![Themes](https://i.ibb.co/3bd2L7F/WDj-MMSh.png) |
 | Multiview Menu | PiP View |
 | ![Multiview Menu](https://i.imgur.com/KOXyWBs.jpeg) | ![PiP View](https://i.imgur.com/LxweTiN.jpeg) |
 | Multiview 2x2 | DVR Page |

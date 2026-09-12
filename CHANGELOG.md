@@ -1,5 +1,25 @@
 # Changelog
 
+## v2.5.4
+
+### Added
+
+- **Option to launch on Windows startup** - ynoTV can now start automatically when you sign in to Windows, optionally launching minimized to the system tray. Enable under `Settings → UI`.
+- **Stalker VOD preferences** - How VOD Movies and Series categories load for Stalker/MAC portals can now be tuned under `Settings → Sources → Stalker Preferences`. Options include a page fetch concurrency setting and a category cache timer.
+- **Quick-link current channel to a Sports team** - The currently playing channel can be linked to a Sports team directly from the Sports sidebar without leaving the player.
+- **Widgets and VOD lists remembering scroll position** - Widgets, VOD categories, and the Local tab now restore your scroll position when returning to them, keep the active channel in view
+- **Dates in View All Programs** - The All tab now displays each program's date with day headers, making it easier to browse catch-up content across multiple days.
+- **Widget scaling up to 400%** - Widget and overlay scale can now be set up to 400%, up from the previous 200% maximum. The settings preview caps at 250% to keep the panel readable.
+- **DVR padding changed to number input** - The Schedule Recording dialog now uses minute and second input fields instead of sliders, so any padding value can be typed in directly.
+- **Source names in the channel list** - Categories that contain channels from more than one playlist can now display each channel's source name alongside a source count.
+
+### Fixed
+
+- **Jellyfin incorrectly trying to transcode** - The app now advertises full playback capabilities to the Jellyfin server, allowing MKV, HEVC, DTS, and other formats to play directly and preventing the format error pop-up.
+- **EPG and logos missing for some channels** - M3U attributes with non-standard casing (e.g. `tvg-ID`, `TVG-ID`, `tvg-Id`) or spacing are now parsed correctly, so those channels properly match their EPG guide data and logos.
+- **Sports favorites linking to the wrong team** - Team favorites are now matched with league awareness. A repair prompt will appear for any saved favorites that no longer match a valid team, instead of silently skipping them.
+- **Unavailable local files showing in playlists and favorites** - Local movies and episodes whose files are missing, on a disconnected drive, or no longer in a scanned folder are now hidden from playlists and favorites automatically.
+
 ## v2.5.3
 
 ### Added
