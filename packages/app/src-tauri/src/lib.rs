@@ -5153,9 +5153,6 @@ pub fn run() {
             // If started via Windows startup (--startup-tray), keep it hidden
             // in the system tray so it never flashes on screen or steals focus at logon.
             if let Some(window) = app.get_window("main") {
-                if let Some(icon) = app.default_window_icon() {
-                    let _ = window.set_icon(icon.clone());
-                }
                 #[cfg(desktop)]
                 let is_startup_tray = tray::is_startup_tray_launch();
                 #[cfg(not(desktop))]
