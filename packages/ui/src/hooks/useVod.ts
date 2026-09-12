@@ -11,6 +11,11 @@ import { useToastStore } from '../stores/toastStore';
 import { getTmdbImageUrl, TMDB_POSTER_SIZES } from '../services/tmdb';
 import { getSearchVariants, matchesSearch } from '../utils/searchNormalization';
 import {
+  readStalkerCategoryCacheMarker,
+  writeStalkerCategoryCacheMarker,
+  isLikelyTruncatedStalkerCache,
+} from '../utils/stalkerCategoryCache';
+import {
   readLocalLibrary,
   groupLocal,
   localEntryToStoredMovie,
@@ -1085,28 +1090,39 @@ export function useLazyStalkerLoader(type: 'movies' | 'series', categoryId: stri
 
       const count = existingItems.length;
 
-      // Check cache freshness using a localStorage timestamp keyed per category+type.
+      // Check cache freshness using a localStorage marker keyed per category+type.
       // NOTE: We intentionally do NOT use item.added for this check — that field reflects
       // the content's original publish date (e.g. "2019-01-01"), not when WE last synced it.
       let cacheIsFresh = false;
+      let cacheLooksTruncated = false;
       if (count > 0) {
         // We have cached data - show it immediately
         setHasCache(true);
 
         if (syncTimestampKey) {
-          const lastSyncStr = localStorage.getItem(syncTimestampKey);
-          if (lastSyncStr) {
-            const lastSyncTime = parseInt(lastSyncStr, 10);
-            if (!isNaN(lastSyncTime)) {
-              cacheIsFresh = (Date.now() - lastSyncTime) < stalkerCacheTtlMs;
+          const marker = readStalkerCategoryCacheMarker(localStorage.getItem(syncTimestampKey));
+          if (marker.syncedAt != null) {
+            cacheIsFresh = (Date.now() - marker.syncedAt) < stalkerCacheTtlMs;
+          }
+
+          // Markers written before the Stalker page-offset fix can't prove their rows came from
+          // offset-correct pagination, and a category cached as a single page (14 items) is the
+          // signature of that truncation. Refetch it now rather than waiting out the cache TTL —
+          // afterwards the marker is versioned, so this runs at most once per category.
+          if (marker.legacy) {
+            const storedItemCount = await table.where('category_ids').equals(categoryId).count();
+            if (cancelled) return;
+            cacheLooksTruncated = isLikelyTruncatedStalkerCache(marker, storedItemCount);
+            if (cacheLooksTruncated) {
+              console.log(`[useLazyStalkerLoader] ${type} cache for ${categoryId} looks truncated (${storedItemCount} items); refetching now`);
             }
           }
         }
-        console.log(`[useLazyStalkerLoader] ${type} cache found for ${categoryId}: ${count} items, fresh: ${cacheIsFresh}`);
+        console.log(`[useLazyStalkerLoader] ${type} cache found for ${categoryId}: ${count} items, fresh: ${cacheIsFresh}${cacheLooksTruncated ? ', truncated' : ''}`);
       }
 
-      // Only sync if no cache or cache is stale
-      if (count === 0 || !cacheIsFresh) {
+      // Only sync if there is no cache, the cache is stale, or the cached rows look truncated
+      if (count === 0 || !cacheIsFresh || cacheLooksTruncated) {
         // Don't start a background sync while a stream URL is being resolved
         // (e.g. during playback or download initiation) to avoid racing token refresh
         // with the get_ordered_list batch fetches.
@@ -1128,9 +1144,10 @@ export function useLazyStalkerLoader(type: 'movies' | 'series', categoryId: stri
             setMessage(msg);
           });
           if (cancelled) return;
-          // Record successful sync timestamp so cache check works next time
+          // Record a successful sync so the cache check works next time. The versioned marker
+          // also records that these rows came from offset-correct pagination.
           if (syncTimestampKey) {
-            localStorage.setItem(syncTimestampKey, String(Date.now()));
+            localStorage.setItem(syncTimestampKey, writeStalkerCategoryCacheMarker());
           }
           console.log(`[useLazyStalkerLoader] ${type} sync completed for ${categoryId}`);
         } catch (e) {

@@ -67,6 +67,9 @@ export class StalkerClient {
     private originalUrl: string = ''; // Store original URL for fallback attempts
     private fallbackUrls: string[] = []; // List of URLs to try
     private tokenRefreshPromise: Promise<void> | null = null; // Lock to prevent concurrent token refreshes
+    // Learned page-numbering offset for get_ordered_list (0 = portal is 0-based, 1 = portal is
+    // 1-based and coerces p=0 into page 1). null until the first fetch determines it.
+    private pageOffset: 0 | 1 | null = null;
 
     /**
      * Normalize Stalker censored/lock fields to boolean.
@@ -866,10 +869,16 @@ export class StalkerClient {
      * bounded batch size, and an end-of-batch retry pass for any pages that failed during
      * initial parallel execution.
      *
-     * Page 0 is probed on its own first so `totalPages` (when the portal reports it) is known
-     * before any fan-out: every later batch is then clamped to the real end of the category,
-     * so out-of-range pages are never requested or appended. Returns the whole category or
-     * throws — callers must never cache a partially-fetched category as if it were complete.
+     * The first page is probed on its own first so `totalPages` (when the portal reports it) is
+     * known before any fan-out: every later batch is then clamped to the real end of the
+     * category, so out-of-range pages are never requested or appended. Returns the whole
+     * category or throws — callers must never cache a partially-fetched category as if it
+     * were complete.
+     *
+     * Portals disagree on `p`: 0-based portals treat p=0 as the first page, while 1-based
+     * portals coerce p=0 into page 1 (so p=0 and p=1 return identical items — and naive cycle
+     * detection then collapses a whole category to its first page). The offset is probed once
+     * and cached on the client so every later category walks the real page range.
      */
     private async fetchOrderedListPages(
         type: 'vod' | 'series',
@@ -880,6 +889,9 @@ export class StalkerClient {
         const pageItemsMap = new Map<number, any[]>();
         const pendingFailedPages = new Set<number>();
         const seenItemIds = new Set<string | number>();
+        // Keys above are always zero-based page *indices*; the page number sent to the portal is
+        // `index + pOffset`. pOffset starts from whatever this portal already taught us.
+        let pOffset = this.pageOffset ?? 0;
         const BATCH_SIZE = Math.max(1, Math.min(12, Math.floor(concurrency) || 4));
         // Runaway bound for buggy metadata-free portals that never report total_items.
         // Kept deliberately high because the category='*' fallback legitimately walks an
@@ -892,23 +904,44 @@ export class StalkerClient {
                 p: p.toString(),
             });
 
-        // --- Probe page 0 (mandatory). A retry here means a transient failure doesn't abort
-        // before we know whether there is anything else to fetch. ---
+        // --- Probe the first page (mandatory). A retry here means a transient failure doesn't
+        // abort before we know whether there is anything else to fetch. ---
         let page0Response: any = null;
         for (let attempt = 0; attempt < 2 && page0Response == null; attempt++) {
             if (attempt > 0) await new Promise(r => setTimeout(r, 250));
             try {
-                page0Response = await fetchPage(0);
+                page0Response = await fetchPage(pOffset);
             } catch (err) {
-                console.warn(`[Stalker] Failed to fetch page 0 (${type}) attempt ${attempt + 1}:`, err);
+                console.warn(`[Stalker] Failed to fetch page ${pOffset} (${type}) attempt ${attempt + 1}:`, err);
             }
         }
         if (page0Response == null) {
             throw new Error(`Failed to load ${type} category: page 0 could not be retrieved`);
         }
 
-        const { items: page0Items, total_items: page0Total, max_page_items: page0Max, pages: page0Pages } =
+        let { items: page0Items, total_items: page0Total, max_page_items: page0Max, pages: page0Pages } =
             this.extractOrderedList(page0Response);
+
+        // A strictly 1-based portal can reject p=0 outright instead of coercing it to page 1.
+        // Before treating the category as empty (or single-page), retry the first page as p=1.
+        if (page0Items.length === 0 && pOffset === 0) {
+            try {
+                const firstPageResponse = await fetchPage(1);
+                const firstPage = this.extractOrderedList(firstPageResponse);
+                if (firstPage.items.length > 0) {
+                    console.log('[Stalker] p=0 returned nothing but p=1 has items; using 1-based page numbering');
+                    pOffset = 1;
+                    this.pageOffset = 1;
+                    page0Items = firstPage.items;
+                    page0Total = firstPage.total_items;
+                    page0Max = firstPage.max_page_items;
+                    page0Pages = firstPage.pages;
+                }
+            } catch (err) {
+                console.warn(`[Stalker] Failed to probe p=1 after an empty p=0 (${type}):`, err);
+            }
+        }
+
         const page0Size = page0Max || 14;
         let totalPages: number | undefined;
         if (page0Pages) totalPages = page0Pages;
@@ -923,20 +956,67 @@ export class StalkerClient {
             pagesFetched++;
         }
 
+        const page0ItemCount = page0Items.length;
+
         // A short (or empty) first page means there is nothing more to fetch.
-        let page = 1;
+        let nextIndex = 1;
         let hasMore = page0Items.length > 0 && page0Items.length >= page0Size;
-        if (totalPages != null && page >= totalPages) hasMore = false;
+        if (totalPages != null && nextIndex >= totalPages) hasMore = false;
+
+        // --- Learn this portal's page numbering before fanning out (once per client). ---
+        // Probe the second page on its own: if it repeats the first page verbatim the portal is
+        // 1-based and every later request must be shifted by one, otherwise the category would
+        // be cut off after its first page.
+        if (hasMore && pOffset === 0 && this.pageOffset === null) {
+            let secondPageResponse: any = null;
+            for (let attempt = 0; attempt < 2 && secondPageResponse == null; attempt++) {
+                if (attempt > 0) await new Promise(r => setTimeout(r, 250));
+                try {
+                    secondPageResponse = await fetchPage(1);
+                } catch (err) {
+                    console.warn(`[Stalker] Failed to probe page 1 (${type}) attempt ${attempt + 1}:`, err);
+                }
+            }
+
+            if (secondPageResponse == null) {
+                // Offset stays unknown: let the walk hit the page again and decide there.
+                pendingFailedPages.add(1);
+            } else {
+                const { items: secondItems, max_page_items: secondMax } = this.extractOrderedList(secondPageResponse);
+                const secondSize = secondMax || page0Size;
+                const secondDuplicates = secondItems.filter((item: any) => item?.id != null && seenItemIds.has(item.id)).length;
+
+                if (secondItems.length > 0 && secondItems.length === page0ItemCount && secondDuplicates === secondItems.length) {
+                    // Shift for this walk, but only memoize it once the shifted page proves it
+                    // returns real (non-duplicate) items — a single-page category on a 0-based
+                    // portal can also answer p=1 with a repeat, and caching that would make
+                    // every later category skip its first page.
+                    console.log('[Stalker] Portal looks 1-based (p=0 repeats as p=1); shifting page offsets by one');
+                    pOffset = 1;
+                } else if (secondItems.length === 0) {
+                    hasMore = false;
+                } else {
+                    this.pageOffset = 0;
+                    pageItemsMap.set(1, secondItems);
+                    for (const item of secondItems) {
+                        if (item?.id != null) seenItemIds.add(item.id);
+                    }
+                    pagesFetched++;
+                    nextIndex = 2;
+                    if (secondItems.length < secondSize) hasMore = false;
+                }
+            }
+        }
 
         while (hasMore) {
             // Safety bound: if totalPages is known and we've reached it, terminate
-            if (totalPages != null && page >= totalPages) {
+            if (totalPages != null && nextIndex >= totalPages) {
                 hasMore = false;
                 break;
             }
 
             // Ultimate runaway bound for buggy metadata-free portals
-            if (page >= MAX_PAGES_SAFETY_CAP) {
+            if (nextIndex >= MAX_PAGES_SAFETY_CAP) {
                 console.warn(`[Stalker] Reached safety cap of ${MAX_PAGES_SAFETY_CAP} pages with no provider total_items; stopping pagination.`);
                 hasMore = false;
                 break;
@@ -944,27 +1024,28 @@ export class StalkerClient {
 
             // Never request more pages in the batch than remain before the real end.
             const pagesToFetch = totalPages != null
-                ? Math.max(1, Math.min(BATCH_SIZE, totalPages - page))
+                ? Math.max(1, Math.min(BATCH_SIZE, totalPages - nextIndex))
                 : BATCH_SIZE;
 
-            const pageNumbers: number[] = [];
+            const pageIndices: number[] = [];
             const batchPromises = [];
             for (let i = 0; i < pagesToFetch; i++) {
-                const p = page + i;
-                pageNumbers.push(p);
-                batchPromises.push(fetchPage(p));
+                const index = nextIndex + i;
+                pageIndices.push(index);
+                batchPromises.push(fetchPage(index + pOffset));
             }
 
             const results = await Promise.allSettled(batchPromises);
             let itemsInBatch = 0;
+            let restartWithShiftedOffset = false;
 
             for (let i = 0; i < results.length; i++) {
                 const res = results[i];
-                const p = pageNumbers[i];
+                const index = pageIndices[i];
 
                 if (res.status === 'rejected') {
-                    console.warn(`[Stalker] Failed to fetch page ${p} (${type}):`, res.reason);
-                    pendingFailedPages.add(p);
+                    console.warn(`[Stalker] Failed to fetch page ${index + pOffset} (${type}):`, res.reason);
+                    pendingFailedPages.add(index);
                     continue;
                 }
 
@@ -982,7 +1063,17 @@ export class StalkerClient {
                 // out-of-range offset — stop instead of appending duplicates.
                 const duplicateCount = pageItems.filter((item: any) => item?.id != null && seenItemIds.has(item.id)).length;
                 if (duplicateCount === pageItems.length) {
-                    console.warn(`[Stalker] Detected repeated page at offset p=${p} (${duplicateCount} duplicate items); stopping pagination.`);
+                    // Exception: when the portal's page numbering is still unknown and the first
+                    // page after the probe repeats it verbatim, the portal is 1-based and coerced
+                    // p=0 into page 1. Shift every later request by one and re-walk from here
+                    // instead of stopping, otherwise the category is cut off after page 1.
+                    if (pOffset === 0 && index === 1 && pagesFetched === 1 && pageItems.length === page0ItemCount) {
+                        console.log('[Stalker] Detected 1-based portal page numbering (p=0 repeated as p=1); shifting page offsets by one');
+                        pOffset = 1;
+                        restartWithShiftedOffset = true;
+                        break;
+                    }
+                    console.warn(`[Stalker] Detected repeated page at offset p=${index + pOffset} (${duplicateCount} duplicate items); stopping pagination.`);
                     hasMore = false;
                     break;
                 }
@@ -994,9 +1085,15 @@ export class StalkerClient {
                     if (item?.id != null) seenItemIds.add(item.id);
                 }
 
-                pageItemsMap.set(p, newItems);
+                pageItemsMap.set(index, newItems);
                 itemsInBatch += newItems.length;
                 pagesFetched++;
+
+                // The shifted offset is only memoized once it has demonstrably reached a real
+                // second page, so an ambiguous probe can never poison later categories.
+                if (this.pageOffset === null && pOffset === 1 && index === 1 && newItems.length > 0) {
+                    this.pageOffset = 1;
+                }
 
                 // If any page has less than a full page of items, we've reached the end
                 if (pageItems.length < pageSize) {
@@ -1005,15 +1102,21 @@ export class StalkerClient {
                 }
             }
 
+            if (restartWithShiftedOffset) {
+                // Nothing from the aborted batch was stored (only the probe page is in the map),
+                // so re-running the same indices with the corrected offset fetches real pages.
+                continue;
+            }
+
             // If we got no items in this batch, stop forward pagination and let retry pass handle any failed pages
             if (itemsInBatch === 0) {
                 hasMore = false;
             } else {
-                page += pagesToFetch;
+                nextIndex += pagesToFetch;
             }
 
             // Safety check against totalPages
-            if (totalPages != null && page >= totalPages) {
+            if (totalPages != null && nextIndex >= totalPages) {
                 hasMore = false;
             }
 
@@ -1034,12 +1137,12 @@ export class StalkerClient {
                 const retryBatch = failedList.slice(i, i + RETRY_CONCURRENCY);
                 await new Promise(r => setTimeout(r, 250));
                 const retryResults = await Promise.allSettled(
-                    retryBatch.map(p => fetchPage(p))
+                    retryBatch.map(index => fetchPage(index + pOffset))
                 );
 
                 for (let j = 0; j < retryResults.length; j++) {
                     const res = retryResults[j];
-                    const p = retryBatch[j];
+                    const index = retryBatch[j];
                     if (res.status === 'fulfilled') {
                         const { items: pageItems } = this.extractOrderedList(res.value);
                         if (pageItems.length > 0) {
@@ -1047,13 +1150,17 @@ export class StalkerClient {
                             for (const item of newItems) {
                                 if (item?.id != null) seenItemIds.add(item.id);
                             }
-                            pageItemsMap.set(p, newItems);
-                            pagesFetched++;
-                            pendingFailedPages.delete(p);
-                            console.log(`[Stalker] Retry succeeded for page ${p} (${newItems.length} items)`);
+                            // Never clobber a page that the walk (or a shifted re-walk) already
+                            // stored — a retry can legitimately come back as pure duplicates.
+                            if (!pageItemsMap.has(index) || newItems.length > 0) {
+                                pageItemsMap.set(index, newItems);
+                                pagesFetched++;
+                            }
+                            pendingFailedPages.delete(index);
+                            console.log(`[Stalker] Retry succeeded for page ${index} (${newItems.length} items)`);
                         }
                     } else {
-                        console.error(`[Stalker] Retry failed permanently for page ${p}:`, res.reason);
+                        console.error(`[Stalker] Retry failed permanently for page ${index}:`, res.reason);
                     }
                 }
             }
@@ -1072,8 +1179,8 @@ export class StalkerClient {
         // Flatten map in natural page order (0, 1, 2, ...) so items stay in proper sequence
         const allItems: any[] = [];
         const sortedPages = Array.from(pageItemsMap.keys()).sort((a, b) => a - b);
-        for (const p of sortedPages) {
-            const pItems = pageItemsMap.get(p);
+        for (const index of sortedPages) {
+            const pItems = pageItemsMap.get(index);
             if (pItems) allItems.push(...pItems);
         }
 

@@ -242,4 +242,172 @@ describe('StalkerClient fetchOrderedListPages', () => {
         const items = await (client as any).fetchOrderedListPages('vod', { category: '*' }, 12);
         expect(items.length).toBe(7001);
     });
+
+    /**
+     * 1-based portals (the Stalker default) coerce p=0 into page 1, so p=0 and p=1 return the
+     * same items. Cycle detection used to treat that as the end of the category, which made a
+     * whole category load as a single page of 14 items.
+     */
+    const createOneBasedPortalMock = (pageCount: number, fetchedPages: number[]) => {
+        return async (_action: any, _type: any, params: any) => {
+            const requested = parseInt(params.p, 10);
+            fetchedPages.push(requested);
+            const page = Math.max(1, Math.min(requested, pageCount));
+            return {
+                js: {
+                    total_items: pageCount * 14,
+                    max_page_items: 14,
+                    data: Array.from({ length: 14 }, (_, i) => ({ id: `item_${page}_${i}` })),
+                },
+            };
+        };
+    };
+
+    it('loads the whole category on 1-based portals that repeat p=0 as p=1', async () => {
+        const client = new StalkerClient({ baseUrl: 'http://test.portal/c/', mac: '00:1A:79:00:00:09' }, 'source_1based');
+
+        const fetchedPages: number[] = [];
+        vi.spyOn(client as any, 'fetchStalker').mockImplementation(createOneBasedPortalMock(3, fetchedPages));
+
+        const items = await (client as any).fetchOrderedListPages('vod', { category: '63' }, 4);
+
+        expect(items.length).toBe(42);
+        expect(items.map((i: any) => i.id)).toEqual([
+            ...Array.from({ length: 14 }, (_, i) => `item_1_${i}`),
+            ...Array.from({ length: 14 }, (_, i) => `item_2_${i}`),
+            ...Array.from({ length: 14 }, (_, i) => `item_3_${i}`),
+        ]);
+        // Real pages 2 and 3 must have been requested instead of stopping at the repeat of page 1.
+        expect(fetchedPages).toContain(2);
+        expect(fetchedPages).toContain(3);
+        expect((client as any).pageOffset).toBe(1);
+    });
+
+    it('reuses the learned page offset for later categories instead of re-probing', async () => {
+        const client = new StalkerClient({ baseUrl: 'http://test.portal/c/', mac: '00:1A:79:00:00:10' }, 'source_cached');
+
+        const fetchedPages: number[] = [];
+        vi.spyOn(client as any, 'fetchStalker').mockImplementation(createOneBasedPortalMock(3, fetchedPages));
+
+        await (client as any).fetchOrderedListPages('vod', { category: '63' }, 4);
+        fetchedPages.length = 0;
+        const items = await (client as any).fetchOrderedListPages('vod', { category: '64' }, 4);
+
+        expect(items.length).toBe(42);
+        // The second category skips p=0 entirely and goes straight to pages 1, 2, 3.
+        expect(fetchedPages).toEqual([1, 2, 3]);
+    });
+
+    it('falls back to p=1 when a strictly 1-based portal rejects p=0', async () => {
+        const client = new StalkerClient({ baseUrl: 'http://test.portal/c/', mac: '00:1A:79:00:00:11' }, 'source_strict');
+
+        vi.spyOn(client as any, 'fetchStalker').mockImplementation(async (_action: any, _type: any, params: any) => {
+            const requested = parseInt(params.p, 10);
+            if (requested === 0) {
+                return { js: { data: [] } };
+            }
+            return {
+                js: {
+                    total_items: 28,
+                    max_page_items: 14,
+                    data: Array.from({ length: 14 }, (_, i) => ({ id: `item_${requested}_${i}` })),
+                },
+            };
+        });
+
+        const items = await (client as any).fetchOrderedListPages('vod', { category: '63' }, 4);
+
+        expect(items.length).toBe(28);
+        expect(items[0].id).toBe('item_1_0');
+        expect(items[14].id).toBe('item_2_0');
+        expect((client as any).pageOffset).toBe(1);
+    });
+
+    it('recovers the offset during the walk when the page 1 probe fails, without duplicating or dropping items', async () => {
+        const client = new StalkerClient({ baseUrl: 'http://test.portal/c/', mac: '00:1A:79:00:00:12' }, 'source_late_shift');
+
+        const fetchedPages: number[] = [];
+        let page1Calls = 0;
+        vi.spyOn(client as any, 'fetchStalker').mockImplementation(async (_action: any, _type: any, params: any) => {
+            const requested = parseInt(params.p, 10);
+            fetchedPages.push(requested);
+            if (requested === 1) {
+                page1Calls++;
+                // The two probe attempts fail; the walk's own request then succeeds and reveals the repeat.
+                if (page1Calls <= 2) {
+                    throw new Error('Transient probe failure');
+                }
+            }
+            const page = Math.max(1, Math.min(requested, 3));
+            return {
+                js: {
+                    total_items: 42,
+                    max_page_items: 14,
+                    data: Array.from({ length: 14 }, (_, i) => ({ id: `item_${page}_${i}` })),
+                },
+            };
+        });
+
+        const items = await (client as any).fetchOrderedListPages('vod', { category: '63' }, 2);
+
+        expect(page1Calls).toBeGreaterThanOrEqual(3);
+        expect(items.length).toBe(42);
+        expect(new Set(items.map((i: any) => i.id)).size).toBe(42);
+        expect(items[0].id).toBe('item_1_0');
+        expect(items[41].id).toBe('item_3_13');
+    });
+
+    it('walks the whole category on a metadata-free 1-based portal (no total_items)', async () => {
+        const client = new StalkerClient({ baseUrl: 'http://test.portal/c/', mac: '00:1A:79:00:00:14' }, 'source_1based_nometa');
+
+        const fetchedPages: number[] = [];
+        // Pages 1 and 2 are full, page 3 is short (end of category). No total_items/pages metadata.
+        const pageSizes: Record<number, number> = { 1: 14, 2: 14, 3: 5 };
+        vi.spyOn(client as any, 'fetchStalker').mockImplementation(async (_action: any, _type: any, params: any) => {
+            const requested = parseInt(params.p, 10);
+            fetchedPages.push(requested);
+            const page = Math.max(1, requested);
+            const size = pageSizes[page];
+            return {
+                js: {
+                    max_page_items: 14,
+                    data: size == null
+                        ? []
+                        : Array.from({ length: size }, (_, i) => ({ id: `item_${page}_${i}` })),
+                },
+            };
+        });
+
+        // Concurrency 2 keeps each batch to two pages, so the end of the category is hit exactly.
+        const items = await (client as any).fetchOrderedListPages('vod', { category: '63' }, 2);
+
+        expect(items.length).toBe(33);
+        expect(items[0].id).toBe('item_1_0');
+        expect(items[14].id).toBe('item_2_0');
+        expect(items[32].id).toBe('item_3_4');
+        // Probe p=0 (which the portal answers with page 1), the p=1 repeat, then real pages 2 and 3.
+        // The short page ends the walk without another batch being fired.
+        expect(fetchedPages).toEqual([0, 1, 2, 3]);
+    });
+
+    it('stops cleanly when every page repeats the first one instead of looping forever', async () => {
+        const client = new StalkerClient({ baseUrl: 'http://test.portal/c/', mac: '00:1A:79:00:00:13' }, 'source_allrepeats');
+
+        const fetchedPages: number[] = [];
+        vi.spyOn(client as any, 'fetchStalker').mockImplementation(async (_action: any, _type: any, params: any) => {
+            const requested = parseInt(params.p, 10);
+            fetchedPages.push(requested);
+            return {
+                js: {
+                    max_page_items: 14,
+                    data: Array.from({ length: 14 }, (_, i) => ({ id: `item_${i}` })),
+                },
+            };
+        });
+
+        const items = await (client as any).fetchOrderedListPages('vod', { category: '63' }, 4);
+
+        expect(items.length).toBe(14);
+        expect(fetchedPages.length).toBeLessThan(10);
+    });
 });
