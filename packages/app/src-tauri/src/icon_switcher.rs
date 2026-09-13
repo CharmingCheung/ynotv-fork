@@ -14,6 +14,7 @@ use windows::Win32::{
     },
 };
 
+
 // Keep installed HICON handles alive in memory so Windows Explorer / DWM does not
 // read dangling pointers when repainting the taskbar / Alt+Tab.
 //
@@ -137,6 +138,156 @@ fn update_windows_icons(app: &AppHandle, icon_bytes: &[u8]) -> Result<(), String
     Ok(())
 }
 
+/// Wrap a PNG byte slice into a valid single-image ICO file format (Vista+ PNG-in-ICO standard).
+pub fn png_to_ico(png_bytes: &[u8]) -> Vec<u8> {
+    let mut ico = Vec::with_capacity(22 + png_bytes.len());
+    // ICONDIR header: 6 bytes
+    // idReserved: 2 bytes (0)
+    ico.extend_from_slice(&0u16.to_le_bytes());
+    // idType: 2 bytes (1 for icon)
+    ico.extend_from_slice(&1u16.to_le_bytes());
+    // idCount: 2 bytes (1 image)
+    ico.extend_from_slice(&1u16.to_le_bytes());
+
+    // ICONDIRENTRY: 16 bytes
+    // bWidth: 1 byte (0 specifies 256 pixels)
+    ico.push(0);
+    // bHeight: 1 byte (0 specifies 256 pixels)
+    ico.push(0);
+    // bColorCount: 1 byte (0 if >= 8bpp)
+    ico.push(0);
+    // bReserved: 1 byte (0)
+    ico.push(0);
+    // wPlanes: 2 bytes (1)
+    ico.extend_from_slice(&1u16.to_le_bytes());
+    // wBitCount: 2 bytes (32-bit ARGB)
+    ico.extend_from_slice(&32u16.to_le_bytes());
+    // dwBytesInRes: 4 bytes (size of image data in bytes)
+    ico.extend_from_slice(&(png_bytes.len() as u32).to_le_bytes());
+    // dwImageOffset: 4 bytes (offset from beginning of file: 6 + 16 = 22)
+    ico.extend_from_slice(&22u32.to_le_bytes());
+
+    // Image data (PNG payload)
+    ico.extend_from_slice(png_bytes);
+    ico
+}
+
+#[cfg(target_os = "windows")]
+pub fn get_current_ico_path() -> Option<std::path::PathBuf> {
+    let local_app_data = std::env::var_os("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("USERPROFILE")
+                .map(|p| std::path::PathBuf::from(p).join("AppData").join("Local"))
+        })?;
+    Some(local_app_data.join("ynoTV").join("current_icon.ico"))
+}
+
+#[cfg(target_os = "windows")]
+pub fn write_current_ico(png_bytes: &[u8]) -> Result<std::path::PathBuf, String> {
+    let ico_path = get_current_ico_path().ok_or_else(|| "Could not resolve LOCALAPPDATA path".to_string())?;
+    if let Some(parent) = ico_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let ico_bytes = png_to_ico(png_bytes);
+    std::fs::write(&ico_path, ico_bytes)
+        .map_err(|e| format!("Failed to write current_icon.ico to {:?}: {}", ico_path, e))?;
+    Ok(ico_path)
+}
+
+#[cfg(target_os = "windows")]
+fn get_target_shortcut_paths() -> Vec<std::path::PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(app_data) = std::env::var_os("APPDATA").map(std::path::PathBuf::from) {
+        // Start Menu shortcut
+        paths.push(
+            app_data
+                .join("Microsoft")
+                .join("Windows")
+                .join("Start Menu")
+                .join("Programs")
+                .join("ynoTV.lnk"),
+        );
+        // User Pinned Taskbar shortcut (if pinned)
+        paths.push(
+            app_data
+                .join("Microsoft")
+                .join("Internet Explorer")
+                .join("Quick Launch")
+                .join("User Pinned")
+                .join("TaskBar")
+                .join("ynoTV.lnk"),
+        );
+    }
+    if let Some(user_profile) = std::env::var_os("USERPROFILE").map(std::path::PathBuf::from) {
+        // Desktop shortcut
+        paths.push(user_profile.join("Desktop").join("ynoTV.lnk"));
+    }
+    paths
+}
+
+#[cfg(target_os = "windows")]
+fn update_shortcut_icon(shortcut_path: &std::path::Path, ico_path: &std::path::Path) -> Result<(), String> {
+    use windows::core::{HSTRING, Interface};
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
+        COINIT_APARTMENTTHREADED, IPersistFile, STGM,
+    };
+    use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
+
+    unsafe {
+        let hr_init = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let uninit_needed = hr_init.is_ok();
+
+        let res = (|| -> windows::core::Result<()> {
+            let shell_link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
+            let persist: IPersistFile = shell_link.cast()?;
+
+            let shortcut_hstr = HSTRING::from(shortcut_path.as_os_str());
+            let ico_hstr = HSTRING::from(ico_path.as_os_str());
+
+            persist.Load(&shortcut_hstr, STGM(2))?;
+            shell_link.SetIconLocation(&ico_hstr, 0)?;
+            persist.Save(&shortcut_hstr, true)?;
+            Ok(())
+        })();
+
+        if uninit_needed {
+            CoUninitialize();
+        }
+
+        res.map_err(|e| format!("Failed to update shortcut {:?}: {}", shortcut_path, e))
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub fn update_windows_shortcuts(png_bytes: &[u8]) -> Result<(), String> {
+    let ico_path = write_current_ico(png_bytes)?;
+    let shortcuts = get_target_shortcut_paths();
+    let mut updated_any = false;
+    for sc in shortcuts {
+        if sc.exists() {
+            if let Err(e) = update_shortcut_icon(&sc, &ico_path) {
+                log::warn!("[icon_switcher] {}", e);
+            } else {
+                log::info!("[icon_switcher] Updated shortcut icon for {:?}", sc);
+                updated_any = true;
+            }
+        }
+    }
+    if updated_any {
+        unsafe {
+            windows::Win32::UI::Shell::SHChangeNotify(
+                windows::Win32::UI::Shell::SHCNE_ASSOCCHANGED,
+                windows::Win32::UI::Shell::SHCNF_IDLIST,
+                None,
+                None,
+            );
+        }
+    }
+    Ok(())
+}
+
 pub fn apply_icon(app: &AppHandle, icon_id: &str) -> Result<(), String> {
     let (_, icon_bytes) = ICONS
         .iter()
@@ -154,6 +305,9 @@ pub fn apply_icon(app: &AppHandle, icon_id: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         update_windows_icons(app, icon_bytes)?;
+        if let Err(e) = update_windows_shortcuts(icon_bytes) {
+            log::warn!("[icon_switcher] Could not update shortcuts: {}", e);
+        }
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -259,4 +413,58 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_png_to_ico_structure() {
+        let fake_png = vec![0x89, b'P', b'N', b'G', 1, 2, 3, 4];
+        let ico = png_to_ico(&fake_png);
+        assert_eq!(ico.len(), 22 + fake_png.len());
+        // Header
+        assert_eq!(&ico[0..2], &0u16.to_le_bytes()); // idReserved
+        assert_eq!(&ico[2..4], &1u16.to_le_bytes()); // idType = 1 (icon)
+        assert_eq!(&ico[4..6], &1u16.to_le_bytes()); // idCount = 1
+        // Entry
+        assert_eq!(ico[6], 0); // bWidth = 256
+        assert_eq!(ico[7], 0); // bHeight = 256
+        assert_eq!(ico[8], 0); // bColorCount = 0
+        assert_eq!(ico[9], 0); // bReserved = 0
+        assert_eq!(&ico[10..12], &1u16.to_le_bytes()); // wPlanes = 1
+        assert_eq!(&ico[12..14], &32u16.to_le_bytes()); // wBitCount = 32
+        assert_eq!(&ico[14..18], &(fake_png.len() as u32).to_le_bytes()); // dwBytesInRes
+        assert_eq!(&ico[18..22], &22u32.to_le_bytes()); // dwImageOffset
+        // Payload
+        assert_eq!(&ico[22..], &fake_png[..]);
+    }
+
+    #[test]
+    fn test_all_switcher_icons_convert_to_valid_ico() {
+        for (id, bytes) in ICONS {
+            let ico = png_to_ico(bytes);
+            assert_eq!(ico.len(), 22 + bytes.len(), "ICO length mismatch for {}", id);
+            assert_eq!(&ico[2..4], &1u16.to_le_bytes());
+            assert_eq!(&ico[22..], *bytes);
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn test_current_ico_path_resolves() {
+        let path = get_current_ico_path();
+        assert!(path.is_some(), "get_current_ico_path should return a path on Windows");
+        let path = path.unwrap();
+        assert!(path.ends_with(std::path::Path::new("ynoTV").join("current_icon.ico")));
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn test_write_current_ico_succeeds() {
+        let fake_png = vec![0x89, b'P', b'N', b'G', 1, 2, 3, 4];
+        let res = write_current_ico(&fake_png);
+        assert!(res.is_ok(), "write_current_ico failed: {:?}", res.err());
+        let path = res.unwrap();
+        assert!(path.exists(), "current_icon.ico should exist after write");
+        let content = std::fs::read(&path).unwrap();
+        assert_eq!(content, png_to_ico(&fake_png));
+    }
 }
+
