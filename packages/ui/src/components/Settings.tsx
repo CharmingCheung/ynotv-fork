@@ -1837,22 +1837,22 @@ export function Settings({
     }
   };
 
-  const handleTimeshiftChange = async (enabled: boolean, cacheBytes: number, bufferOffset?: number) => {
+  const handleTimeshiftChange = (enabled: boolean, cacheBytes: number, bufferOffset?: number) => {
     setTimeshiftEnabled(enabled);
     setTimeshiftCacheBytes(cacheBytes);
     if (bufferOffset !== undefined) {
       setLiveBufferOffset(bufferOffset);
     }
-    if (window.storage) {
-      const settings: { timeshiftEnabled: boolean; timeshiftCacheBytes: number; liveBufferOffset?: number } = {
-        timeshiftEnabled: enabled,
-        timeshiftCacheBytes: cacheBytes,
-      };
-      if (bufferOffset !== undefined) {
-        settings.liveBufferOffset = bufferOffset;
-      }
-      await window.storage.updateSettings(settings);
-    }
+    // The player reads the time-shift values from the shared settings store, not
+    // from this component's local state, so the store has to be updated too —
+    // otherwise a change only takes effect on the next app launch. The store
+    // setter persists the same keys, so it replaces the direct write that used
+    // to happen here.
+    useSettingsStore.getState().setTimeshiftSettings({
+      timeshiftEnabled: enabled,
+      timeshiftCacheBytes: cacheBytes,
+      ...(bufferOffset !== undefined ? { liveBufferOffset: bufferOffset } : {}),
+    });
   };
 
   const handleShowAllChannelsChange = async (enabled: boolean) => {

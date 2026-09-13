@@ -81,6 +81,45 @@ describe('settings store write path', () => {
     expect(mockUpdate).not.toHaveBeenCalled();
   });
 
+  it('setTimeshiftSettings applies every key to the store immediately (hot-apply)', () => {
+    const store = useSettingsStore;
+    store.getState().setTimeshiftSettings({
+      timeshiftEnabled: false,
+      timeshiftCacheBytes: 1_073_741_824,
+      liveBufferOffset: 12,
+    });
+
+    // The player reads these from the store during playback, so all three have
+    // to be visible without a restart.
+    expect(store.getState().timeshiftEnabled).toBe(false);
+    expect(store.getState().timeshiftCacheBytes).toBe(1_073_741_824);
+    expect(store.getState().liveBufferOffset).toBe(12);
+
+    // One coalesced write, not one per key — the offset slider fires per step.
+    expect(mockDebounced).toHaveBeenCalledTimes(1);
+    expect(mockDebounced).toHaveBeenCalledWith({
+      timeshiftEnabled: false,
+      timeshiftCacheBytes: 1_073_741_824,
+      liveBufferOffset: 12,
+    });
+  });
+
+  it('setTimeshiftSettings leaves unmentioned keys alone', () => {
+    const store = useSettingsStore;
+    store.getState().setTimeshiftSettings({ liveBufferOffset: 30 });
+
+    expect(store.getState().liveBufferOffset).toBe(30);
+    expect(store.getState().timeshiftEnabled).toBe(true);
+    expect(store.getState().timeshiftCacheBytes).toBe(268_435_456);
+    expect(mockDebounced).toHaveBeenCalledWith({ liveBufferOffset: 30 });
+  });
+
+  it('setTimeshiftSettings writes nothing for an empty patch', () => {
+    useSettingsStore.getState().setTimeshiftSettings({});
+
+    expect(mockDebounced).not.toHaveBeenCalled();
+  });
+
   it('merges partial config updates instead of replacing the whole config', () => {
     const store = useSettingsStore;
     // updateCustomThemeConfig takes a Partial<CustomThemeConfig>; seed the

@@ -128,6 +128,13 @@ export interface VodNavigationSettings {
   showVodRecent: boolean;
 }
 
+/** Any subset of the time-shift settings, applied together (see setTimeshiftSettings). */
+export interface TimeshiftSettings {
+  timeshiftEnabled: boolean;
+  timeshiftCacheBytes: number;
+  liveBufferOffset: number;
+}
+
 export interface RetrySettings {
   streamMaxRetries: number;
   streamWatchdogSeconds: number;
@@ -156,6 +163,12 @@ export interface SettingsState {
   timeshiftCacheBytes: number;
   setTimeshiftCacheBytes: (bytes: number) => void;
   liveBufferOffset: number;
+  /**
+   * Apply any of the time-shift settings together. The player reads these
+   * values from the store, so this is what makes a change take effect on the
+   * stream that is already playing instead of only on the next app launch.
+   */
+  setTimeshiftSettings: (partial: Partial<TimeshiftSettings>) => void;
 
   // Search
   includeSourceInSearch: boolean;
@@ -854,6 +867,16 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     }
   },
   liveBufferOffset: 0,
+  setTimeshiftSettings: (partial) => {
+    const patch: Record<string, any> = {};
+    if (partial.timeshiftEnabled !== undefined) patch.timeshiftEnabled = partial.timeshiftEnabled;
+    if (partial.timeshiftCacheBytes !== undefined) patch.timeshiftCacheBytes = partial.timeshiftCacheBytes;
+    if (partial.liveBufferOffset !== undefined) patch.liveBufferOffset = partial.liveBufferOffset;
+    if (Object.keys(patch).length === 0) return;
+    set(patch);
+    // The buffer-offset slider calls this on every step, so coalesce the writes.
+    persistSettings(patch, true);
+  },
 
   // Search
   includeSourceInSearch: false,
