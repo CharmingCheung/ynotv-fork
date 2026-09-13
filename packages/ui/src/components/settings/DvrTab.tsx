@@ -4,6 +4,8 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { useTranslation } from 'react-i18next';
 import i18n from '../../i18n';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { normalizeReconnectStrategy, validateExtraFfmpegArgs } from '../../utils/dvrFfmpegArgs';
+import type { ExtraArgsError, ReconnectStrategy } from '../../utils/dvrFfmpegArgs';
 import '../Settings.css';
 
 export function DvrTab() {
@@ -21,6 +23,11 @@ export function DvrTab() {
     const [maxDiskUsage, setMaxDiskUsage] = useState(80);
     const [keepDays, setKeepDays] = useState<number | null>(30);
     const [allowPermissiveHls, setAllowPermissiveHls] = useState(false);
+    const [reconnectStrategy, setReconnectStrategy] = useState<ReconnectStrategy>('auto');
+    const [extraInputArgs, setExtraInputArgs] = useState('');
+    const [extraOutputArgs, setExtraOutputArgs] = useState('');
+    const [extraInputArgsError, setExtraInputArgsError] = useState<ExtraArgsError | null>(null);
+    const [extraOutputArgsError, setExtraOutputArgsError] = useState<ExtraArgsError | null>(null);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
@@ -42,6 +49,11 @@ export function DvrTab() {
             setMaxDiskUsage(settings.max_disk_usage_percent || 80);
             setKeepDays(settings.keep_recordings_days !== undefined ? settings.keep_recordings_days : 30);
             setAllowPermissiveHls(settings.allow_permissive_hls_extensions === true || settings.allow_permissive_hls_extensions === 'true');
+            setReconnectStrategy(normalizeReconnectStrategy(settings.reconnect_strategy));
+            // Stored values are read back through JSON.parse, so a value that looks
+            // like a JSON scalar has to be stringified again before display.
+            setExtraInputArgs(settings.extra_input_args == null ? '' : String(settings.extra_input_args));
+            setExtraOutputArgs(settings.extra_output_args == null ? '' : String(settings.extra_output_args));
             // Keep the settings-store toggle in sync with the DVR table so the two
             // sources cannot drift (the toggle writes both, but the DVR table is the
             // source the Rust recorder actually reads).
@@ -133,6 +145,40 @@ export function DvrTab() {
     async function handleAllowPermissiveHlsChange(value: boolean) {
         setAllowPermissiveHls(value);
         await saveDvrSetting('allow_permissive_hls_extensions', value);
+    }
+
+    async function handleReconnectStrategyChange(value: ReconnectStrategy) {
+        setReconnectStrategy(value);
+        await saveDvrSetting('reconnect_strategy', value);
+    }
+
+    function handleExtraArgsChange(kind: 'input' | 'output', value: string) {
+        const result = validateExtraFfmpegArgs(value);
+        const error = result.ok ? null : result.error;
+        if (kind === 'input') {
+            setExtraInputArgs(value);
+            setExtraInputArgsError(error);
+        } else {
+            setExtraOutputArgs(value);
+            setExtraOutputArgsError(error);
+        }
+    }
+
+    // Save on blur rather than on every keystroke, and only while the value is
+    // valid. The raw text is stored (not the tokenised form) so a quoted value
+    // keeps working when the recorder re-parses it.
+    async function handleExtraArgsCommit(kind: 'input' | 'output') {
+        const value = kind === 'input' ? extraInputArgs : extraOutputArgs;
+        if (!validateExtraFfmpegArgs(value).ok) return;
+        await saveDvrSetting(kind === 'input' ? 'extra_input_args' : 'extra_output_args', value.trim());
+    }
+
+    function extraArgsErrorText(error: ExtraArgsError): string {
+        if (error.code === 'malformed') return i18n.t('settings:dvr.extraArgsMalformed');
+        if (error.code === 'pathOrUrl') {
+            return i18n.t('settings:dvr.extraArgsPath', { option: error.option });
+        }
+        return i18n.t('settings:dvr.extraArgsRejected', { option: error.option });
     }
 
     async function handleSeparateDownloadFoldersChange(value: boolean) {
@@ -475,6 +521,76 @@ export function DvrTab() {
                                     }}
                                 />
                             </label>
+                        </div>
+                    </div>
+
+                    {/* Reconnect Strategy */}
+                    <div style={{ marginTop: '4px' }}>
+                        <label className="dvr-setting-label">
+                            {i18n.t('settings:dvr.reconnectStrategy')}
+                        </label>
+                        <select
+                            className="dvr-select-dropdown"
+                            style={{ marginTop: '6px', width: '100%', boxSizing: 'border-box' }}
+                            value={reconnectStrategy}
+                            onChange={(e) => handleReconnectStrategyChange(e.target.value as ReconnectStrategy)}
+                        >
+                            <option value="auto">{i18n.t('settings:dvr.reconnectAuto')}</option>
+                            <option value="aggressive">{i18n.t('settings:dvr.reconnectAggressive')}</option>
+                            <option value="off">{i18n.t('settings:dvr.reconnectOff')}</option>
+                        </select>
+                        <p className="dvr-sublabel" style={{ marginTop: '6px', lineHeight: '1.4' }}>
+                            {i18n.t('settings:dvr.reconnectStrategySub')}
+                        </p>
+                    </div>
+
+                    {/* Advanced FFmpeg arguments */}
+                    <div style={{ marginTop: '4px' }}>
+                        <div className="dvr-setting-label">
+                            {i18n.t('settings:dvr.extraArgsTitle')}
+                        </div>
+                        <p className="dvr-sublabel" style={{ marginTop: '2px', lineHeight: '1.4' }}>
+                            {i18n.t('settings:dvr.extraArgsSub')}
+                        </p>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' }}>
+                            <div>
+                                <label className="dvr-sublabel" style={{ display: 'block', marginBottom: '4px' }}>
+                                    {i18n.t('settings:dvr.extraInputArgs')}
+                                </label>
+                                <input
+                                    type="text"
+                                    className="dvr-path-input"
+                                    style={{ width: '100%', boxSizing: 'border-box' }}
+                                    placeholder={i18n.t('settings:dvr.extraInputArgsPlaceholder')}
+                                    value={extraInputArgs}
+                                    onChange={(e) => handleExtraArgsChange('input', e.target.value)}
+                                    onBlur={() => handleExtraArgsCommit('input')}
+                                />
+                                {extraInputArgsError && (
+                                    <span className="dvr-warning-msg" style={{ display: 'block', marginTop: '4px' }}>
+                                        {extraArgsErrorText(extraInputArgsError)}
+                                    </span>
+                                )}
+                            </div>
+                            <div>
+                                <label className="dvr-sublabel" style={{ display: 'block', marginBottom: '4px' }}>
+                                    {i18n.t('settings:dvr.extraOutputArgs')}
+                                </label>
+                                <input
+                                    type="text"
+                                    className="dvr-path-input"
+                                    style={{ width: '100%', boxSizing: 'border-box' }}
+                                    placeholder={i18n.t('settings:dvr.extraOutputArgsPlaceholder')}
+                                    value={extraOutputArgs}
+                                    onChange={(e) => handleExtraArgsChange('output', e.target.value)}
+                                    onBlur={() => handleExtraArgsCommit('output')}
+                                />
+                                {extraOutputArgsError && (
+                                    <span className="dvr-warning-msg" style={{ display: 'block', marginTop: '4px' }}>
+                                        {extraArgsErrorText(extraOutputArgsError)}
+                                    </span>
+                                )}
+                            </div>
                         </div>
                     </div>
                 </div>

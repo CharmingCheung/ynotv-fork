@@ -4,6 +4,7 @@
 //! Runs entirely within the Tauri process for efficiency.
 
 pub mod database;
+pub mod ffmpeg_args;
 pub mod models;
 pub mod scheduler;
 pub mod recorder;

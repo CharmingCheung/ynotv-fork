@@ -237,6 +237,12 @@ export interface DvrRecording {
 
   status: 'recording' | 'completed' | 'partial' | 'failed';
   error_message?: string;
+  /** What the recorder captured from: 'hls' or 'direct'. */
+  stream_type?: string;
+  /** HTTP reconnect strategy in force: 'auto' | 'aggressive' | 'off'. */
+  reconnect_strategy?: string;
+  /** Why it stopped, when it was not a plain completion. */
+  stop_reason?: string;
 
   keep_until?: number;               // Unix timestamp (NULL = forever)
   auto_delete_policy: 'keep_forever' | 'keep_days' | 'space_needed';

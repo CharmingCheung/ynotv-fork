@@ -136,6 +136,9 @@ impl DvrDatabase {
                 created_at INTEGER NOT NULL,
                 progress_seconds INTEGER DEFAULT 0,
                 last_watched_at INTEGER,
+                stream_type TEXT,
+                reconnect_strategy TEXT,
+                stop_reason TEXT,
                 FOREIGN KEY (schedule_id) REFERENCES dvr_schedules(id)
             )",
             [],
@@ -201,6 +204,14 @@ impl DvrDatabase {
             [],
         ); // Ignore error if column already exists
         println!("[DVR DB] last_watched_at migration check complete");
+
+        // Migration: record what each recording captured from and why it stopped,
+        // so the recordings list can show it (both columns are display-only).
+        println!("[DVR DB] Checking for stream_type/reconnect_strategy/stop_reason migrations...");
+        let _ = conn.execute("ALTER TABLE dvr_recordings ADD COLUMN stream_type TEXT", []);
+        let _ = conn.execute("ALTER TABLE dvr_recordings ADD COLUMN reconnect_strategy TEXT", []);
+        let _ = conn.execute("ALTER TABLE dvr_recordings ADD COLUMN stop_reason TEXT", []);
+        println!("[DVR DB] stream info migration check complete");
 
         // Migration: Add airstamp column to tv_episodes for timezone-aware display
         println!("[DVR DB] Checking for airstamp column migration...");
@@ -780,6 +791,7 @@ impl DvrDatabase {
         status: RecordingStatus,
         size_bytes: Option<i64>,
         error_message: Option<&str>,
+        stop_reason: Option<&str>,
     ) -> Result<()> {
         let conn = self.get_conn()?;
 
@@ -788,18 +800,41 @@ impl DvrDatabase {
                 status = ?1,
                 size_bytes = COALESCE(?2, size_bytes),
                 error_message = ?3,
-                actual_end = CASE WHEN ?1 IN ('completed', 'failed', 'partial') THEN ?4 ELSE actual_end END
-             WHERE id = ?5",
+                stop_reason = COALESCE(?4, stop_reason),
+                actual_end = CASE WHEN ?1 IN ('completed', 'failed', 'partial') THEN ?5 ELSE actual_end END
+             WHERE id = ?6",
             params![
                 status.as_str(),
                 size_bytes,
                 error_message,
+                stop_reason,
                 chrono::Utc::now().timestamp(),
                 id
             ]
         )?;
 
         debug!("Updated recording {} to {:?}", id, status);
+        Ok(())
+    }
+
+    /// Store what the recorder captured from and how, for the recordings list.
+    pub fn update_recording_stream_info(
+        &self,
+        id: i64,
+        stream_type: &str,
+        reconnect_strategy: &str,
+    ) -> Result<()> {
+        let conn = self.get_conn()?;
+
+        conn.execute(
+            "UPDATE dvr_recordings SET stream_type = ?1, reconnect_strategy = ?2 WHERE id = ?3",
+            params![stream_type, reconnect_strategy, id],
+        )?;
+
+        debug!(
+            "Recording {} captured from {} with reconnect strategy {}",
+            id, stream_type, reconnect_strategy
+        );
         Ok(())
     }
 
@@ -886,6 +921,9 @@ impl DvrDatabase {
                         auto_delete_policy: row.get("auto_delete_policy")?,
                         created_at: row.get("created_at")?,
                         thumbnail_path: row.get("thumbnail_path")?,
+                        stream_type: row.get("stream_type")?,
+                        reconnect_strategy: row.get("reconnect_strategy")?,
+                        stop_reason: row.get("stop_reason")?,
                     })
                 },
             )
@@ -923,6 +961,9 @@ impl DvrDatabase {
                 auto_delete_policy: row.get("auto_delete_policy")?,
                 created_at: row.get("created_at")?,
                 thumbnail_path: row.get("thumbnail_path")?,
+                stream_type: row.get("stream_type")?,
+                reconnect_strategy: row.get("reconnect_strategy")?,
+                stop_reason: row.get("stop_reason")?,
             })
         })?;
 
@@ -1000,6 +1041,15 @@ impl DvrDatabase {
                 }
                 "allow_permissive_hls_extensions" => {
                     settings.allow_permissive_hls_extensions = value == "true" || value == "1" || value == "\"true\"";
+                }
+                "reconnect_strategy" => {
+                    settings.reconnect_strategy = value;
+                }
+                "extra_input_args" => {
+                    settings.extra_input_args = value;
+                }
+                "extra_output_args" => {
+                    settings.extra_output_args = value;
                 }
                 _ => {}
             }

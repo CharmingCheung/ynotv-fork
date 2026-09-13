@@ -687,6 +687,34 @@
     font-weight: 500;
 }
 
+/* Capture details: stream type and reconnect strategy */
+.dvr-media-capture {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin: 6px 0 0 0;
+}
+
+.dvr-media-capture-pill {
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    color: var(--text-secondary, rgba(255, 255, 255, 0.7));
+    background: var(--surface-hover, rgba(255, 255, 255, 0.08));
+    border: 1px solid var(--surface-border, rgba(255, 255, 255, 0.12));
+}
+
+.dvr-media-stop-reason {
+    font-size: 12px;
+    margin: 2px 0 0 0;
+    color: var(--accent-primary, #00d4ff);
+    font-weight: 500;
+}
+
 .dvr-media-actions-top {
     position: absolute;
     top: 12px;

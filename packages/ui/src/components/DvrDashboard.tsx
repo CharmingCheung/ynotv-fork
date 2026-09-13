@@ -662,6 +662,50 @@ function ScheduledTab({
 }
 
 // Recorded Tab Component
+/**
+ * Capture details written by the recorder: what the stream was and how FFmpeg
+ * was allowed to reconnect. Unknown or missing values render nothing, so older
+ * recordings simply show no pills.
+ */
+function streamTypeLabel(streamType?: string): string | null {
+    switch (streamType) {
+        case 'hls':
+            return i18n.t('dvr:streamTypeHls');
+        case 'direct':
+            return i18n.t('dvr:streamTypeDirect');
+        default:
+            return null;
+    }
+}
+
+function reconnectStrategyLabel(strategy?: string): string | null {
+    switch (strategy) {
+        case 'auto':
+            return i18n.t('dvr:strategyAuto');
+        case 'aggressive':
+            return i18n.t('dvr:strategyAggressive');
+        case 'off':
+            return i18n.t('dvr:strategyOff');
+        default:
+            return null;
+    }
+}
+
+/**
+ * Why a recording ended before its scheduled end. Failures are already covered
+ * by the status badge, with the raw FFmpeg message in the tooltip.
+ */
+function stopReasonLabel(stopReason?: string): string | null {
+    switch (stopReason) {
+        case 'stream_ended':
+            return i18n.t('dvr:reasonStreamEnded');
+        case 'stopped_by_user':
+            return i18n.t('dvr:reasonStoppedByUser');
+        default:
+            return null;
+    }
+}
+
 interface RecordedTabProps {
     recorded: DvrRecording[];
     onPlay?: (recording: DvrRecording) => void;
@@ -824,6 +868,28 @@ function RecordedTab({ recorded, onPlay, onDelete, onRename, formatDateTime }: R
                         {item.duration_sec && (
                             <p className="dvr-media-duration">
                                 {Math.round(item.duration_sec / 60)} min
+                            </p>
+                        )}
+                        {(streamTypeLabel(item.stream_type) || reconnectStrategyLabel(item.reconnect_strategy)) && (
+                            <p className="dvr-media-capture" title={i18n.t('dvr:streamInfoTitle')}>
+                                {streamTypeLabel(item.stream_type) && (
+                                    <span className="dvr-media-capture-pill">
+                                        {streamTypeLabel(item.stream_type)}
+                                    </span>
+                                )}
+                                {reconnectStrategyLabel(item.reconnect_strategy) && (
+                                    <span className="dvr-media-capture-pill">
+                                        {reconnectStrategyLabel(item.reconnect_strategy)}
+                                    </span>
+                                )}
+                            </p>
+                        )}
+                        {stopReasonLabel(item.stop_reason) && (
+                            <p
+                                className="dvr-media-stop-reason"
+                                title={item.error_message || undefined}
+                            >
+                                {stopReasonLabel(item.stop_reason)}
                             </p>
                         )}
                     </div>

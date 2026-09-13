@@ -123,6 +123,10 @@ const UNTRANSLATED_ALLOWLIST = new Set([
   'settings.strem.badgeUrlPlaceholder', 'settings.categoryManager.enterFolderNamePost',
   'settings.categoryManager.enterNewFolderNamePost', 'settings.categoryManager.deleteFolderConfirmPost',
   'settings.categoryManager.deleteFolderConfirmName',
+  // FFmpeg command-line examples — intentionally identical in every locale
+  'settings.dvr.extraInputArgsPlaceholder', 'settings.dvr.extraOutputArgsPlaceholder',
+  // "HLS" is the name of the format, not a translatable word
+  'dvr.streamTypeHls',
   // controller hardware labels (printed on the physical buttons) + universal terms
   'settings.controllers.mapping.buttons.select', 'settings.controllers.mapping.buttons.start',
   'settings.controllers.mapping.groups.dpad', 'settings.controllers.mapping.groups.menu',

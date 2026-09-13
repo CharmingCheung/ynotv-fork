@@ -17,7 +17,8 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use crate::dvr::database::DvrDatabase;
-use crate::dvr::models::{RecordingEvent, RecordingStatus, Schedule, ScheduleStatus};
+use crate::dvr::ffmpeg_args::{hls_from_url, parse_extra_ffmpeg_args, ReconnectStrategy};
+use crate::dvr::models::{RecordingEvent, RecordingStatus, Schedule, ScheduleStatus, StopReason};
 use crate::dvr::stream_resolver::resolve_stream_url;
 use crate::dvr::thumbnail::generate_thumbnail;
 use rusqlite::OptionalExtension;
@@ -130,9 +131,10 @@ impl RecordingManager {
             ));
         }
 
-        // Check if this is a Stalker source that needs real-time URL resolution
-        // Stalker sources have stream_url containing .m3u8, or we need to check the channel's direct_url
-        let is_hls = schedule.stream_url.as_ref().map(|u| u.contains(".m3u8")).unwrap_or(false);
+        // Check if this is a Stalker source that needs real-time URL resolution.
+        // The stored URL is only a hint at this point: a playlist served from an
+        // extensionless endpoint reads as non-HLS until the resolved URL is checked.
+        let hls_url_hint = schedule.stream_url.as_ref().map(|u| u.contains(".m3u8")).unwrap_or(false);
 
         // Also check if the channel's direct_url indicates Stalker
         let conn = self.db.get_conn()?;
@@ -144,10 +146,10 @@ impl RecordingManager {
 
         let is_stalker_channel = direct_url.map(|url| url.starts_with("stalker_")).unwrap_or(false);
 
-        let needs_url_resolution = is_hls || is_stalker_channel;
+        let needs_url_resolution = hls_url_hint || is_stalker_channel;
 
-        println!("[DVR Recorder] Channel {}: is_hls={}, is_stalker={}, needs_resolution={}",
-                 schedule.channel_id, is_hls, is_stalker_channel, needs_url_resolution);
+        println!("[DVR Recorder] Channel {}: hls_url_hint={}, is_stalker={}, needs_resolution={}",
+                 schedule.channel_id, hls_url_hint, is_stalker_channel, needs_url_resolution);
 
         let stream_url = if needs_url_resolution {
             // For Stalker/HLS streams, request fresh URL from frontend
@@ -233,9 +235,6 @@ impl RecordingManager {
         let event = RecordingEvent::started(&schedule, recording_id);
         let _ = self.event_tx.send(event).await;
 
-        // Detect stream type for appropriate FFmpeg flags
-        let is_hls = stream_url.contains(".m3u8") || stream_url.contains("/mono.m3u8");
-        println!("[DVR Recorder] Stream type: {}", if is_hls { "HLS (m3u8)" } else { "Direct TS" });
         
         // Build FFmpeg command
         let mut cmd = Command::new(&self.ffmpeg_path);
@@ -254,22 +253,53 @@ impl RecordingManager {
         info!("[DVR Recorder] Using User-Agent for schedule #{} (source '{}'): {}", schedule.id, schedule.source_id, user_agent);
         println!("[DVR Recorder] Using User-Agent: {}", user_agent);
 
+        // Retrieve DVR settings (reconnect strategy, permissive HLS, extra FFmpeg args)
+        let dvr_settings = self.db.get_settings().unwrap_or_default();
+
+        // Detect the stream type from the *resolved* URL. Playlists are routinely
+        // served from extensionless or tokenised endpoints, so fall back to the
+        // response itself instead of trusting the URL.
+        let is_hls = match hls_from_url(&stream_url) {
+            Some(verdict) => verdict,
+            None => probe_is_hls(&stream_url, &user_agent).await,
+        };
+        println!(
+            "[DVR Recorder] Stream type: {}",
+            if is_hls { "HLS (playlist)" } else { "Direct" }
+        );
+
+        // Remember what is being captured and how, so the recordings list can show
+        // it instead of leaving the answer in the log.
+        let strategy = ReconnectStrategy::from_setting(&dvr_settings.reconnect_strategy);
+        println!(
+            "[DVR Recorder] Reconnect strategy: {} (hls={}, catchup={})",
+            strategy.as_setting(),
+            is_hls,
+            is_catchup_stream
+        );
+        if let Err(e) = self.db.update_recording_stream_info(
+            recording_id,
+            if is_hls { "hls" } else { "direct" },
+            strategy.as_setting(),
+        ) {
+            error!(
+                "[DVR Recorder] Could not store stream info for recording #{}: {}",
+                recording_id, e
+            );
+        }
+
         // HTTP reconnection & User-Agent flags (must be specified before the input -i)
         if stream_url.starts_with("http://") || stream_url.starts_with("https://") {
             cmd.arg("-user_agent").arg(&user_agent);
-            cmd.arg("-reconnect").arg("1")
-                .arg("-reconnect_delay_max").arg("5")
-                .arg("-reconnect_on_network_error").arg("1");
-
-            if !is_catchup_stream {
-                // Only enable reconnect_at_eof and reconnect_streamed for live broadcast streams
-                cmd.arg("-reconnect_at_eof").arg("1")
-                    .arg("-reconnect_streamed").arg("1");
+            for arg in strategy.http_args(is_hls, is_catchup_stream) {
+                cmd.arg(arg);
             }
         }
 
-        // Retrieve DVR settings to check user opt-in for permissive HLS extensions
-        let dvr_settings = self.db.get_settings().unwrap_or_default();
+        // Extra user input arguments, before the app-owned input
+        for arg in validated_extra_args("extra_input_args", &dvr_settings.extra_input_args) {
+            cmd.arg(arg);
+        }
 
         // Input flags
         if is_hls {
@@ -293,27 +323,48 @@ impl RecordingManager {
         cmd.arg("-timeout").arg("30000000")  // 30 second read timeout (microseconds)
             .arg("-i").arg(&stream_url)
             .arg("-c").arg("copy")              // Zero transcoding
-            .arg("-fflags").arg("+flush_packets")  // Flush packets immediately
-            .arg("-y")                           // Overwrite if exists
+            .arg("-fflags").arg("+flush_packets");  // Flush packets immediately
+
+        // Extra user output arguments, before the app-owned output options
+        for arg in validated_extra_args("extra_output_args", &dvr_settings.extra_output_args) {
+            cmd.arg(arg);
+        }
+
+        // Record-until-stop schedules have no fixed duration, so FFmpeg must
+        // not receive a -t limit — it keeps recording until the user stops it
+        // (cancel sends 'q' and/or kills the process). -t is an output option, so
+        // it has to precede the output path or FFmpeg treats it as a trailing
+        // option and warns that it may be ignored.
+        if !is_manual_stop {
+            cmd.arg("-t").arg(duration_secs.to_string());
+        }
+
+        cmd.arg("-y")                           // Overwrite if exists
             .arg(&output_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-
-        // Record-until-stop schedules have no fixed duration, so FFmpeg must
-        // not receive a -t limit — it keeps recording until the user stops it
-        // (cancel sends 'q' and/or kills the process).
-        if !is_manual_stop {
-            cmd.arg("-t").arg(duration_secs.to_string());
-        }
 
         // Hide console window on Windows (CREATE_NO_WINDOW = 0x08000000)
         #[cfg(windows)]
         cmd.creation_flags(0x08000000);
 
         // Spawn FFmpeg process
-        let child = cmd.spawn()
-            .context("Failed to spawn FFmpeg")?;
+        let child = match cmd.spawn().context("Failed to spawn FFmpeg") {
+            Ok(child) => child,
+            Err(e) => {
+                // The recording row already exists, so close it out rather than
+                // leaving it in the list as an in-progress recording forever.
+                let _ = self.db.update_recording_status(
+                    recording_id,
+                    RecordingStatus::Failed,
+                    Some(0),
+                    Some(&e.to_string()),
+                    Some(StopReason::StartFailed.as_code()),
+                );
+                return Err(e);
+            }
+        };
 
         // Create cancellation channel
         let (cancel_tx, cancel_rx) = watch::channel(false);
@@ -338,7 +389,7 @@ impl RecordingManager {
         self.active_recordings.lock().insert(schedule.id, handle);
 
         // Wait for completion
-        let result = self.wait_for_recording(
+        let (stop_reason, result) = self.wait_for_recording(
             schedule.id,
             recording_id,
             duration_secs,
@@ -355,7 +406,20 @@ impl RecordingManager {
         // Handle result
         match result {
             Ok(()) => {
-                info!("Recording #{} completed successfully", recording_id);
+                // A clean exit means either the scheduled end was reached, or a
+                // finite (catch-up) download ran to the end of its playlist. For a
+                // live broadcast it means the stream itself ended before the
+                // programme did — worth surfacing rather than reporting a plain
+                // success.
+                let stop_reason = match stop_reason {
+                    StopReason::StreamEnded if is_catchup_stream => StopReason::Completed,
+                    other => other,
+                };
+                info!(
+                    "Recording #{} completed successfully ({})",
+                    recording_id,
+                    stop_reason.as_code()
+                );
 
                 // Get final file size
                 let file_size = std::fs::metadata(&output_path)
@@ -368,6 +432,7 @@ impl RecordingManager {
                     RecordingStatus::Completed,
                     file_size,
                     None,
+                    Some(stop_reason.as_code()),
                 )?;
 
                 // Update schedule status to completed
@@ -443,6 +508,7 @@ impl RecordingManager {
                     status.clone(),
                     Some(file_size),
                     Some(&e.to_string()),
+                    Some(stop_reason.as_code()),
                 )?;
 
                 // For partial recordings, also generate a thumbnail
@@ -493,21 +559,40 @@ impl RecordingManager {
         progress_seconds: Arc<parking_lot::Mutex<f64>>,
         progress_bytes: Arc<parking_lot::Mutex<u64>>,
         speed_bytes_instant: Arc<parking_lot::Mutex<u64>>,
-    ) -> Result<()> {
-        // Take ownership of the process from the handle
+    ) -> (StopReason, Result<()>) {
+        // Take ownership of the process from the handle. These are pre-flight
+        // failures: the recording loop never got going at all.
         let mut child = {
             let mut recordings = self.active_recordings.lock();
-            let handle = recordings.get_mut(&schedule_id)
-                .context("Recording handle not found")?;
-            handle.process.take()
-                .context("Recording process already taken")?
+            let Some(handle) = recordings.get_mut(&schedule_id) else {
+                return (
+                    StopReason::StartFailed,
+                    Err(anyhow::anyhow!("Recording handle not found")),
+                );
+            };
+            match handle.process.take() {
+                Some(process) => process,
+                None => {
+                    return (
+                        StopReason::StartFailed,
+                        Err(anyhow::anyhow!("Recording process already taken")),
+                    )
+                }
+            }
         };
 
         // Start a task to capture stderr.
         // IMPORTANT: FFmpeg writes progress stats with \r (carriage return) not \n.
         // We must read raw bytes and split on both \r and \n to capture real-time progress.
-        let stderr = child.stderr.take()
-            .context("Failed to take stderr")?;
+        let stderr = match child.stderr.take() {
+            Some(stderr) => stderr,
+            None => {
+                return (
+                    StopReason::StartFailed,
+                    Err(anyhow::anyhow!("Failed to take stderr")),
+                )
+            }
+        };
 
         let progress_seconds_clone = progress_seconds.clone();
         let progress_bytes_clone = progress_bytes.clone();
@@ -590,6 +675,14 @@ impl RecordingManager {
         let result = tokio::select! {
             // Normal completion (FFmpeg exited on its own)
             status = child.wait() => {
+                // An exit we did not ask for. A clean one means the input ended
+                // before the scheduled end, unless it is a finite (catch-up)
+                // download, where reaching the end is the expected result.
+                let reason = match &status {
+                    Ok(s) if s.success() => StopReason::StreamEnded,
+                    _ => StopReason::FfmpegError,
+                };
+
                 // Get stderr output
                 let stderr_task = stderr_task_opt.take()
                     .expect("stderr_task should exist");
@@ -601,7 +694,7 @@ impl RecordingManager {
                     _ => "(stderr capture timed out or failed)".to_string(),
                 };
 
-                match status {
+                let outcome = match status {
                     Ok(s) if s.success() => Ok(()),
                     Ok(s) => {
                         let code = s.code().unwrap_or(-1);
@@ -609,7 +702,9 @@ impl RecordingManager {
                         Err(anyhow::anyhow!("FFmpeg exited with code {}: {}", code, stderr_output.lines().last().unwrap_or("unknown error")))
                     }
                     Err(e) => Err(anyhow::anyhow!("FFmpeg wait error: {}", e))
-                }
+                };
+
+                (reason, outcome)
             }
 
             // Cancelled by user
@@ -638,7 +733,10 @@ impl RecordingManager {
                 if let Some(task) = stderr_task_opt {
                     task.abort();
                 }
-                Err(anyhow::anyhow!("Recording cancelled by user"))
+                (
+                    StopReason::StoppedByUser,
+                    Err(anyhow::anyhow!("Recording cancelled by user")),
+                )
             }
 
             // Target duration / end time reached
@@ -711,7 +809,7 @@ impl RecordingManager {
                     let _ = child.kill().await;
                 }
 
-                Ok(())
+                (StopReason::Completed, Ok(()))
             }
         };
 
@@ -961,6 +1059,91 @@ fn generate_filename(schedule: &Schedule, channel_name: &str) -> String {
         .collect();
 
     format!("{}_{}_{}.ts", timestamp, sanitized_channel, sanitized_title)
+}
+
+/// Extra FFmpeg arguments from settings, validated.
+///
+/// Invalid input never fails a recording: the arguments are reported and dropped
+/// so the recording still runs with the app's own flags. The settings UI applies
+/// the same rules before saving, making this a safety net rather than the gate.
+fn validated_extra_args(key: &str, raw: &str) -> Vec<String> {
+    match parse_extra_ffmpeg_args(raw) {
+        Ok(args) => args,
+        Err(reason) => {
+            error!("[DVR Recorder] Ignoring {} from settings: {}", key, reason);
+            Vec::new()
+        }
+    }
+}
+
+/// Probe a stream for an HLS playlist when its URL gives no hint.
+///
+/// Live IPTV playlists are commonly served from extensionless or tokenised
+/// endpoints, so the response is the only signal available. Best effort: any
+/// failure returns false, which keeps the behaviour of a plain URL check.
+async fn probe_is_hls(stream_url: &str, user_agent: &str) -> bool {
+    if !(stream_url.starts_with("http://") || stream_url.starts_with("https://")) {
+        return false;
+    }
+
+    println!("[DVR Recorder] URL gives no stream type hint, probing the stream...");
+
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(4))
+        .build()
+    {
+        Ok(client) => client,
+        Err(_) => return false,
+    };
+
+    let response = match client
+        .get(stream_url)
+        .header(reqwest::header::USER_AGENT, user_agent)
+        // A playlist is tiny; never pull more than a token from the stream.
+        .header(reqwest::header::RANGE, "bytes=0-2047")
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(e) => {
+            println!(
+                "[DVR Recorder] Stream probe failed ({}), assuming a direct stream",
+                e
+            );
+            return false;
+        }
+    };
+
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if content_type.contains("mpegurl") {
+        return true;
+    }
+
+    // Some portals serve playlists with no useful Content-Type, where the
+    // `#EXTM3U` marker is the only answer. Read a bounded amount so a live stream
+    // that ignores the Range request cannot buffer without limit.
+    let mut response = response;
+    let mut body: Vec<u8> = Vec::new();
+    while body.len() < 2048 {
+        match response.chunk().await {
+            Ok(Some(chunk)) => body.extend_from_slice(&chunk),
+            _ => break,
+        }
+    }
+
+    let is_hls = String::from_utf8_lossy(&body)
+        .trim_start()
+        .starts_with("#EXTM3U");
+    println!(
+        "[DVR Recorder] Stream probe: content-type='{}', playlist={}",
+        content_type, is_hls
+    );
+    is_hls
 }
 
 /// Generate a unique filename and output path to prevent UNIQUE constraint collisions in SQLite or on disk

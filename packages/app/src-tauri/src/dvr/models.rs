@@ -109,6 +109,37 @@ impl Schedule {
     }
 }
 
+/// Why a recording stopped.
+///
+/// Stored as a short code on the recording row so the recordings list can say
+/// why something ended early in the user's own language, instead of leaving the
+/// answer only in the log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopReason {
+    /// The scheduled end was reached, or a finite (catch-up) download finished.
+    Completed,
+    /// FFmpeg exited cleanly before the expected end, so the stream ended.
+    StreamEnded,
+    /// Stopped by the user, or by app shutdown.
+    StoppedByUser,
+    /// FFmpeg exited with an error.
+    FfmpegError,
+    /// FFmpeg could never be started.
+    StartFailed,
+}
+
+impl StopReason {
+    pub fn as_code(&self) -> &'static str {
+        match self {
+            StopReason::Completed => "completed",
+            StopReason::StreamEnded => "stream_ended",
+            StopReason::StoppedByUser => "stopped_by_user",
+            StopReason::FfmpegError => "ffmpeg_error",
+            StopReason::StartFailed => "start_failed",
+        }
+    }
+}
+
 /// A completed or in-progress recording file
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Recording {
@@ -129,6 +160,15 @@ pub struct Recording {
     pub created_at: i64,
     /// Path to thumbnail image file
     pub thumbnail_path: Option<String>,
+    /// What the recorder captured from: "hls" or "direct".
+    #[serde(default)]
+    pub stream_type: Option<String>,
+    /// HTTP reconnect strategy in force: "auto", "aggressive" or "off".
+    #[serde(default)]
+    pub reconnect_strategy: Option<String>,
+    /// Code from [`StopReason`], when the recording did not simply complete.
+    #[serde(default)]
+    pub stop_reason: Option<String>,
 }
 
 /// Settings for DVR operations
@@ -143,6 +183,19 @@ pub struct DvrSettings {
     pub auto_convert_format: String,
     #[serde(default)]
     pub allow_permissive_hls_extensions: bool,
+    /// HTTP reconnect strategy: "auto" (default), "aggressive" or "off".
+    #[serde(default = "default_reconnect_strategy")]
+    pub reconnect_strategy: String,
+    /// Extra FFmpeg arguments inserted before the input.
+    #[serde(default)]
+    pub extra_input_args: String,
+    /// Extra FFmpeg arguments inserted before the output file.
+    #[serde(default)]
+    pub extra_output_args: String,
+}
+
+fn default_reconnect_strategy() -> String {
+    "auto".to_string()
 }
 
 impl Default for DvrSettings {
@@ -156,6 +209,9 @@ impl Default for DvrSettings {
             keep_recordings_days: Some(30),
             auto_convert_format: "none".to_string(),
             allow_permissive_hls_extensions: false,
+            reconnect_strategy: default_reconnect_strategy(),
+            extra_input_args: String::new(),
+            extra_output_args: String::new(),
         }
     }
 }
