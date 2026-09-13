@@ -30,6 +30,15 @@ import {
     saveScannedFolders
 } from '../services/local-library/local-library';
 import type { LibraryFolder, LocalEntry } from '../services/local-library/types';
+import {
+    SPORTS_FAVORITES_STORAGE_KEY,
+    deserializeTeamChannelLinks,
+    parseSportsFavorites,
+    serializeSportsFavorites,
+    serializeTeamChannelLinks,
+    type SportsFavoritesBackup,
+    type TeamChannelLinkBackup,
+} from './sportsBackup';
 
 export interface ExportData {
     version: number;
@@ -217,9 +226,15 @@ export interface ExportData {
         displayOrder: number;
         createdAt: number;
     }>;
+
+    // v12 additions (Sports team links + favorite teams)
+    /** Sports team → channel links (primary/backup channels per team). */
+    teamChannelLinks?: TeamChannelLinkBackup[];
+    /** Favorite sports teams, including pinning/order and the league-repair flag. */
+    sportsFavorites?: SportsFavoritesBackup;
 }
 
-const EXPORT_VERSION = 11;
+const EXPORT_VERSION = 12;
 
 /**
  * Collect the full application data payload. Shared by the interactive export
@@ -561,6 +576,9 @@ async function buildExportData(): Promise<ExportData> {
             createdAt: f.created_at
         }));
 
+        // 13c. Get Sports team → channel links (channels the user linked to teams)
+        const teamChannelLinks = serializeTeamChannelLinks(await db.teamChannelLinks.toArray());
+
         // 14. Get VOD Favorites from localStorage
         let vodFavorites: FavoriteItem[] | undefined = undefined;
         try {
@@ -603,6 +621,9 @@ async function buildExportData(): Promise<ExportData> {
             console.warn('[Export] Failed to parse vod-playlists-progress from localStorage:', e);
         }
 
+        // 14d. Get Sports favorite teams from localStorage
+        const sportsFavorites = parseSportsFavorites(localStorage.getItem(SPORTS_FAVORITES_STORAGE_KEY));
+
         // 15. Get UI Layout and Widget Preferences from localStorage
         const uiLayoutKeys = [
             'ynotv:pinnedCategories',
@@ -620,7 +641,16 @@ async function buildExportData(): Promise<ExportData> {
             'showFavPlaylistName',
             'showRecentPlaylistName',
             'showWatchlistPlaylistName',
-            'showCustomPlaylistName'
+            'showCustomPlaylistName',
+            // Added after v11 — standalone localStorage keys the widget/category
+            // strip layers read on first paint.
+            'ynotv:pinnedFolders',
+            'sportsLiveSidebarWidget',
+            'sportsPreviewHeight',
+            'multiviewEngineMode',
+            'showCategorySourceName',
+            'ynotv_app_icon',
+            'ynotv.local.hide_unavailable'
         ];
         const uiLayout: Record<string, string> = {};
         for (const key of uiLayoutKeys) {
@@ -662,6 +692,8 @@ async function buildExportData(): Promise<ExportData> {
             vodFavorites,
             vodPlaylists,
             vodPlaylistsProgress,
+            teamChannelLinks,
+            sportsFavorites,
             uiLayout
         };
 
@@ -846,6 +878,15 @@ export async function importAllData(): Promise<{ success: boolean; error?: strin
         // Same as playlists: a backup without progress snapshots must not wipe
         // progress the user has accumulated since.
 
+        // Restore Sports favorite teams (same rule: absent ≠ wipe)
+        if (data.sportsFavorites) {
+            try {
+                localStorage.setItem(SPORTS_FAVORITES_STORAGE_KEY, serializeSportsFavorites(data.sportsFavorites));
+            } catch (e) {
+                console.warn('[Import] Failed to restore sports-favorites to localStorage:', e);
+            }
+        }
+
         // Restore UI Layout & Widget Preferences
         if (data.uiLayout && typeof data.uiLayout === 'object') {
             for (const [key, val] of Object.entries(data.uiLayout)) {
@@ -879,7 +920,7 @@ export async function importAllData(): Promise<{ success: boolean; error?: strin
             db.vodMovies, db.vodSeries, db.vodEpisodes,
             db.vodCategories, db.channelMetadata,
             db.customPlaylists, db.playlistCategoryLinks, db.playlistIndividualChannels,
-            db.categoryFolders
+            db.categoryFolders, db.teamChannelLinks
         ], async () => {
             const restoreStep = async (name: string, action: () => Promise<void>) => {
                 console.log(`[Import] Starting: ${name}...`);
@@ -943,6 +984,7 @@ export async function importAllData(): Promise<{ success: boolean; error?: strin
                     { name: 'sourcesMeta', table: db.sourcesMeta },
                     { name: 'dvrSettings', table: db.dvrSettings },
                     { name: 'vodMetadataOverrides', table: db.vodMetadataOverrides },
+                    { name: 'teamChannelLinks', table: db.teamChannelLinks },
                     { name: 'vodHistory', table: db.vodHistory },
                     { name: 'episodeHistory', table: db.episodeHistory },
                     { name: 'prefs', table: db.prefs },
@@ -1280,6 +1322,13 @@ export async function importAllData(): Promise<{ success: boolean; error?: strin
             await restoreStep('User Prefs', async () => {
                 if (data.userPrefs && data.userPrefs.length > 0) {
                     await db.prefs.bulkAdd(data.userPrefs);
+                }
+            });
+
+            await restoreStep('Team Channel Links', async () => {
+                const links = deserializeTeamChannelLinks(data.teamChannelLinks);
+                if (links.length > 0) {
+                    await db.teamChannelLinks.bulkAdd(links);
                 }
             });
 
