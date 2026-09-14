@@ -5,6 +5,7 @@ import type { StoredMovie, StoredSeries } from '../../db';
 import { useVodFavoritesStore } from '../../stores/vodFavoritesStore';
 import { useSourceNameMap } from '../../hooks/useChannels';
 import { useVodLastWatchedMap } from '../../hooks/useVod';
+import { useScrollMemory } from '../../hooks/useScrollMemory';
 import { useTranslation } from 'react-i18next';
 import i18n from '../../i18n';
 import {
@@ -114,6 +115,17 @@ export function FavoritesView({
     () => sortVodItems(items, type, sortKey, sortDirection, { addedAtMap, lastWatchedMap }),
     [items, type, sortKey, sortDirection, addedAtMap, lastWatchedMap]
   );
+
+  // Favorites is its own list: it keeps a scroll position independent of the
+  // category grids, across playback and section switches.
+  const { onScroll: handleGridScroll } = useScrollMemory({
+    listKey: `vod:${type}:list:favorites`,
+    scrollRef,
+    ready: !loading && items.length > 0,
+    onNoSavedPosition: () => {
+      if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    },
+  });
 
   const toggleSourceBadge = useCallback(() => {
     setShowSourceBadge((prev) => {
@@ -235,7 +247,11 @@ export function FavoritesView({
         </div>
       </div>
 
-      <div ref={scrollRef} className="vod-browse__grid-scroll flex-1 min-h-0 overflow-y-auto">
+      <div
+        ref={scrollRef}
+        className="vod-browse__grid-scroll flex-1 min-h-0 overflow-y-auto"
+        onScroll={handleGridScroll}
+      >
         <VirtualGrid
           ref={virtualGridRef}
           items={sortedItems}

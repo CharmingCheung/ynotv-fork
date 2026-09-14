@@ -10,6 +10,7 @@ import { MediaCard } from './MediaCard';
 import type { StoredMovie, StoredSeries } from '../../db';
 import type { RecentlyWatchedItem } from '../../hooks/useVod';
 import { useSourceNameMap } from '../../hooks/useChannels';
+import { useScrollMemory } from '../../hooks/useScrollMemory';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useTranslation } from 'react-i18next';
 import i18n from '../../i18n';
@@ -43,6 +44,17 @@ export function RecentView({
   const rawItems = useMemo(() => {
     return items.map(i => i.item);
   }, [items]);
+
+  // Recently Watched is its own list, so it keeps a scroll position of its own
+  // across playback and section switches.
+  const { onScroll: handleGridScroll } = useScrollMemory({
+    listKey: `vod:${type}:list:recent`,
+    scrollRef,
+    ready: !loading && items.length > 0,
+    onNoSavedPosition: () => {
+      if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    },
+  });
 
   // Create maps for quick lookup
   const progressMap = useMemo(() => {
@@ -141,7 +153,11 @@ export function RecentView({
 
   return (
     <div className="vod-browse">
-      <div ref={scrollRef} className="vod-browse__grid-scroll flex-1 min-h-0 overflow-y-auto">
+      <div
+        ref={scrollRef}
+        className="vod-browse__grid-scroll flex-1 min-h-0 overflow-y-auto"
+        onScroll={handleGridScroll}
+      >
         <VirtualGrid
           ref={virtualGridRef}
           items={rawItems}
