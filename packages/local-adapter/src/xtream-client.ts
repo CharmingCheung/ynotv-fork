@@ -103,7 +103,64 @@ export class XtreamClient {
     return url;
   }
 
+  // In-flight request deduplication across all XtreamClient instances
+  private static inFlightRequests = new Map<string, Promise<any>>();
+  // Response cache (TTL: 60s) for metadata calls like get_vod_info and get_series_info
+  private static responseCache = new Map<string, { data: any; expiresAt: number }>();
+  private static readonly RESPONSE_CACHE_TTL_MS = 60000;
+  // Hard cap so a heavy browsing session can't retain every payload it saw
+  private static readonly RESPONSE_CACHE_MAX_ENTRIES = 200;
+
+  private static cacheResponse(url: string, data: any): void {
+    const cache = XtreamClient.responseCache;
+    const now = Date.now();
+
+    // Drop expired entries. Nothing else ever removes them, and series payloads
+    // are large enough that keeping them for the whole session adds up.
+    for (const [key, entry] of cache) {
+      if (entry.expiresAt <= now) cache.delete(key);
+    }
+
+    cache.set(url, { data, expiresAt: now + XtreamClient.RESPONSE_CACHE_TTL_MS });
+
+    // Map preserves insertion order, so the first key is the oldest entry.
+    while (cache.size > XtreamClient.RESPONSE_CACHE_MAX_ENTRIES) {
+      const oldest = cache.keys().next().value;
+      if (oldest === undefined) break;
+      cache.delete(oldest);
+    }
+  }
+
   private async fetchJson<T>(url: string): Promise<T> {
+    const now = Date.now();
+    const cached = XtreamClient.responseCache.get(url);
+    if (cached && cached.expiresAt > now) {
+      return cached.data as T;
+    }
+
+    const inFlight = XtreamClient.inFlightRequests.get(url);
+    if (inFlight) {
+      return inFlight as Promise<T>;
+    }
+
+    const promise = (async () => {
+      try {
+        const data = await this.doFetchJson<T>(url);
+        // Cache metadata requests so concurrent or subsequent hooks share the data
+        if (url.includes('action=get_vod_info') || url.includes('action=get_series_info')) {
+          XtreamClient.cacheResponse(url, data);
+        }
+        return data;
+      } finally {
+        XtreamClient.inFlightRequests.delete(url);
+      }
+    })();
+
+    XtreamClient.inFlightRequests.set(url, promise);
+    return promise;
+  }
+
+  private async doFetchJson<T>(url: string): Promise<T> {
     const headers: Record<string, string> = {};
     if (this.config.userAgent) {
       headers['User-Agent'] = this.config.userAgent;
@@ -377,6 +434,25 @@ export class XtreamClient {
     return rawData.info || null;
   }
 
+  async getVodFullInfo(vodId: string): Promise<{ info: any; movie_data: any } | null> {
+    const rawVodId = vodId.replace(`${this.sourceId}_vod_`, '').replace(`${this.sourceId}_`, '');
+    const url = this.buildApiUrl('get_vod_info') + `&vod_id=${rawVodId}`;
+    const data = await this.fetchJson<any>(url);
+
+    if (!data || typeof data !== 'object') return null;
+    const rawData = data as any;
+    if (rawData.user_info && rawData.user_info.auth === 0) {
+      throw new Error('Xtream Codes authentication failed');
+    }
+    if ((data as any).error) {
+      throw new Error((data as any).error);
+    }
+    return {
+      info: rawData.info || null,
+      movie_data: rawData.movie_data || null,
+    };
+  }
+
   async getSeriesCategories(): Promise<Category[]> {
     const url = this.buildApiUrl('get_series_categories');
     const rawData = await this.fetchJson<any>(url);
@@ -491,6 +567,7 @@ export class XtreamClient {
         plot: ep.info?.plot,
         duration: ep.info?.duration ? parseInt(ep.info.duration, 10) : undefined,
         info: ep.info,
+        container_extension: ep.container_extension || (ep.info?.container_extension as string | undefined),
       }));
 
       seasons.push({

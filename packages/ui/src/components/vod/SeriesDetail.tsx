@@ -29,6 +29,8 @@ import { SetPlayerDropdown, SplitPlayButton, TrailerSplitButton, type VodPlayerM
 import { AddToPlaylistModal } from './AddToPlaylistModal';
 import { VodMetadataEditModal } from './VodMetadataEditModal';
 import { SeriesDownloadModal } from './SeriesDownloadModal';
+import { VodMediaInfoCard } from './VodMediaInfoCard';
+import { parseStreamMetadata } from '../../services/vod-media-info';
 import { useSourceNameMap } from '../../hooks/useChannels';
 import { useTranslation } from 'react-i18next';
 import { formatDate } from '../../utils/dateTime';
@@ -563,6 +565,28 @@ export function SeriesDetail({ series: seriesProp, onClose, onPlayEpisode, apiKe
   // Current season episodes
   const currentEpisodes = seasons[selectedSeason] ?? [];
 
+  // Media / Stream info for Series Hero section
+  const firstEpisode = currentEpisodes[0] || (seasons[1]?.[0]) || (Object.values(seasons)[0]?.[0]);
+  const seriesMediaInfo = useMemo(() => {
+    if (firstEpisode) {
+      return parseStreamMetadata(
+        firstEpisode.info,
+        (firstEpisode as any).container_extension,
+        null,
+        firstEpisode.direct_url,
+        firstEpisode.title || series.name || series.title
+      );
+    }
+    const fromSeries = parseStreamMetadata(
+      null,
+      null,
+      null,
+      series.direct_url,
+      series.name || series.title
+    );
+    return Boolean(fromSeries.qualityLabel || fromSeries.videoCodec || fromSeries.container) ? fromSeries : null;
+  }, [firstEpisode, series.direct_url, series.name, series.title]);
+
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -677,6 +701,9 @@ export function SeriesDetail({ series: seriesProp, onClose, onPlayEpisode, apiKe
                 ))}
               </div>
             )}
+
+            {/* Series Stream & File Quality Info */}
+            <VodMediaInfoCard mediaInfo={seriesMediaInfo} loading={loading && !seriesMediaInfo} />
 
             {(series.plot || lazyPlot) && (
               <p className="series-detail__description">{series.plot || lazyPlot}</p>
@@ -914,6 +941,18 @@ export function SeriesDetail({ series: seriesProp, onClose, onPlayEpisode, apiKe
                             </span>
                           )}
                         </div>
+
+                        {/* Stream & Quality Info */}
+                        <VodMediaInfoCard
+                          mediaInfo={parseStreamMetadata(
+                            episode.info,
+                            (episode as any).container_extension,
+                            null,
+                            episode.direct_url,
+                            episode.title
+                          )}
+                          compact
+                        />
 
                         {/* Summary */}
                         {extra?.summary && (

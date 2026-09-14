@@ -18,6 +18,8 @@ import { useDownloadStore } from '../../stores/downloadStore';
 import { useVodFavoritesStore } from '../../stores/vodFavoritesStore';
 import { useActiveTmdbToken } from '../../hooks/useTmdbLists';
 import { useLazyVodTrailer, useTrailerPlayerMode, useTrailerSource } from '../../hooks/useLazyVodTrailer';
+import { useLazyVodMediaInfo } from '../../hooks/useLazyVodMediaInfo';
+import { VodMediaInfoCard } from './VodMediaInfoCard';
 import { SplitPlayButton, TrailerSplitButton, type VodPlayerMode } from './SplitPlayButton';
 import { AddToPlaylistModal } from './AddToPlaylistModal';
 import { VodMetadataEditModal } from './VodMetadataEditModal';
@@ -74,6 +76,9 @@ export function MovieDetail({ movie: movieProp, onClose, onPlay, apiKey, onCastC
 
   // Lazy-load cast photos, logo, imdb_id, country, language
   const { cast, logoUrl, imdbId, country, language, loading: extrasLoading } = useLazyMovieExtras(movie, apiKey, metadataVersion, overrideTmdbId);
+
+  // Lazy-load VOD media file details (resolution, codecs, bitrate, audio channels, file size)
+  const { mediaInfo, loading: mediaInfoLoading } = useLazyVodMediaInfo(movie);
 
   // Get images - use TMDB backdrop if available, fallback to stream_icon
   const backdropUrl = tmdbBackdropUrl || movie.stream_icon;
@@ -313,6 +318,9 @@ export function MovieDetail({ movie: movieProp, onClose, onPlay, apiKey, onCastC
                 ))}
               </div>
             )}
+
+            {/* VOD Stream & File Quality Info */}
+            <VodMediaInfoCard mediaInfo={mediaInfo} loading={mediaInfoLoading} />
 
             {/* Plot */}
             {(movie.plot != null ? movie.plot : lazyPlot) && (

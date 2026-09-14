@@ -145,6 +145,7 @@ export interface Movie {
   // External IDs (if provider includes them)
   tmdb_id?: number;
   added?: Date | string;
+  container_extension?: string;
 }
 
 export interface Series {
@@ -185,6 +186,7 @@ export interface Episode {
   plot?: string;
   duration?: number;
   info?: Record<string, unknown>;
+  container_extension?: string;
 }
 
 // =============================================================================

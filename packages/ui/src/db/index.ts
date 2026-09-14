@@ -104,6 +104,7 @@ export interface StoredMovie extends Omit<Movie, 'category_ids'> {
   category_ids?: string; // stored as JSON/string in SQLite
   category_id?: string; // Singular category ID (Xtream mainly)
   youtube_trailer?: string;
+  container_extension?: string;
 }
 
 // VOD Series with TMDB enrichment

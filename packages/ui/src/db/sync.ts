@@ -100,7 +100,7 @@ function fixDuplicatedUrl(url: string | undefined): string | undefined {
   return url;
 }
 
-async function resolveSourceUserAgent(source: any): Promise<any> {
+export async function resolveSourceUserAgent(source: any): Promise<any> {
   if (!source) return source;
   if (source.user_agent && source.user_agent.trim()) {
     return source; // source user agent overrides global

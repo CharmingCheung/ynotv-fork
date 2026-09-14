@@ -127,6 +127,7 @@ const JSON_FIELDS: Record<string, string[]> = {
     'channels': ['category_ids', 'kodi_props'],
     'vodMovies': ['category_ids'],
     'vodSeries': ['category_ids'],
+    'vodEpisodes': ['info'],
     'local_entries': ['localArt'],
 };
 // ─────────────────────────────────────────────────────────────────────────────
