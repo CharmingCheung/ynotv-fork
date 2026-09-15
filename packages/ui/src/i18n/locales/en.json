@@ -2375,7 +2375,10 @@
       "availableRoot_few": "Available Root Categories ({{count}})",
       "availableRoot_many": "Available Root Categories ({{count}})",
       "availableRoot_two": "Available Root Categories ({{count}})",
-      "availableRoot_zero": "Available Root Categories ({{count}})"
+      "availableRoot_zero": "Available Root Categories ({{count}})",
+      "editNameHint": "Rename category (or double-click the name)",
+      "nameHint": "Display name override for this category",
+      "resetNameHint": "Reset to source name ({{name}})"
     },
     "channelManager": {
       "manageTitle": "Manage Channels - {{name}}",
@@ -2392,7 +2395,10 @@
       "searchPlaceholder": "Search channels...",
       "noSearchResults": "No channels match your search",
       "noChannels": "No channels in this category",
-      "errSave": "Failed to save changes. Please try again."
+      "errSave": "Failed to save changes. Please try again.",
+      "editNameHint": "Rename channel (or double-click the name)",
+      "nameHint": "Display name override for this channel",
+      "resetNameHint": "Reset to source name ({{name}})"
     },
     "controllers": {
       "title": "Gamepad & Controller Support (Experimental)",

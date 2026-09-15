@@ -2375,7 +2375,10 @@
       "inFolder_zero": "U mapi ({{count}})",
       "availableRoot_many": "Dostupne osnovne kategorije ({{count}})",
       "availableRoot_two": "Dostupne osnovne kategorije ({{count}})",
-      "availableRoot_zero": "Dostupne osnovne kategorije ({{count}})"
+      "availableRoot_zero": "Dostupne osnovne kategorije ({{count}})",
+      "editNameHint": "Preimenuj kategoriju (ili dvoklik na naziv)",
+      "nameHint": "Prilagođeni naziv za prikaz ove kategorije",
+      "resetNameHint": "Vrati na izvorni naziv ({{name}})"
     },
     "channelManager": {
       "manageTitle": "Upravljanje kanalima - {{name}}",
@@ -2392,7 +2395,10 @@
       "searchPlaceholder": "Pretraži kanale...",
       "noSearchResults": "Nijedan kanal ne odgovara vašoj pretrazi",
       "noChannels": "Nema kanala u ovoj kategoriji",
-      "errSave": "Spremanje izmjena nije uspjelo. Pokušajte ponovo."
+      "errSave": "Spremanje izmjena nije uspjelo. Pokušajte ponovo.",
+      "editNameHint": "Preimenuj kanal (ili dvoklik na naziv)",
+      "nameHint": "Prilagođeni naziv za prikaz ovog kanala",
+      "resetNameHint": "Vrati na izvorni naziv ({{name}})"
     },
     "controllers": {
       "title": "Podrška za gamepad i kontroler (Eksperimentalno)",

@@ -2375,7 +2375,10 @@
       "availableRoot_few": "Verfügbare Root-Kategorien ({{count}})",
       "availableRoot_many": "Verfügbare Root-Kategorien ({{count}})",
       "availableRoot_two": "Verfügbare Root-Kategorien ({{count}})",
-      "availableRoot_zero": "Verfügbare Root-Kategorien ({{count}})"
+      "availableRoot_zero": "Verfügbare Root-Kategorien ({{count}})",
+      "editNameHint": "Kategorie umbenennen (oder Namen doppelklicken)",
+      "nameHint": "Eigener Anzeigename für diese Kategorie",
+      "resetNameHint": "Auf Quellnamen zurücksetzen ({{name}})"
     },
     "channelManager": {
       "manageTitle": "Sender verwalten - {{name}}",
@@ -2392,7 +2395,10 @@
       "searchPlaceholder": "Sender suchen...",
       "noSearchResults": "Kein Sender entspricht Ihrer Suche",
       "noChannels": "Keine Sender in dieser Kategorie",
-      "errSave": "Änderungen konnten nicht gespeichert werden. Bitte erneut versuchen."
+      "errSave": "Änderungen konnten nicht gespeichert werden. Bitte erneut versuchen.",
+      "editNameHint": "Sender umbenennen (oder Namen doppelklicken)",
+      "nameHint": "Eigener Anzeigename für diesen Sender",
+      "resetNameHint": "Auf Quellnamen zurücksetzen ({{name}})"
     },
     "controllers": {
       "title": "Gamepad- & Controller-Unterstützung (Experimentell)",

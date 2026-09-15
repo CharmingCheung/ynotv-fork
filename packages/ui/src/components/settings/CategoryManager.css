@@ -232,6 +232,33 @@
     text-overflow: ellipsis;
 }
 
+/* Inline name/alias editing (pencil + reset-to-source-name) */
+.category-manager-overlay .category-name-editor {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.category-manager-overlay .category-alias-input {
+    flex: 1;
+    min-width: 0;
+    padding: var(--sm-input-padding, 4px 8px);
+    background: var(--sm-input-bg, var(--surface-color, rgba(255, 255, 255, 0.05)));
+    border: var(--sm-input-border, var(--glass-border, 1px solid rgba(255, 255, 255, 0.1)));
+    border-radius: var(--sm-input-radius, 6px);
+    color: var(--sm-input-color, var(--text-primary, white));
+    font-size: 0.9rem;
+    box-sizing: border-box;
+}
+
+.category-manager-overlay .category-alias-input:focus {
+    outline: none;
+    border-color: var(--sm-input-focus-border, var(--accent-primary, #00d4ff));
+    box-shadow: var(--sm-input-focus-shadow, 0 0 0 1px var(--accent-primary, #00d4ff));
+}
+
 .category-reorder {
     display: flex;
     gap: 4px;

@@ -2375,7 +2375,10 @@
       "availableRoot_few": "Kullanılabilir Kök Kategoriler ({{count}})",
       "availableRoot_many": "Kullanılabilir Kök Kategoriler ({{count}})",
       "availableRoot_two": "Kullanılabilir Kök Kategoriler ({{count}})",
-      "availableRoot_zero": "Kullanılabilir Kök Kategoriler ({{count}})"
+      "availableRoot_zero": "Kullanılabilir Kök Kategoriler ({{count}})",
+      "editNameHint": "Kategoriyi yeniden adlandır (veya ada çift tıkla)",
+      "nameHint": "Bu kategori için özel görünen ad",
+      "resetNameHint": "Kaynak adına sıfırla ({{name}})"
     },
     "channelManager": {
       "manageTitle": "Kanalları Yönet - {{name}}",
@@ -2392,7 +2395,10 @@
       "searchPlaceholder": "Kanalları ara...",
       "noSearchResults": "Hiçbir kanal aramanızla eşleşmiyor",
       "noChannels": "Bu kategoride kanal yok",
-      "errSave": "Değişiklikler kaydedilemedi. Lütfen tekrar deneyin."
+      "errSave": "Değişiklikler kaydedilemedi. Lütfen tekrar deneyin.",
+      "editNameHint": "Kanalı yeniden adlandır (veya ada çift tıkla)",
+      "nameHint": "Bu kanal için özel görünen ad",
+      "resetNameHint": "Kaynak adına sıfırla ({{name}})"
     },
     "controllers": {
       "title": "Gamepad ve Kumanda Desteği (Deneysel)",

@@ -2375,7 +2375,10 @@
       "availableRoot_many": "فئات الجذر المتاحة ({{count}})",
       "availableRoot_zero": "فئات الجذر المتاحة ({{count}})",
       "folderCategoriesCount_two": "({{count}} فئات)",
-      "moveCategoriesToFolder_two": "نقل {{count}} فئات إلى المجلد"
+      "moveCategoriesToFolder_two": "نقل {{count}} فئات إلى المجلد",
+      "editNameHint": "إعادة تسمية الفئة (أو النقر مرتين على الاسم)",
+      "nameHint": "اسم عرض مخصص لهذه الفئة",
+      "resetNameHint": "إعادة التعيين إلى اسم المصدر ({{name}})"
     },
     "channelManager": {
       "manageTitle": "إدارة القنوات — {{name}}",
@@ -2392,7 +2395,10 @@
       "searchPlaceholder": "البحث في القنوات…",
       "noSearchResults": "لا توجد قنوات تطابق بحثك",
       "noChannels": "لا توجد قنوات في هذه الفئة",
-      "errSave": "تعذّر حفظ التغييرات. يرجى المحاولة مرة أخرى."
+      "errSave": "تعذّر حفظ التغييرات. يرجى المحاولة مرة أخرى.",
+      "editNameHint": "إعادة تسمية القناة (أو النقر مرتين على الاسم)",
+      "nameHint": "اسم عرض مخصص لهذه القناة",
+      "resetNameHint": "إعادة التعيين إلى اسم المصدر ({{name}})"
     },
     "controllers": {
       "title": "دعم أجهزة التحكم والألعاب (تجريبي)",

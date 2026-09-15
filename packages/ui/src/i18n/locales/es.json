@@ -2375,7 +2375,10 @@
       "availableRoot_few": "Categorías raíz disponibles ({{count}})",
       "availableRoot_many": "Categorías raíz disponibles ({{count}})",
       "availableRoot_two": "Categorías raíz disponibles ({{count}})",
-      "availableRoot_zero": "Categorías raíz disponibles ({{count}})"
+      "availableRoot_zero": "Categorías raíz disponibles ({{count}})",
+      "editNameHint": "Renombrar categoría (o doble clic en el nombre)",
+      "nameHint": "Nombre visible personalizado para esta categoría",
+      "resetNameHint": "Restablecer al nombre de origen ({{name}})"
     },
     "channelManager": {
       "manageTitle": "Gestionar canales - {{name}}",
@@ -2392,7 +2395,10 @@
       "searchPlaceholder": "Buscar canales...",
       "noSearchResults": "Ningún canal coincide con tu búsqueda",
       "noChannels": "No hay canales en esta categoría",
-      "errSave": "No se pudieron guardar los cambios. Inténtalo de nuevo."
+      "errSave": "No se pudieron guardar los cambios. Inténtalo de nuevo.",
+      "editNameHint": "Renombrar canal (o doble clic en el nombre)",
+      "nameHint": "Nombre visible personalizado para este canal",
+      "resetNameHint": "Restablecer al nombre de origen ({{name}})"
     },
     "controllers": {
       "title": "Compatibilidad con Gamepad y Controlador (Experimental)",

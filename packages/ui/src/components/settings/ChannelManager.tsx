@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useLiveQuery } from '../../hooks/useSqliteLiveQuery';
 import { db, type StoredChannel, updateChannelsBatch } from '../../db';
 import { normalizeBoolean } from '../../utils/db-helpers';
+import { logErrorAlways } from '../../utils/logger';
 import { useTranslation } from 'react-i18next';
 import i18n from '../../i18n';
 import './ChannelManager.css';
@@ -25,6 +26,7 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { guardRowKeys } from '../../utils/dndRowKeys';
 
 interface ChannelManagerProps {
     categoryId: string;
@@ -34,6 +36,39 @@ interface ChannelManagerProps {
     onChange?: () => void;
     sortOrder?: 'alphabetical' | 'number' | 'provider';
 }
+
+const PencilIcon = ({ size = 14 }: { size?: number }) => (
+    <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    >
+        <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+    </svg>
+);
+
+const ResetIcon = ({ size = 14 }: { size?: number }) => (
+    <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    >
+        <path d="M3 2v6h6" />
+        <path d="M3.51 15a9 9 0 1 0 2.13-9.36L3 8" />
+    </svg>
+);
 
 function SortableChannelRow({ id, className, children, dropIndicator = null }: { id: string; className: string; children: React.ReactNode; dropIndicator?: 'above' | 'below' | null }) {
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
@@ -50,7 +85,7 @@ function SortableChannelRow({ id, className, children, dropIndicator = null }: {
             style={style}
             className={`${className}${isDragging ? ' dragging' : ''}${dropIndicator ? ` drop-${dropIndicator}` : ''}`}
             {...attributes}
-            {...listeners}
+            {...guardRowKeys(listeners)}
         >
             {children}
         </div>
@@ -62,6 +97,13 @@ export function ChannelManager({ categoryId, categoryName, sourceId, onClose, on
     useTranslation();
     const [channels, setChannels] = useState<StoredChannel[]>([]);
     const [isDirty, setIsDirty] = useState(false);
+    // Separate from isDirty: only reordering should rewrite the manual order in
+    // playlist_individual_channels. Toggling visibility or renaming must not
+    // silently pin the whole category into a custom order. A ref, not state —
+    // it is read inside the save handler and the load effect, and must survive
+    // a live-query refresh without re-running that effect (which would undo the
+    // pending reorder).
+    const orderDirtyRef = useRef(false);
     const [hideDisabled, setHideDisabled] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [filterWords, setFilterWords] = useState<string[]>([]);
@@ -70,6 +112,15 @@ export function ChannelManager({ categoryId, categoryName, sourceId, onClose, on
     const isSavingRef = useRef(false);
     const [activeId, setActiveId] = useState<string | null>(null);
     const [overId, setOverId] = useState<string | null>(null);
+    const [editingAliasId, setEditingAliasId] = useState<string | null>(null);
+    const [aliasDraft, setAliasDraft] = useState('');
+    // Guards against a commit firing twice (Enter blurs the input) or firing
+    // after an Escape cancel. Holds the stream_id currently being edited.
+    const aliasEditingRef = useRef<string | null>(null);
+    // Channel ids whose alias the user changed here, mapped to the value to
+    // write (null = clear the override). Only these are written on save, so
+    // untouched channels are never rewritten.
+    const aliasEditsRef = useRef<Map<string, string | null>>(new Map());
 
 
 
@@ -197,13 +248,23 @@ export function ChannelManager({ categoryId, categoryName, sourceId, onClose, on
                 return (a.alias || a.name).localeCompare(b.alias || b.name);
             });
 
-            const combined = [...orderedManual, ...remainingDynamic].map(ch => ({
-                ...ch,
-                enabled: ch.enabled !== false,
-            }));
+            // Re-apply any alias edits still pending a save: this effect also
+            // runs when the live query refreshes, and dropping an unsaved
+            // rename there would look like the edit silently reverted.
+            const pendingAliasEdits = aliasEditsRef.current;
+            const combined = [...orderedManual, ...remainingDynamic].map(ch => {
+                const base = {
+                    ...ch,
+                    enabled: ch.enabled !== false,
+                };
+                return pendingAliasEdits.has(ch.stream_id)
+                    ? { ...base, alias: pendingAliasEdits.get(ch.stream_id) ?? undefined }
+                    : base;
+            });
 
             setChannels(combined);
-            setIsDirty(false);
+            // Keep Save enabled while an alias edit or a reorder is still pending.
+            setIsDirty(aliasEditsRef.current.size > 0 || orderDirtyRef.current);
         }
     }, [dynamicChannels, manualMappings, manualChannels, categoryLink, isLink, sortOrder]);
 
@@ -214,6 +275,45 @@ export function ChannelManager({ categoryId, categoryName, sourceId, onClose, on
         ));
         setIsDirty(true);
     }, []);
+
+    // ── Inline alias editing ──
+    const startAliasEdit = useCallback((ch: StoredChannel) => {
+        aliasEditingRef.current = ch.stream_id;
+        setEditingAliasId(ch.stream_id);
+        setAliasDraft(ch.alias || ch.name);
+    }, []);
+
+    const cancelAliasEdit = useCallback(() => {
+        aliasEditingRef.current = null;
+        setEditingAliasId(null);
+        setAliasDraft('');
+    }, []);
+
+    const applyAlias = useCallback((ch: StoredChannel, nextAlias: string | null) => {
+        if ((ch.alias || null) === nextAlias) return;
+        aliasEditsRef.current.set(ch.stream_id, nextAlias);
+        setChannels(chs => chs.map(c => c.stream_id === ch.stream_id
+            ? { ...c, alias: nextAlias ?? undefined }
+            : c));
+        setIsDirty(true);
+    }, []);
+
+    /** Commit the draft. An empty value — or one that merely repeats the
+     *  provider name — clears the alias, restoring the source name. */
+    const commitAliasEdit = useCallback((ch: StoredChannel) => {
+        if (aliasEditingRef.current !== ch.stream_id) return;
+        aliasEditingRef.current = null;
+        const trimmed = aliasDraft.trim();
+        setEditingAliasId(null);
+        setAliasDraft('');
+        applyAlias(ch, !trimmed || trimmed === ch.name ? null : trimmed);
+    }, [aliasDraft, applyAlias]);
+
+    /** Drop the alias entirely so the channel shows its source name again. */
+    const resetAlias = useCallback((ch: StoredChannel) => {
+        if (!ch.alias) return;
+        applyAlias(ch, null);
+    }, [applyAlias]);
 
     const handleDragStart = useCallback((event: DragStartEvent) => {
         setActiveId(String(event.active.id));
@@ -240,6 +340,7 @@ export function ChannelManager({ categoryId, categoryName, sourceId, onClose, on
             return reordered.map((c, idx) => ({ ...c, display_order: idx }));
         });
         setIsDirty(true);
+        orderDirtyRef.current = true;
     }, []);
 
     const handleDragCancel = useCallback(() => {
@@ -300,8 +401,23 @@ export function ChannelManager({ categoryId, categoryName, sourceId, onClose, on
                 await updateChannelsBatch(channelVisibilityUpdates);
             }
 
-            // 2. Write custom display orders to playlist_individual_channels if dirty
-            if (isDirty) {
+            // 1b. Persist inline alias edits (rename / reset-to-source-name)
+            const aliasUpdates = channels
+                .filter(ch => aliasEditsRef.current.has(ch.stream_id))
+                .map(ch => ({
+                    streamId: ch.stream_id,
+                    alias: aliasEditsRef.current.get(ch.stream_id) ?? null,
+                }));
+            if (aliasUpdates.length > 0) {
+                await updateChannelsBatch(aliasUpdates);
+            }
+
+            // 2. Persist the manual order — only when the user actually reordered.
+            // A rename or a visibility toggle must not rewrite (and thereby pin)
+            // every row of the category into playlist_individual_channels: it is
+            // a large write and it silently converts the category to a custom
+            // order that stops tracking the provider's.
+            if (orderDirtyRef.current) {
                 await db.playlistIndividualChannels
                     .whereRaw('playlist_id = ? AND parent_category_id = ?', [targetPlaylistId, targetParentId])
                     .delete();
@@ -323,16 +439,27 @@ export function ChannelManager({ categoryId, categoryName, sourceId, onClose, on
                 });
             }
 
+            // Everything is committed. The remaining steps only refresh the UI,
+            // so a failure there must not be reported as a failed save.
+            aliasEditsRef.current.clear();
+            orderDirtyRef.current = false;
             await new Promise(resolve => setTimeout(resolve, 300));
-            if (onChange) await onChange();
+            try {
+                if (onChange) await onChange();
+            } catch (refreshErr) {
+                console.error('[ChannelManager] Post-save refresh failed (changes were saved):', refreshErr);
+                logErrorAlways('[ChannelManager] Post-save refresh failed (changes were saved):', refreshErr);
+            }
             onClose();
         } catch (err) {
             console.error('[ChannelManager] Failed to save:', err);
-            alert(i18n.t('settings:channelManager.errSave'));
+            logErrorAlways('[ChannelManager] Failed to save:', err);
+            const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+            alert(`${i18n.t('settings:channelManager.errSave')}\n\n${detail}`);
         } finally {
             isSavingRef.current = false;
         }
-    }, [channels, filterWords, categoryId, targetPlaylistId, targetParentId, isDirty, isLink, onChange, onClose]);
+    }, [channels, filterWords, categoryId, targetPlaylistId, targetParentId, isLink, onChange, onClose]);
 
     // Get visible channels based on filter and search
     const visibleChannels = useMemo(() => {
@@ -346,8 +473,11 @@ export function ChannelManager({ categoryId, categoryName, sourceId, onClose, on
         // Filter by search query
         if (searchQuery.trim()) {
             const query = searchQuery.toLowerCase();
+            // Match the alias too: after a rename the row shows the alias, so
+            // searching for the name the user sees has to find it.
             filtered = filtered.filter(c =>
-                c.name.toLowerCase().includes(query)
+                c.name.toLowerCase().includes(query) ||
+                (c.alias ? c.alias.toLowerCase().includes(query) : false)
             );
         }
 
@@ -369,6 +499,7 @@ export function ChannelManager({ categoryId, categoryName, sourceId, onClose, on
             return next.map((c, idx) => ({ ...c, display_order: idx }));
         });
         setIsDirty(true);
+        orderDirtyRef.current = true;
     }, [visibleChannels]);
 
     // Move channel up
@@ -388,6 +519,7 @@ export function ChannelManager({ categoryId, categoryName, sourceId, onClose, on
             return next.map((c, idx) => ({ ...c, display_order: idx }));
         });
         setIsDirty(true);
+        orderDirtyRef.current = true;
     }, [visibleChannels]);
 
     // Move channel down
@@ -407,6 +539,7 @@ export function ChannelManager({ categoryId, categoryName, sourceId, onClose, on
             return next.map((c, idx) => ({ ...c, display_order: idx }));
         });
         setIsDirty(true);
+        orderDirtyRef.current = true;
     }, [visibleChannels]);
 
     // Sort channels alphabetically by display name (alias if available, otherwise original name)
@@ -420,6 +553,7 @@ export function ChannelManager({ categoryId, categoryName, sourceId, onClose, on
             return sorted.map((c, idx) => ({ ...c, display_order: idx }));
         });
         setIsDirty(true);
+        orderDirtyRef.current = true;
     }, []);
 
     const enabledCount = channels.filter(c => c.enabled !== false).length;
@@ -536,27 +670,85 @@ export function ChannelManager({ categoryId, categoryName, sourceId, onClose, on
                                             className={`channel-item ${ch.enabled === false ? 'disabled' : ''}`}
                                             dropIndicator={dropIndicator}
                                         >
-                                            <label className="channel-checkbox">
+                                            {/* While the editor is open, clicking the row must not
+                                                toggle enable/disable behind the commit. */}
+                                            <label
+                                                className="channel-checkbox"
+                                                onClick={editingAliasId === ch.stream_id ? (e) => e.preventDefault() : undefined}
+                                            >
                                                 <input
                                                     type="checkbox"
                                                     checked={ch.enabled !== false}
                                                     onChange={() => toggleChannel(ch.stream_id)}
                                                     onPointerDown={(e) => e.stopPropagation()}
                                                 />
-                                                <span className="channel-name">
-                                                    <span className="channel-display-name">{filteredName}</span>
-                                                    {ch.alias && (
-                                                        <span className="channel-original-name" title={ch.name}>
-                                                            ({ch.name})
-                                                        </span>
-                                                    )}
-                                                    {!ch.alias && filteredName !== ch.name && (
-                                                        <span className="channel-original-name" title={ch.name}>
-                                                            ({ch.name})
-                                                        </span>
-                                                    )}
-                                                </span>
+                                                {editingAliasId === ch.stream_id ? (
+                                                    <span
+                                                        className="channel-alias-editor"
+                                                        onClick={(e) => e.preventDefault()}
+                                                        onPointerDown={(e) => e.stopPropagation()}
+                                                    >
+                                                        <input
+                                                            type="text"
+                                                            className="channel-alias-input"
+                                                            value={aliasDraft}
+                                                            placeholder={ch.name}
+                                                            autoFocus
+                                                            title={i18n.t('settings:channelManager.nameHint')}
+                                                            onChange={(e) => setAliasDraft(e.target.value)}
+                                                            onKeyDown={(e) => {
+                                                                if (e.key === 'Enter') {
+                                                                    e.preventDefault();
+                                                                    e.currentTarget.blur();
+                                                                } else if (e.key === 'Escape') {
+                                                                    e.preventDefault();
+                                                                    cancelAliasEdit();
+                                                                }
+                                                            }}
+                                                            onBlur={() => commitAliasEdit(ch)}
+                                                        />
+                                                    </span>
+                                                ) : (
+                                                    <span
+                                                        className="channel-name"
+                                                        onDoubleClick={(e) => { e.preventDefault(); startAliasEdit(ch); }}
+                                                    >
+                                                        <span className="channel-display-name">{filteredName}</span>
+                                                        {ch.alias && (
+                                                            <span className="channel-original-name" title={ch.name}>
+                                                                ({ch.name})
+                                                            </span>
+                                                        )}
+                                                        {!ch.alias && filteredName !== ch.name && (
+                                                            <span className="channel-original-name" title={ch.name}>
+                                                                ({ch.name})
+                                                            </span>
+                                                        )}
+                                                    </span>
+                                                )}
                                             </label>
+                                            <div className="channel-row-actions">
+                                                <button
+                                                    type="button"
+                                                    className="channel-icon-btn"
+                                                    onClick={() => (editingAliasId === ch.stream_id ? cancelAliasEdit() : startAliasEdit(ch))}
+                                                    onPointerDown={(e) => e.stopPropagation()}
+                                                    title={i18n.t('settings:channelManager.editNameHint')}
+                                                >
+                                                    <PencilIcon />
+                                                </button>
+                                                {ch.alias && (
+                                                    <button
+                                                        type="button"
+                                                        className="channel-icon-btn reset"
+                                                        onClick={() => resetAlias(ch)}
+                                                        onPointerDown={(e) => e.stopPropagation()}
+                                                        title={i18n.t('settings:channelManager.resetNameHint', { name: ch.name })}
+                                                    >
+                                                        <ResetIcon />
+                                                    </button>
+                                                )}
+                                            </div>
                                             <div className="channel-reorder">
                                                 <button
                                                     className="order-btn"

@@ -2375,7 +2375,10 @@
       "availableRoot_few": "دسته‌های ریشه موجود ({{count}})",
       "availableRoot_many": "دسته‌های ریشه موجود ({{count}})",
       "availableRoot_two": "دسته‌های ریشه موجود ({{count}})",
-      "availableRoot_zero": "دسته‌های ریشه موجود ({{count}})"
+      "availableRoot_zero": "دسته‌های ریشه موجود ({{count}})",
+      "editNameHint": "تغییر نام دسته (یا دوبار کلیک روی نام)",
+      "nameHint": "نام نمایشی سفارشی برای این دسته",
+      "resetNameHint": "بازنشانی به نام منبع ({{name}})"
     },
     "channelManager": {
       "manageTitle": "مدیریت کانال‌ها - {{name}}",
@@ -2392,7 +2395,10 @@
       "searchPlaceholder": "جستجوی کانال‌ها...",
       "noSearchResults": "کانالی با جستجوی شما مطابقت ندارد",
       "noChannels": "کانالی در این دسته نیست",
-      "errSave": "ذخیره تغییرات ناموفق بود. دوباره تلاش کنید."
+      "errSave": "ذخیره تغییرات ناموفق بود. دوباره تلاش کنید.",
+      "editNameHint": "تغییر نام کانال (یا دوبار کلیک روی نام)",
+      "nameHint": "نام نمایشی سفارشی برای این کانال",
+      "resetNameHint": "بازنشانی به نام منبع ({{name}})"
     },
     "controllers": {
       "title": "پشتیبانی از گیم‌پد و کنترلر (آزمایشی)",

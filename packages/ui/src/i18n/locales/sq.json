@@ -2375,7 +2375,10 @@
       "availableRoot_few": "Kategoritë kryesore të disponueshme ({{count}})",
       "availableRoot_many": "Kategoritë kryesore të disponueshme ({{count}})",
       "availableRoot_two": "Kategoritë kryesore të disponueshme ({{count}})",
-      "availableRoot_zero": "Kategoritë kryesore të disponueshme ({{count}})"
+      "availableRoot_zero": "Kategoritë kryesore të disponueshme ({{count}})",
+      "editNameHint": "Riemërto kategorinë (ose kliko dy herë mbi emrin)",
+      "nameHint": "Emër i personalizuar për këtë kategori",
+      "resetNameHint": "Rikthe emrin burimor ({{name}})"
     },
     "channelManager": {
       "manageTitle": "Menaxho kanalet - {{name}}",
@@ -2392,7 +2395,10 @@
       "searchPlaceholder": "Kërko kanale...",
       "noSearchResults": "Asnjë kanal nuk përputhet me kërkimin tënd",
       "noChannels": "Asnjë kanal në këtë kategori",
-      "errSave": "Dështoi ruajtja e ndryshimeve. Provo përsëri."
+      "errSave": "Dështoi ruajtja e ndryshimeve. Provo përsëri.",
+      "editNameHint": "Riemërto kanalin (ose kliko dy herë mbi emrin)",
+      "nameHint": "Emër i personalizuar për këtë kanal",
+      "resetNameHint": "Rikthe emrin burimor ({{name}})"
     },
     "controllers": {
       "title": "Mbështetje për gamepad dhe kontrollorë (Eksperimentale)",

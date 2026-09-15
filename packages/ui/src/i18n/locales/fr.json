@@ -2375,7 +2375,10 @@
       "availableRoot_few": "Catégories racines disponibles ({{count}})",
       "availableRoot_many": "Catégories racines disponibles ({{count}})",
       "availableRoot_two": "Catégories racines disponibles ({{count}})",
-      "availableRoot_zero": "Catégories racines disponibles ({{count}})"
+      "availableRoot_zero": "Catégories racines disponibles ({{count}})",
+      "editNameHint": "Renommer la catégorie (ou double-clic sur le nom)",
+      "nameHint": "Nom d'affichage personnalisé pour cette catégorie",
+      "resetNameHint": "Réinitialiser au nom source ({{name}})"
     },
     "channelManager": {
       "manageTitle": "Gérer les chaînes - {{name}}",
@@ -2392,7 +2395,10 @@
       "searchPlaceholder": "Rechercher des chaînes...",
       "noSearchResults": "Aucune chaîne ne correspond à votre recherche",
       "noChannels": "Aucune chaîne dans cette catégorie",
-      "errSave": "Échec de l’enregistrement des modifications. Veuillez réessayer."
+      "errSave": "Échec de l’enregistrement des modifications. Veuillez réessayer.",
+      "editNameHint": "Renommer la chaîne (ou double-clic sur le nom)",
+      "nameHint": "Nom d'affichage personnalisé pour cette chaîne",
+      "resetNameHint": "Réinitialiser au nom source ({{name}})"
     },
     "controllers": {
       "title": "Prise en charge des manettes (Expérimental)",

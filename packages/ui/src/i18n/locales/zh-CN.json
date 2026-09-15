@@ -2375,7 +2375,10 @@
       "availableRoot_few": "可用的根分类（{{count}}）",
       "availableRoot_many": "可用的根分类（{{count}}）",
       "availableRoot_two": "可用的根分类（{{count}}）",
-      "availableRoot_zero": "可用的根分类（{{count}}）"
+      "availableRoot_zero": "可用的根分类（{{count}}）",
+      "editNameHint": "重命名分类（或双击名称）",
+      "nameHint": "此分类的自定义显示名称",
+      "resetNameHint": "重置为源名称（{{name}}）"
     },
     "channelManager": {
       "manageTitle": "管理频道 - {{name}}",
@@ -2392,7 +2395,10 @@
       "searchPlaceholder": "搜索频道...",
       "noSearchResults": "没有频道与您的搜索匹配",
       "noChannels": "此分类中没有频道",
-      "errSave": "保存更改失败。请重试。"
+      "errSave": "保存更改失败。请重试。",
+      "editNameHint": "重命名频道（或双击名称）",
+      "nameHint": "此频道的自定义显示名称",
+      "resetNameHint": "重置为源名称（{{name}}）"
     },
     "controllers": {
       "title": "游戏手柄与控制器支持（实验性）",

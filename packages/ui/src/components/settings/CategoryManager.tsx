@@ -4,6 +4,7 @@ import { useLiveQuery } from '../../hooks/useSqliteLiveQuery';
 import { db, type StoredCategory, updateCategoriesBatch, type CategoryFolder } from '../../db';
 import { useCategorySortOrder } from '../../stores/uiStore';
 import { isCategorySortCustomized, setCategorySortCustomized } from '../../utils/categorySortOverrides';
+import { logErrorAlways } from '../../utils/logger';
 import { createCategoryFolder, renameCategoryFolder, deleteCategoryFolder, reorderCategoryFolders } from '../../services/playlist-editor';
 import { ChannelManager } from './ChannelManager';
 import { useTranslation } from 'react-i18next';
@@ -29,6 +30,7 @@ import {
   useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { guardRowKeys } from '../../utils/dndRowKeys';
 
 // Folders and categories share a DndContext but must only drop onto their own
 // kind; filter droppables by the data type tag registered in useSortable.
@@ -40,8 +42,8 @@ const categoryListCollisionDetection: CollisionDetection = (args) => {
 };
 
 type ManagedCategory = 
-    | { type: 'native'; id: string; name: string; enabled: boolean; displayOrder: number; folderId?: string | null; category: StoredCategory }
-    | { type: 'link'; id: string; linkId: number; name: string; enabled: boolean; displayOrder: number; folderId?: string | null; link: any };
+    | { type: 'native'; id: string; name: string; sourceName: string; aliasName: string | null; enabled: boolean; displayOrder: number; folderId?: string | null; category: StoredCategory }
+    | { type: 'link'; id: string; linkId: number; name: string; sourceName: string; aliasName: string | null; enabled: boolean; displayOrder: number; folderId?: string | null; link: any };
 
 function SortableInsideFolderCategory(props: {
     cat: ManagedCategory;
@@ -80,7 +82,7 @@ function SortableInsideFolderCategory(props: {
             ref={setNodeRef}
             style={style}
             {...attributes}
-            {...listeners}
+            {...guardRowKeys(listeners)}
             className={`cm-bulk-inside-item${isDragging ? ' dragging' : ''}`}
         >
             <span style={{ fontWeight: 500 }}>{cat.name}</span>
@@ -119,7 +121,7 @@ function SortableCategoryRow({ id, disabled, className, onClick, children, dropI
             className={`${className}${isDragging ? ' dragging' : ''}${dropIndicator ? ` drop-${dropIndicator}` : ''}`}
             onClick={onClick}
             {...attributes}
-            {...listeners}
+            {...guardRowKeys(listeners)}
         >
             {children}
         </div>
@@ -158,6 +160,23 @@ const PencilIcon = ({ size = 14 }: { size?: number }) => (
     </svg>
 );
 
+const ResetIcon = ({ size = 14 }: { size?: number }) => (
+    <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    >
+        <path d="M3 2v6h6"></path>
+        <path d="M3.51 15a9 9 0 1 0 2.13-9.36L3 8"></path>
+    </svg>
+);
+
 function SortableFolderCard(props: {
     folder: CategoryFolder;
     folderCategoriesCount: number;
@@ -191,7 +210,7 @@ function SortableFolderCard(props: {
                 onClick={props.onToggleCollapse}
                 style={{ cursor: 'grab', touchAction: 'none' }}
                 {...attributes}
-                {...listeners}
+                {...guardRowKeys(listeners)}
             >
                 <div className="cm-folder-header-left">
                     <FolderIcon size={16} />
@@ -271,10 +290,7 @@ interface CategoryManagerProps {
 
 export function CategoryManager({ sourceId, sourceName, onClose, onChange, initialCreateFolder, initialBulkFolder }: CategoryManagerProps) {
     useTranslation();
-    const [categories, setCategories] = useState<Array<
-        | { type: 'native'; id: string; name: string; enabled: boolean; displayOrder: number; folderId?: string | null; category: StoredCategory }
-        | { type: 'link'; id: string; linkId: number; name: string; enabled: boolean; displayOrder: number; folderId?: string | null; link: any }
-    >>([]);
+    const [categories, setCategories] = useState<ManagedCategory[]>([]);
     const [isDirty, setIsDirty] = useState(false);
     const [hideUnselected, setHideUnselected] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
@@ -307,6 +323,14 @@ export function CategoryManager({ sourceId, sourceName, onClose, onChange, initi
     const [overId, setOverId] = useState<string | null>(null);
     const [selectToMoveMode, setSelectToMoveMode] = useState<'inactive' | 'selecting' | 'ready'>('inactive');
     const [selectedForMove, setSelectedForMove] = useState<Set<string>>(new Set());
+    const [editingAliasId, setEditingAliasId] = useState<string | null>(null);
+    const [aliasDraft, setAliasDraft] = useState('');
+    // Guards against a commit firing twice (Enter blurs the input) or after an
+    // Escape cancel. Holds the category id currently being edited.
+    const aliasEditingRef = useRef<string | null>(null);
+    // Category ids renamed here, mapped to the value to write (null = clear the
+    // override). Only these are written on save.
+    const aliasEditsRef = useRef<Map<string, string | null>>(new Map());
     const categorySortOrder = useCategorySortOrder();
     const targetPlaylistId = sourceId.startsWith('playlist:') ? sourceId.replace('playlist:', '') : sourceId;
     const [isCustomized, setIsCustomized] = useState(() => isCategorySortCustomized(targetPlaylistId));
@@ -377,17 +401,26 @@ export function CategoryManager({ sourceId, sourceName, onClose, onChange, initi
         }
 
         if (dbCategories && !isSavingRef.current) {
-            const list: Array<
-                | { type: 'native'; id: string; name: string; enabled: boolean; displayOrder: number; folderId?: string | null; category: StoredCategory }
-                | { type: 'link'; id: string; linkId: number; name: string; enabled: boolean; displayOrder: number; folderId?: string | null; link: any }
-            > = [];
+            const list: ManagedCategory[] = [];
+
+            // Re-apply renames still pending a save: this effect also runs when
+            // the live queries refresh, and dropping an unsaved rename there
+            // would look like the edit silently reverted.
+            const pendingAliasEdits = aliasEditsRef.current;
+            const resolveName = (id: string, sourceName: string, storedAlias: string | null) => {
+                const aliasName = pendingAliasEdits.has(id) ? pendingAliasEdits.get(id) ?? null : storedAlias;
+                return { aliasName, name: aliasName || sourceName };
+            };
 
             // Add native categories
             for (const cat of dbCategories) {
+                const resolved = resolveName(cat.category_id, cat.category_name, cat.alias || null);
                 list.push({
                     type: 'native',
                     id: cat.category_id,
-                    name: cat.alias || cat.category_name,
+                    name: resolved.name,
+                    sourceName: cat.category_name,
+                    aliasName: resolved.aliasName,
                     enabled: cat.enabled !== false,
                     displayOrder: cat.display_order ?? 9999,
                     folderId: cat.folder_id || null,
@@ -400,11 +433,14 @@ export function CategoryManager({ sourceId, sourceName, onClose, onChange, initi
                 if (link.id === undefined) continue;
                 const cat = dbCategoriesMap[link.category_id];
                 const resolvedName = cat?.alias || cat?.category_name || link.category_id;
+                const resolved = resolveName(`link:${link.id}`, resolvedName, link.custom_name || null);
                 list.push({
                     type: 'link',
                     id: `link:${link.id}`,
                     linkId: link.id,
-                    name: link.custom_name || resolvedName,
+                    name: resolved.name,
+                    sourceName: resolvedName,
+                    aliasName: resolved.aliasName,
                     enabled: true, // category links are always active
                     displayOrder: link.display_order ?? 9999,
                     folderId: link.folder_id || null,
@@ -430,7 +466,8 @@ export function CategoryManager({ sourceId, sourceName, onClose, onChange, initi
             }));
 
             setCategories(normalized);
-            setIsDirty(false);
+            // Keep Save enabled while a rename is still pending.
+            setIsDirty(aliasEditsRef.current.size > 0);
         }
     }, [dbCategories, categoryLinks, dbCategoriesMap, categorySortOrder, isCustomized]);
 
@@ -441,6 +478,45 @@ export function CategoryManager({ sourceId, sourceName, onClose, onChange, initi
         ));
         setIsDirty(true);
     }, []);
+
+    // ── Inline name (alias) editing ──
+    const startAliasEdit = useCallback((cat: ManagedCategory) => {
+        aliasEditingRef.current = cat.id;
+        setEditingAliasId(cat.id);
+        setAliasDraft(cat.aliasName || cat.sourceName);
+    }, []);
+
+    const cancelAliasEdit = useCallback(() => {
+        aliasEditingRef.current = null;
+        setEditingAliasId(null);
+        setAliasDraft('');
+    }, []);
+
+    const applyAlias = useCallback((cat: ManagedCategory, nextAlias: string | null) => {
+        if (cat.aliasName === nextAlias) return;
+        aliasEditsRef.current.set(cat.id, nextAlias);
+        setCategories(cats => cats.map(c => c.id === cat.id
+            ? { ...c, aliasName: nextAlias, name: nextAlias || c.sourceName }
+            : c));
+        setIsDirty(true);
+    }, []);
+
+    /** Commit the draft. An empty value — or one that merely repeats the
+     *  source name — clears the override, restoring the provider name. */
+    const commitAliasEdit = useCallback((cat: ManagedCategory) => {
+        if (aliasEditingRef.current !== cat.id) return;
+        aliasEditingRef.current = null;
+        const trimmed = aliasDraft.trim();
+        setEditingAliasId(null);
+        setAliasDraft('');
+        applyAlias(cat, !trimmed || trimmed === cat.sourceName ? null : trimmed);
+    }, [aliasDraft, applyAlias]);
+
+    /** Drop the override so the category shows its source name again. */
+    const resetAlias = useCallback((cat: ManagedCategory) => {
+        if (!cat.aliasName) return;
+        applyAlias(cat, null);
+    }, [applyAlias]);
 
     // Move category to top
     const moveToTop = useCallback((index: number) => {
@@ -727,6 +803,11 @@ export function CategoryManager({ sourceId, sourceName, onClose, onChange, initi
                     enabled: cat.enabled,
                     displayOrder: cat.displayOrder,
                     folderId: cat.folderId || null,
+                    // Only rows the user actually renamed carry an alias, so
+                    // untouched categories are never rewritten.
+                    alias: aliasEditsRef.current.has(cat.id)
+                        ? aliasEditsRef.current.get(cat.id) ?? null
+                        : undefined,
                 }));
 
             if (nativeUpdates.length > 0) {
@@ -736,22 +817,40 @@ export function CategoryManager({ sourceId, sourceName, onClose, onChange, initi
             // Save custom links updates in database
             const linkItems = categories
                 .filter(cat => cat.type === 'link')
-                .map(cat => ({
-                    ...cat.link,
-                    display_order: cat.displayOrder,
-                    folder_id: cat.folderId || null,
-                }));
+                .map(cat => {
+                    const item: any = {
+                        ...cat.link,
+                        display_order: cat.displayOrder,
+                        folder_id: cat.folderId || null,
+                    };
+                    // bulkPut rewrites the whole row, so only touch custom_name
+                    // for links the user renamed here.
+                    if (aliasEditsRef.current.has(cat.id)) {
+                        item.custom_name = aliasEditsRef.current.get(cat.id) ?? null;
+                    }
+                    return item;
+                });
 
             if (linkItems.length > 0) {
                 await db.playlistCategoryLinks.bulkPut(linkItems);
             }
 
+            // Everything is committed. The remaining steps only refresh the UI,
+            // so a failure there must not be reported as a failed save.
+            aliasEditsRef.current.clear();
             await new Promise(resolve => setTimeout(resolve, 300));
-            if (onChange) await onChange();
+            try {
+                if (onChange) await onChange();
+            } catch (refreshErr) {
+                console.error('[CategoryManager] Post-save refresh failed (changes were saved):', refreshErr);
+                logErrorAlways('[CategoryManager] Post-save refresh failed (changes were saved):', refreshErr);
+            }
             onClose();
         } catch (err) {
             console.error('[CategoryManager] Failed to save:', err);
-            alert(i18n.t('settings:categoryManager.errSave'));
+            logErrorAlways('[CategoryManager] Failed to save:', err);
+            const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+            alert(`${i18n.t('settings:categoryManager.errSave')}\n\n${detail}`);
             isSavingRef.current = false;
         }
     }, [categories, onChange, onClose]);
@@ -938,6 +1037,35 @@ export function CategoryManager({ sourceId, sourceName, onClose, onChange, initi
                             const dropIndicator = isOver && activeIdx !== undefined && myIdx !== undefined
                                 ? (activeIdx < myIdx ? 'below' : 'above')
                                 : null;
+                            const isEditingName = editingAliasId === cat.id;
+                            const nameNode = isEditingName ? (
+                                <span
+                                    className="category-name-editor"
+                                    onClick={(e) => e.preventDefault()}
+                                    onPointerDown={(e) => e.stopPropagation()}
+                                >
+                                    <input
+                                        type="text"
+                                        className="category-alias-input"
+                                        value={aliasDraft}
+                                        placeholder={cat.sourceName}
+                                        autoFocus
+                                        disabled={selectToMoveMode !== 'inactive'}
+                                        title={i18n.t('settings:categoryManager.nameHint')}
+                                        onChange={(e) => setAliasDraft(e.target.value)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                e.preventDefault();
+                                                e.currentTarget.blur();
+                                            } else if (e.key === 'Escape') {
+                                                e.preventDefault();
+                                                cancelAliasEdit();
+                                            }
+                                        }}
+                                        onBlur={() => commitAliasEdit(cat)}
+                                    />
+                                </span>
+                            ) : null;
 
                             return (
                                 <SortableCategoryRow
@@ -952,7 +1080,7 @@ export function CategoryManager({ sourceId, sourceName, onClose, onChange, initi
                                     {cat.type === 'native' ? (
                                         <label 
                                             className="category-checkbox" 
-                                            onClick={selectToMoveMode !== 'inactive' ? (e) => e.preventDefault() : undefined}
+                                            onClick={(selectToMoveMode !== 'inactive' || isEditingName) ? (e) => e.preventDefault() : undefined}
                                         >
                                             <input
                                                 type="checkbox"
@@ -961,17 +1089,54 @@ export function CategoryManager({ sourceId, sourceName, onClose, onChange, initi
                                                 onPointerDown={(e) => e.stopPropagation()}
                                                 disabled={selectToMoveMode !== 'inactive'}
                                             />
-                                            <span className="category-name">{cat.name}</span>
+                                            {isEditingName ? nameNode : (
+                                                <span
+                                                    className="category-name"
+                                                    onDoubleClick={(e) => { e.preventDefault(); startAliasEdit(cat); }}
+                                                    title={cat.sourceName !== cat.name ? cat.sourceName : undefined}
+                                                >
+                                                    {cat.name}
+                                                </span>
+                                            )}
                                         </label>
                                     ) : (
                                         <div className="category-checkbox">
-                                            <span className="category-name" style={{ marginLeft: '24px' }}>
-                                                🔗 {cat.name}
-                                            </span>
+                                            {isEditingName ? nameNode : (
+                                                <span
+                                                    className="category-name"
+                                                    style={{ marginLeft: '24px' }}
+                                                    onDoubleClick={(e) => { e.preventDefault(); startAliasEdit(cat); }}
+                                                    title={cat.sourceName !== cat.name ? cat.sourceName : undefined}
+                                                >
+                                                    🔗 {cat.name}
+                                                </span>
+                                            )}
                                         </div>
                                     )}
 
                                     <div className="category-actions-row" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        <button
+                                            type="button"
+                                            className="cm-folder-icon-btn"
+                                            onClick={selectToMoveMode !== 'inactive' ? (e) => e.stopPropagation() : () => (isEditingName ? cancelAliasEdit() : startAliasEdit(cat))}
+                                            onPointerDown={(e) => e.stopPropagation()}
+                                            disabled={selectToMoveMode !== 'inactive'}
+                                            title={i18n.t('settings:categoryManager.editNameHint')}
+                                        >
+                                            <PencilIcon size={14} />
+                                        </button>
+                                        {cat.aliasName && (
+                                            <button
+                                                type="button"
+                                                className="cm-folder-icon-btn"
+                                                onClick={selectToMoveMode !== 'inactive' ? (e) => e.stopPropagation() : () => resetAlias(cat)}
+                                                onPointerDown={(e) => e.stopPropagation()}
+                                                disabled={selectToMoveMode !== 'inactive'}
+                                                title={i18n.t('settings:categoryManager.resetNameHint', { name: cat.sourceName })}
+                                            >
+                                                <ResetIcon size={14} />
+                                            </button>
+                                        )}
                                         {categoryFolders && categoryFolders.length > 0 && (
                                             <select
                                                 className="cm-folder-select"

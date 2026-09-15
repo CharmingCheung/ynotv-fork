@@ -2375,7 +2375,10 @@
       "inFolder_two": "W folderze ({{count}})",
       "inFolder_zero": "W folderze ({{count}})",
       "availableRoot_two": "Dostępne kategorie główne ({{count}})",
-      "availableRoot_zero": "Dostępne kategorie główne ({{count}})"
+      "availableRoot_zero": "Dostępne kategorie główne ({{count}})",
+      "editNameHint": "Zmień nazwę kategorii (lub kliknij dwukrotnie nazwę)",
+      "nameHint": "Niestandardowa nazwa wyświetlana tej kategorii",
+      "resetNameHint": "Przywróć nazwę źródłową ({{name}})"
     },
     "channelManager": {
       "manageTitle": "Zarządzaj kanałami - {{name}}",
@@ -2392,7 +2395,10 @@
       "searchPlaceholder": "Szukaj kanałów...",
       "noSearchResults": "Żaden kanał nie pasuje do Twojego wyszukiwania",
       "noChannels": "Brak kanałów w tej kategorii",
-      "errSave": "Nie udało się zapisać zmian. Spróbuj ponownie."
+      "errSave": "Nie udało się zapisać zmian. Spróbuj ponownie.",
+      "editNameHint": "Zmień nazwę kanału (lub kliknij dwukrotnie nazwę)",
+      "nameHint": "Niestandardowa nazwa wyświetlana tego kanału",
+      "resetNameHint": "Przywróć nazwę źródłową ({{name}})"
     },
     "controllers": {
       "title": "Obsługa gamepadów i kontrolerów (Eksperymentalne)",

@@ -2375,7 +2375,10 @@
       "availableRoot_few": "可用的根分類（{{count}}）",
       "availableRoot_many": "可用的根分類（{{count}}）",
       "availableRoot_two": "可用的根分類（{{count}}）",
-      "availableRoot_zero": "可用的根分類（{{count}}）"
+      "availableRoot_zero": "可用的根分類（{{count}}）",
+      "editNameHint": "重新命名分類（或雙擊名稱）",
+      "nameHint": "此分類的自訂顯示名稱",
+      "resetNameHint": "重設為來源名稱（{{name}}）"
     },
     "channelManager": {
       "manageTitle": "管理頻道 - {{name}}",
@@ -2392,7 +2395,10 @@
       "searchPlaceholder": "搜尋頻道...",
       "noSearchResults": "沒有頻道與您的搜尋匹配",
       "noChannels": "此分類中沒有頻道",
-      "errSave": "保存更改失敗。請重試。"
+      "errSave": "保存更改失敗。請重試。",
+      "editNameHint": "重新命名頻道（或雙擊名稱）",
+      "nameHint": "此頻道的自訂顯示名稱",
+      "resetNameHint": "重設為來源名稱（{{name}}）"
     },
     "controllers": {
       "title": "遊戲手把與控制器支援（實驗性）",

@@ -2375,7 +2375,10 @@
       "availableRoot_few": "Elérhető gyökérkategóriák ({{count}})",
       "availableRoot_many": "Elérhető gyökérkategóriák ({{count}})",
       "availableRoot_two": "Elérhető gyökérkategóriák ({{count}})",
-      "availableRoot_zero": "Elérhető gyökérkategóriák ({{count}})"
+      "availableRoot_zero": "Elérhető gyökérkategóriák ({{count}})",
+      "editNameHint": "Kategória átnevezése (vagy dupla kattintás a névre)",
+      "nameHint": "Egyéni megjelenített név ehhez a kategóriához",
+      "resetNameHint": "Visszaállítás a forrásnévre ({{name}})"
     },
     "channelManager": {
       "manageTitle": "Csatornák kezelése - {{name}}",
@@ -2392,7 +2395,10 @@
       "searchPlaceholder": "Csatornák keresése...",
       "noSearchResults": "Nincs a keresésének megfelelő csatorna",
       "noChannels": "Nincs csatorna ebben a kategóriában",
-      "errSave": "Nem sikerült menteni a módosításokat. Kérjük, próbálja újra."
+      "errSave": "Nem sikerült menteni a módosításokat. Kérjük, próbálja újra.",
+      "editNameHint": "Csatorna átnevezése (vagy dupla kattintás a névre)",
+      "nameHint": "Egyéni megjelenített név ehhez a csatornához",
+      "resetNameHint": "Visszaállítás a forrásnévre ({{name}})"
     },
     "controllers": {
       "title": "Gamepad és vezérlő támogatás (Kísérleti)",

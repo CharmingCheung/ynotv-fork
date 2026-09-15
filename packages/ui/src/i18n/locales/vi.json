@@ -1876,7 +1876,10 @@
       "availableRoot_few": "Danh Mục Gốc Khả Dụng ({{count}})",
       "availableRoot_many": "Danh Mục Gốc Khả Dụng ({{count}})",
       "availableRoot_two": "Danh Mục Gốc Khả Dụng ({{count}})",
-      "availableRoot_zero": "Danh Mục Gốc Khả Dụng ({{count}})"
+      "availableRoot_zero": "Danh Mục Gốc Khả Dụng ({{count}})",
+      "editNameHint": "Đổi tên danh mục (hoặc nhấp đúp vào tên)",
+      "nameHint": "Tên hiển thị tùy chỉnh cho danh mục này",
+      "resetNameHint": "Đặt lại về tên gốc ({{name}})"
     },
     "channelManager": {
       "manageTitle": "Quản Lý Kênh - {{name}}",
@@ -1893,7 +1896,10 @@
       "searchPlaceholder": "Tìm kiếm kênh...",
       "noSearchResults": "Không có kênh nào khớp với tìm kiếm của bạn",
       "noChannels": "Không có kênh nào trong danh mục này",
-      "errSave": "Không lưu được các thay đổi. Vui lòng thử lại."
+      "errSave": "Không lưu được các thay đổi. Vui lòng thử lại.",
+      "editNameHint": "Đổi tên kênh (hoặc nhấp đúp vào tên)",
+      "nameHint": "Tên hiển thị tùy chỉnh cho kênh này",
+      "resetNameHint": "Đặt lại về tên gốc ({{name}})"
     },
     "controllers": {
       "title": "Hỗ trợ Gamepad và Tay cầm (Thử nghiệm)",

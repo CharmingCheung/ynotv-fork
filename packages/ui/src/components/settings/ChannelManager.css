@@ -707,3 +707,67 @@
     cursor: not-allowed;
     border-color: var(--surface-border, rgba(255, 255, 255, 0.05));
 }
+
+/* Inline name/alias editing (pencil + reset-to-source-name) */
+.channel-row-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding-left: 8px;
+}
+
+.channel-icon-btn {
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border-radius: 4px;
+    border: var(--glass-border, 1px solid rgba(255, 255, 255, 0.15));
+    background: var(--surface-color, transparent);
+    color: var(--text-muted, rgba(255, 255, 255, 0.6));
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.channel-icon-btn:hover {
+    background: var(--surface-hover, rgba(255, 255, 255, 0.08));
+    border-color: var(--accent-primary, rgba(255, 255, 255, 0.3));
+    color: var(--text-primary, #fff);
+}
+
+.channel-icon-btn.reset:hover {
+    border-color: var(--accent-primary, #00d4ff);
+    color: var(--accent-primary, #00d4ff);
+}
+
+.channel-alias-editor {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
+}
+
+.channel-alias-input {
+    flex: 1;
+    min-width: 0;
+    padding: var(--sm-input-padding, 6px 10px);
+    background: var(--sm-input-bg, var(--surface-color, rgba(255, 255, 255, 0.05)));
+    border: var(--sm-input-border, var(--glass-border, 1px solid rgba(255, 255, 255, 0.1)));
+    border-radius: var(--sm-input-radius, 6px);
+    color: var(--sm-input-color, var(--text-primary, white));
+    font-size: var(--channel-font-size, 14px);
+    box-sizing: border-box;
+}
+
+.channel-alias-input:focus {
+    outline: none;
+    border-color: var(--sm-input-focus-border, var(--accent-primary, #00d4ff));
+    box-shadow: var(--sm-input-focus-shadow, 0 0 0 1px var(--accent-primary, #00d4ff));
+}
+
+.channel-alias-input::placeholder {
+    color: var(--text-muted, rgba(255, 255, 255, 0.4));
+}

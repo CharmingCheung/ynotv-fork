@@ -2375,7 +2375,10 @@
       "availableRoot_few": "Beschikbare hoofdcategorieën ({{count}})",
       "availableRoot_many": "Beschikbare hoofdcategorieën ({{count}})",
       "availableRoot_two": "Beschikbare hoofdcategorieën ({{count}})",
-      "availableRoot_zero": "Beschikbare hoofdcategorieën ({{count}})"
+      "availableRoot_zero": "Beschikbare hoofdcategorieën ({{count}})",
+      "editNameHint": "Categorie hernoemen (of dubbelklik op de naam)",
+      "nameHint": "Aangepaste weergavenaam voor deze categorie",
+      "resetNameHint": "Terugzetten naar bronnaam ({{name}})"
     },
     "channelManager": {
       "manageTitle": "Kanalen beheren - {{name}}",
@@ -2392,7 +2395,10 @@
       "searchPlaceholder": "Kanalen zoeken...",
       "noSearchResults": "Geen kanalen komen overeen met je zoekopdracht",
       "noChannels": "Geen kanalen in deze categorie",
-      "errSave": "Kan wijzigingen niet opslaan. Probeer het opnieuw."
+      "errSave": "Kan wijzigingen niet opslaan. Probeer het opnieuw.",
+      "editNameHint": "Kanaal hernoemen (of dubbelklik op de naam)",
+      "nameHint": "Aangepaste weergavenaam voor dit kanaal",
+      "resetNameHint": "Terugzetten naar bronnaam ({{name}})"
     },
     "controllers": {
       "title": "Gamepad- en controllerondersteuning (Experimenteel)",

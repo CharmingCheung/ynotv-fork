@@ -2103,13 +2103,25 @@ export async function updateCategoriesOrder(updates: { categoryId: string; displ
 
 /** Batch update channels (enabled state, display order, and/or fav order) in a single SQL statement */
 export async function updateChannelsBatch(
-  updates: Array<{ streamId: string; enabled?: boolean; displayOrder?: number; favOrder?: number }>
+  updates: Array<{ streamId: string; enabled?: boolean; displayOrder?: number; favOrder?: number; alias?: string | null }>
 ): Promise<number> {
   if (updates.length === 0) return 0;
 
   const dbInstance = await (db as any).dbPromise;
   let totalUpdated = 0;
-  const CHUNK_SIZE = 120; // 3 columns max, stay well under SQLite 999 param limit
+
+  // SQLite's default parameter limit is 999. Each column costs 2 params per
+  // row (the WHEN match plus the THEN value) and the IN clause costs 1 more,
+  // so the row budget depends on how many columns this batch actually
+  // touches. Derive it instead of hardcoding a column count that a new column
+  // silently invalidates.
+  const columnCount = [
+    updates.some(u => u.enabled !== undefined),
+    updates.some(u => u.displayOrder !== undefined),
+    updates.some(u => u.favOrder !== undefined),
+    updates.some(u => u.alias !== undefined),
+  ].filter(Boolean).length;
+  const CHUNK_SIZE = Math.max(1, Math.floor(900 / (2 * columnCount + 1)));
 
   for (let i = 0; i < updates.length; i += CHUNK_SIZE) {
     const chunk = updates.slice(i, i + CHUNK_SIZE);
@@ -2149,6 +2161,19 @@ export async function updateChannelsBatch(
       caseParts.push(`fav_order = CASE stream_id ${cases} ELSE fav_order END`);
     }
 
+    if (chunk.some(u => u.alias !== undefined)) {
+      const cases = chunk
+        .filter(u => u.alias !== undefined)
+        .map(u => {
+          // An empty/absent alias means "clear the override", matching
+          // updateChannelAlias() which stores `alias || undefined`.
+          params.push(u.streamId, u.alias ? u.alias : null);
+          return `WHEN $${params.length - 1} THEN $${params.length}`;
+        })
+        .join(' ');
+      caseParts.push(`alias = CASE stream_id ${cases} ELSE alias END`);
+    }
+
     if (caseParts.length === 0) continue;
 
     const idParams = chunk.map((_, idx) => `$${params.length + idx + 1}`).join(',');
@@ -2166,22 +2191,30 @@ export async function updateChannelsBatch(
 
 /** Batch update categories (enabled state and/or display order) in a single SQL statement */
 export async function updateCategoriesBatch(
-  updates: Array<{ categoryId: string; enabled?: boolean; displayOrder?: number; folderId?: string | null }>
+  updates: Array<{ categoryId: string; enabled?: boolean; displayOrder?: number; folderId?: string | null; alias?: string | null }>
 ): Promise<number> {
   if (updates.length === 0) return 0;
 
   const dbInstance = await (db as any).dbPromise;
   let totalUpdated = 0;
 
-  // SQLite default param limit is 999. Each update uses ~5 params max (2 per CASE column + 1 IN).
-  // Chunk to stay well under the limit.
-  const CHUNK_SIZE = 150;
+  // SQLite's default parameter limit is 999: each column costs 2 params per
+  // row (WHEN + THEN) and the IN clause 1 more. Size the chunk from the
+  // columnsactually present so adding a column can't overflow the limit.
+  const columnCount = [
+    updates.some(u => u.enabled !== undefined),
+    updates.some(u => u.displayOrder !== undefined),
+    updates.some(u => u.folderId !== undefined),
+    updates.some(u => u.alias !== undefined),
+  ].filter(Boolean).length;
+  const CHUNK_SIZE = Math.max(1, Math.floor(900 / (2 * columnCount + 1)));
 
   for (let i = 0; i < updates.length; i += CHUNK_SIZE) {
     const chunk = updates.slice(i, i + CHUNK_SIZE);
     const hasEnabled = chunk.some(u => u.enabled !== undefined);
     const hasOrder = chunk.some(u => u.displayOrder !== undefined);
     const hasFolder = chunk.some(u => u.folderId !== undefined);
+    const hasAlias = chunk.some(u => u.alias !== undefined);
 
     // Build CASE statements for each column being updated
     const caseParts: string[] = [];
@@ -2218,6 +2251,19 @@ export async function updateCategoriesBatch(
         })
         .join(' ');
       caseParts.push(`folder_id = CASE category_id ${folderCases} ELSE folder_id END`);
+    }
+
+    if (hasAlias) {
+      const aliasCases = chunk
+        .filter(u => u.alias !== undefined)
+        .map(u => {
+          // Empty/absent alias clears the override, matching
+          // updateCategoryAlias() which stores `alias || undefined`.
+          params.push(u.categoryId, u.alias ? u.alias : null);
+          return `WHEN $${params.length - 1} THEN $${params.length}`;
+        })
+        .join(' ');
+      caseParts.push(`alias = CASE category_id ${aliasCases} ELSE alias END`);
     }
 
     if (caseParts.length === 0) continue;
