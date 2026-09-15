@@ -575,9 +575,12 @@ fn bulk_replace_programs_inner(
 
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 
-    // Delete existing programs for this source
+    // Delete existing programs for this source — except those belonging to a
+    // channel the user pinned to another feed. Those programs are that feed's to
+    // replace, and clearing them here would blank the channel until it runs (see
+    // `PIN_AWARE_SOURCE_PROGRAMS_WIPE` for the rule).
     let deleted = tx.execute(
-        "DELETE FROM programs WHERE source_id = ?1",
+        crate::epg_streaming::PIN_AWARE_SOURCE_PROGRAMS_WIPE,
         params![source_id],
     )?;
 

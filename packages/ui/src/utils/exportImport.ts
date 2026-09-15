@@ -39,6 +39,7 @@ import {
     type SportsFavoritesBackup,
     type TeamChannelLinkBackup,
 } from './sportsBackup';
+import { repairImportedEpgState } from './epgBackupSanitize';
 
 export interface ExportData {
     version: number;
@@ -109,6 +110,8 @@ export interface ExportData {
         streamId: string;
         epgChannelId?: string;
         streamIcon?: string;
+        logoBackground?: string;
+        logoPadding?: string;
         timeshiftHours?: number;
         /** Feed pin: 'global_epg_<linkId>' or a source id (see epg-overrides). */
         epgSourceId?: string;
@@ -238,7 +241,10 @@ export interface ExportData {
     sportsFavorites?: SportsFavoritesBackup;
 }
 
-const EXPORT_VERSION = 12;
+// 13: EPG feed pins (epg_channel_overrides.epg_source_id, including the
+// `global_epg_<linkId>` form) and per-channel EPG matching flags ride along in
+// the overrides, so a backup can be told apart from the pre-pin format.
+const EXPORT_VERSION = 13;
 
 /**
  * Collect the full application data payload. Shared by the interactive export
@@ -765,6 +771,27 @@ export async function importAllData(): Promise<{ success: boolean; error?: strin
         // Basic validation
         if (!data.version || !data.sources || !data.settings) {
             throw new Error(i18n.t('settings:importExport.invalidBackupFormat'));
+        }
+
+        // Repair the EPG state a backup can't hand over as-is, before anything is
+        // written. A feed pin whose feed isn't part of this backup would leave its
+        // channel skipped by every other feed — blank for good, with nothing in the
+        // UI to explain it — and the per-feed run stamps would make the restored
+        // library skip a feed it hasn't run here while it has no guide at all
+        // (programmes are not part of a backup).
+        const epgRepair = repairImportedEpgState(data);
+        data.epgChannelOverrides = epgRepair.epgChannelOverrides;
+        data.settings = epgRepair.settings;
+        if (epgRepair.droppedPins.length > 0) {
+            console.log(
+                `[Import] Released ${epgRepair.droppedPins.length} feed pin(s) whose EPG feed is not in this backup:`,
+                epgRepair.droppedPins.slice(0, 5)
+            );
+        }
+        if (epgRepair.resetLinks > 0) {
+            console.log(
+                `[Import] Reset the sync state of ${epgRepair.resetLinks} EPG source(s) so the restored channels refill on the next sync`
+            );
         }
 
         // Note: We no longer use PRAGMA foreign_keys = OFF here.

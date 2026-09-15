@@ -155,6 +155,7 @@ export interface AppSettings {
     epgLogoDisplay?: 'square' | 'rectangle';
     epgAutomatchCleanNames?: boolean;
     epgAutomatchStripTags?: string[];
+    epgAutomatchEnabledOnly?: boolean;
     sourceLogoDisplayOverrides?: Record<string, 'square' | 'rectangle'>;
     sourceLogoBackgroundOverrides?: Record<string, 'auto' | 'light' | 'dark'>;
     channelLogoSize?: number;

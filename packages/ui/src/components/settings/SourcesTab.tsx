@@ -15,6 +15,7 @@ import {
   useEpgClockFormat
 } from '../../stores/uiStore';
 import { useToastStore } from '../../stores/toastStore';
+import { releasePinsForFeed } from '../../services/epg-overrides';
 import { parseM3U, XtreamClient, StalkerClient } from '@ynotv/local-adapter';
 import { CategoryManager } from './CategoryManager';
 import { DataRefreshTab } from './DataRefreshTab';
@@ -906,6 +907,24 @@ export function SourcesTab({
       // Clean up all data in SQLite before removing source config
       await clearSourceData(id);
       await clearVodData(id);
+
+      // Channels the user pinned to this playlist's own feed are skipped by
+      // every other feed, and this playlist's channels are gone now — so the
+      // locks have to go with it, or those channels would stay blank for good
+      // (nothing is left that could prove it is the pinned feed).
+      try {
+        const released = await releasePinsForFeed(id);
+        if (released > 0) {
+          console.log(`[Sources] Released ${released} channel feed lock(s) pointing at deleted playlist ${name}`);
+          useToastStore.getState().addToast(
+            i18n.t('settings:sources.epgPinsReleasedToast', { count: released }),
+            'success'
+          );
+        }
+      } catch (e) {
+        console.warn('[Sources] Failed to release feed locks for deleted playlist:', e);
+      }
+
       await window.storage.deleteSource(id);
 
       // Small delay to ensure all async state updates complete
@@ -1575,11 +1594,26 @@ export function SourcesTab({
     const newLinks = globalEpgLinks.filter(e => e.id !== deleteEpgConfirm.id);
     setGlobalEpgLinks(newLinks);
     const linkId = deleteEpgConfirm.id;
+    const deletedName = deleteEpgConfirm.name;
     setDeleteEpgConfirm(null);
     try {
       await cleanupGlobalEpgCache(linkId);
     } catch (e) {
       console.warn('[Global EPG] Failed to cleanup cache database on delete:', e);
+    }
+    // Channels locked to this EPG source are skipped by every other feed, so the
+    // lock has to go with the source or they would stay blank for good.
+    try {
+      const released = await releasePinsForFeed(`global_epg_${linkId}`);
+      if (released > 0) {
+        console.log(`[Global EPG] Released ${released} channel feed lock(s) pointing at deleted EPG source ${deletedName}`);
+        useToastStore.getState().addToast(
+          i18n.t('settings:sources.epgPinsReleasedToast', { count: released }),
+          'success'
+        );
+      }
+    } catch (e) {
+      console.warn('[Global EPG] Failed to release feed locks for deleted EPG source:', e);
     }
   }
 
@@ -1617,6 +1651,12 @@ export function SourcesTab({
       existingLink!.url !== epgFormData.url.trim() ||
       existingLink!.sourceIds.slice().sort().join('|') !== epgFormData.sourceIds.slice().sort().join('|')
     );
+    // Playlists detached from this link can no longer be served by it, so their
+    // channels' locks have to be released with the attachment (a locked channel
+    // is skipped by every other feed, including its own playlist's).
+    const detachedSourceIds = existingLink
+      ? existingLink.sourceIds.filter(id => !epgFormData.sourceIds.includes(id))
+      : [];
     const carriedResult = feedChanged && existingLink?.lastSyncResult
       ? { ...existingLink.lastSyncResult, perSourceSyncedAt: {} as Record<string, number> }
       : existingLink?.lastSyncResult;
@@ -1641,6 +1681,23 @@ export function SourcesTab({
     setEpgFormData({ name: '', url: '', sourceIds: [], saveEntireEpg: false });
     setEditingEpgId(null);
     setEpgFormError(null);
+
+    if (detachedSourceIds.length > 0) {
+      try {
+        const released = await releasePinsForFeed(`global_epg_${linkId}`, detachedSourceIds);
+        if (released > 0) {
+          console.log(
+            `[Global EPG] Released ${released} channel feed lock(s) for playlist(s) detached from ${newLink.name}`
+          );
+          useToastStore.getState().addToast(
+            i18n.t('settings:sources.epgPinsReleasedToast', { count: released }),
+            'success'
+          );
+        }
+      } catch (e) {
+        console.warn('[Global EPG] Failed to release feed locks for detached playlists:', e);
+      }
+    }
   }
 
   function toggleEpgSourceId(sourceId: string) {

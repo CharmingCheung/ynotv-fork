@@ -2976,10 +2976,21 @@ async fn stream_parse_epg_multi(
     sources: Vec<epg_streaming::EpgSourceRef>,
     user_agent: Option<String>,
     feed_ref: Option<String>,
+    // Feed refs a channel pin may name that no longer exist; the renderer owns
+    // the playlist and EPG link lists, so it resolves them.
+    unservable_feeds: Option<Vec<String>>,
 ) -> Result<Vec<epg_streaming::EpgParseResult>, String> {
-    epg_streaming::stream_parse_epg_multi(app, &state.db, epg_url, sources, user_agent, feed_ref)
-        .await
-        .map_err(|e| format!("Stream parse EPG multi failed: {}", e))
+    epg_streaming::stream_parse_epg_multi(
+        app,
+        &state.db,
+        epg_url,
+        sources,
+        user_agent,
+        feed_ref,
+        unservable_feeds.unwrap_or_default(),
+    )
+    .await
+    .map_err(|e| format!("Stream parse EPG multi failed: {}", e))
 }
 
 /// Drop the `programs` secondary indexes before a bulk EPG load (sync-all).
@@ -3039,10 +3050,21 @@ async fn cache_entire_epg_db(
     epg_link_id: String,
     user_agent: Option<String>,
     sources: Vec<epg_streaming::EpgSourceRef>,
+    // Feed refs a channel pin may name that no longer exist; the renderer owns
+    // the playlist and EPG link lists, so it resolves them.
+    unservable_feeds: Option<Vec<String>>,
 ) -> Result<Vec<epg_streaming::EpgParseResult>, String> {
-    epg_streaming::cache_entire_epg_db(app, &state.db, epg_url, epg_link_id, user_agent, sources)
-        .await
-        .map_err(|e| format!("Cache entire EPG failed: {}", e))
+    epg_streaming::cache_entire_epg_db(
+        app,
+        &state.db,
+        epg_url,
+        epg_link_id,
+        user_agent,
+        sources,
+        unservable_feeds.unwrap_or_default(),
+    )
+    .await
+    .map_err(|e| format!("Cache entire EPG failed: {}", e))
 }
 
 // =============================================================================

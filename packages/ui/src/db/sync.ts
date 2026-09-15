@@ -14,6 +14,7 @@ import {
   clearGlobalEpgSourceStamps,
   linkNeedsSyncForAnySource,
 } from '../utils/globalEpgFreshness';
+import { dropUnservableFeedPins, type ServableFeedIds } from '../utils/epgBackupSanitize';
 import { effectiveMatchName, buildAliasMatchNames } from '../utils/epgMatchName';
 
 import { invoke } from '@tauri-apps/api/core';
@@ -104,14 +105,90 @@ async function loadEpgChannelOverrideMap(): Promise<Map<string, string>> {
 async function loadEpgFeedPinMap(): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   try {
-    const overrides = await db.epgChannelOverrides.toArray();
-    for (const o of overrides) {
-      if (o.epg_source_id) map.set(o.stream_id, o.epg_source_id);
+    // Only the pinned rows are needed, and most override rows carry no pin at
+    // all (a manual tvg-id, a logo, a timeshift). Filtering in SQL keeps this to
+    // the pin set rather than the whole overrides table, which matters because
+    // every pass in a sync round asks for it.
+    const dbInstance = await (db as any).dbPromise;
+    const rows = await dbInstance.select(
+      `SELECT stream_id AS stream_id, epg_source_id AS epg_source_id
+         FROM epg_channel_overrides
+        WHERE epg_source_id IS NOT NULL AND TRIM(epg_source_id) != ''`
+    ) as { stream_id: string; epg_source_id: string }[];
+    for (const row of rows) {
+      if (row.epg_source_id) map.set(row.stream_id, row.epg_source_id);
     }
   } catch {
     // Column/table may be missing on an old DB — silently ignore
   }
   return map;
+}
+
+/**
+ * The feed pins a pass may honour, plus the feed refs nothing can serve.
+ *
+ * A pin names one of exactly two things: a playlist, or a global EPG link. Both
+ * are read from where the settings UI writes them, and a pin naming neither is
+ * dropped here rather than honoured — a lock no feed can satisfy would reserve
+ * the channel for nobody and leave it blank for good (the cleanup in
+ * `releasePinsForFeed` covers the paths in the app; this covers the rest).
+ *
+ * Sources are read defensively: if that read fails, every pin is kept. A lock
+ * the user chose is better left alone than mass-released on a storage hiccup.
+ */
+let lastIgnoredPinsLogKey = '';
+
+async function loadServableFeedPins(): Promise<{
+  pins: Map<string, string>;
+  unservableFeeds: string[];
+  unpinnedStreamIds: string[];
+}> {
+  const pinMap = await loadEpgFeedPinMap();
+  if (pinMap.size === 0) {
+    return { pins: pinMap, unservableFeeds: [], unpinnedStreamIds: [] };
+  }
+
+  let sourceIds: string[];
+  try {
+    const result = await window.storage?.getSources?.();
+    if (!result?.data) throw new Error('playlist list unavailable');
+    sourceIds = result.data.map((s: { id: string }) => s.id);
+  } catch (e) {
+    console.warn('[EPG] Could not read the playlist list; keeping every feed lock as stored:', e);
+    return { pins: pinMap, unservableFeeds: [], unpinnedStreamIds: [] };
+  }
+
+  const feeds: ServableFeedIds = {
+    sourceIds: new Set(sourceIds),
+    linkIds: new Set(useSettingsStore.getState().globalEpgLinks.map((link) => link.id)),
+  };
+
+  const resolved = dropUnservableFeedPins(pinMap, feeds);
+  if (resolved.unpinnedStreamIds.length > 0) {
+    // Every pass in a sync round resolves this, so the same finding would be
+    // logged eight times over. Log it once per distinct outcome instead; a
+    // changed count (more channels pinned to the dead feed) logs again.
+    const key = `${resolved.unpinnedStreamIds.length}:${resolved.unservableFeeds.join(',')}`;
+    if (key !== lastIgnoredPinsLogKey) {
+      lastIgnoredPinsLogKey = key;
+      console.log(
+        `[EPG] ${resolved.unpinnedStreamIds.length} channel(s) pinned to a feed that no longer exists ` +
+        `(${resolved.unservableFeeds.join(', ')}); treating them as unpinned`
+      );
+      debugLog(
+        `${resolved.unpinnedStreamIds.length} channel(s) left unlocked: their feed(s) ` +
+        `${resolved.unservableFeeds.join(', ')} no longer exist, so the pin is ignored and the ` +
+        `normal waterfall fills them`,
+        'epg'
+      );
+    }
+  }
+
+  return {
+    pins: resolved.pins,
+    unservableFeeds: resolved.unservableFeeds,
+    unpinnedStreamIds: resolved.unpinnedStreamIds,
+  };
 }
 
 /**
@@ -432,9 +509,10 @@ async function syncEpgFromUrl(
     // Load user-applied EPG channel ID overrides so they win over the raw channel value
     const epgOverrideMap = await loadEpgChannelOverrideMap();
     // Feed pins: a channel locked to another feed must not be written by this
-    // source's own feed. The Rust pass still wipes the whole source, so the
-    // pinned channel is emptied here and refilled by its pinned feed.
-    const feedPinMap = await loadEpgFeedPinMap();
+    // source's own feed. The wipe leaves its current rows alone as well (see
+    // `PIN_AWARE_SOURCE_PROGRAMS_WIPE`; expired ones are pruned), so the channel
+    // holds the pinned feed's guide until that feed replaces it.
+    const { pins: feedPinMap } = await loadServableFeedPins();
     const eligibleChannels = filterChannelsForFeed(channels, feedPinMap, source.id);
     if (eligibleChannels.length !== channels.length) {
       console.log(`[EPG] ${channels.length - eligibleChannels.length} channel(s) skipped by feed locks (pinned to another EPG source)`);
@@ -563,7 +641,7 @@ async function syncEpgForSource(source: Source, channels: Channel[], epgUrl?: st
     const epgOverrideMap = await loadEpgChannelOverrideMap();
 
     // Feed pins: exclude channels locked to another feed (see syncEpgFromUrl).
-    const feedPinMap = await loadEpgFeedPinMap();
+    const { pins: feedPinMap } = await loadServableFeedPins();
     const eligibleChannels = filterChannelsForFeed(channels, feedPinMap, source.id);
     if (eligibleChannels.length !== channels.length) {
       console.log(`[EPG] ${channels.length - eligibleChannels.length} channel(s) skipped by feed locks (pinned to another EPG source)`);
@@ -694,8 +772,8 @@ async function syncEpgForStalker(source: Source, channels: Channel[]): Promise<n
 
     // Feed pins: this payload is keyed by the portal's own channel ids, so both
     // the raw id and the prefixed stream id are matched. The source-wide replace
-    // below still clears their old rows — the pinned feed refills them.
-    const feedPinMap = await loadEpgFeedPinMap();
+    // below leaves their current rows alone — the pinned feed replaces them.
+    const { pins: feedPinMap } = await loadServableFeedPins();
     const pinnedElsewhere = new Set<string>();
     for (const ch of channels as any[]) {
       const pin = feedPinMap.get(ch.stream_id);
@@ -926,7 +1004,7 @@ async function syncStalkerShortEpgInternal(
 
   // Feed pins: the portal's short EPG is this source's own feed, so it must not
   // fill a channel the user locked to a different EPG source.
-  const feedPinMap = await loadEpgFeedPinMap();
+  const { pins: feedPinMap } = await loadServableFeedPins();
 
   // Filter channels to only those not synced in the last 3 hours, unless forced
   const channelsToFetch = channels.filter(ch => {
@@ -1139,7 +1217,7 @@ async function syncAdditionalEpgUrls(
   // Feed pins: a channel the user matched to a specific feed may only be filled
   // by that feed. This waterfall's feed identity is the source itself (its own
   // primary EPG and these extra URLs).
-  const feedPinMap = await loadEpgFeedPinMap();
+  const { pins: feedPinMap } = await loadServableFeedPins();
   const feedRef = source.id;
   const eligibleForThisFeed = (streamId: string) => (feedPinMap.get(streamId) ?? feedRef) === feedRef;
 
@@ -1328,6 +1406,12 @@ export async function applyGlobalEpgToSource(
 
     debugLog(`Applying global EPG to source: ${source.name} (${linksForSource.length} links, waterfall order)`, 'epg');
 
+    // Pins naming a feed that no longer exists are ignored by the Rust passes
+    // too — they read the pins from the DB themselves, so the list has to be
+    // handed over. Resolved after the guards above: a source with no links or no
+    // channels has nothing to hand it to.
+    const { unservableFeeds } = await loadServableFeedPins();
+
     // Find channels that currently have no programs
     let channelsWithPrograms = await getStreamIdsWithUpcomingPrograms(source.id);
     let channelsNeedingEpg = channels.filter(ch => !channelsWithPrograms.has(ch.stream_id));
@@ -1383,6 +1467,7 @@ export async function applyGlobalEpgToSource(
                 timeshiftHours: source.epg_timeshift_hours ?? 0,
                 clearExisting: false,
               }],
+              unservableFeeds,
             }) as { source_id: string; inserted_programs: number; matched_channels?: number }[];
             const result = results[0];
             resultInsertedPrograms = result?.inserted_programs ?? 0;
@@ -1406,7 +1491,8 @@ export async function applyGlobalEpgToSource(
             source.user_agent || undefined,
             // This pass IS this link, so channels pinned to it are included and
             // channels pinned to any other feed are left alone.
-            `global_epg_${link.id}`
+            `global_epg_${link.id}`,
+            unservableFeeds
           );
           const result = results[0];
           resultInsertedPrograms = result?.inserted_programs ?? 0;
@@ -1746,6 +1832,11 @@ async function syncGlobalEpgLinkStandaloneImpl(
     return 0;
   }
 
+  // Pins naming a feed that no longer exists are ignored by the two Rust passes
+  // below too, which read the pins from the DB themselves. Resolved here, once
+  // per link, after the passes that decide whether this link runs at all.
+  const { unservableFeeds } = await loadServableFeedPins();
+
   onProgress?.(`Applying EPG to ${sourceRefs.length} source(s)...`);
 
   let totalInserted = 0;
@@ -1776,7 +1867,8 @@ async function syncGlobalEpgLinkStandaloneImpl(
         epgUrl: url,
         epgLinkId: epgLink.id,
         userAgent,
-        sources: sourceRefs
+        sources: sourceRefs,
+        unservableFeeds
       }) as { source_id: string; inserted_programs: number; matched_channels?: number }[];
       syncSucceeded = true;
       console.log(`[Global EPG] Entire EPG cached locally for link ${epgLink.id}`);
@@ -1806,7 +1898,8 @@ async function syncGlobalEpgLinkStandaloneImpl(
         url,
         sourceRefs,
         userAgent,
-        `global_epg_${epgLink.id}`
+        `global_epg_${epgLink.id}`,
+        unservableFeeds
       );
       syncSucceeded = true;
 
@@ -4186,15 +4279,28 @@ async function selectWithRetry(
 //
 // Without this the alignment re-copied a pinned channel from whichever source
 // happened to own the id, silently undoing the feed the user chose.
-const ALIGN_PIN_MATCHES = `(
-           eco.epg_source_id IS NULL
+//
+// A pin naming a feed that no longer exists is ignored here exactly as it is in
+// the mapping filters (both read the same list from `loadServableFeedPins`):
+// otherwise the channel would stay reserved for a feed that can't write it, and
+// the alignment — the only writer a playlist pin has — would never fill it.
+function alignPinMatches(unservableFeeds: string[]): { sql: string; params: string[] } {
+  const ignored = unservableFeeds.length > 0
+    ? `\n           OR eco.epg_source_id IN (${unservableFeeds.map((_, i) => `$${i + 2}`).join(', ')})`
+    : '';
+  return {
+    sql: `(
+           eco.epg_source_id IS NULL${ignored}
            OR (substr(eco.epg_source_id, 1, 11) != 'global_epg_' AND eco.epg_source_id = sc.source_id)
-         )`;
+         )`,
+    params: unservableFeeds,
+  };
+}
 
 export async function alignOverriddenChannelPrograms(sourceId: string): Promise<void> {
   try {
     const dbInstance = await (db as any).dbPromise;
-    
+
     // Check if there are any overrides that target or are sourced by this source ID.
     // EXISTS short-circuits on the first match, unlike COUNT(*) over a deduped UNION.
     const existsResult = await selectWithRetry(
@@ -4217,6 +4323,12 @@ export async function alignOverriddenChannelPrograms(sourceId: string): Promise<
       return;
     }
 
+    // Pins the alignment must not honour, resolved after the bail-out above so a
+    // source with nothing to align pays nothing for them. One resolution serves
+    // all three statements below (they share `$1`, so the feed refs are `$2…$n`).
+    const { unservableFeeds } = await loadServableFeedPins();
+    const pinMatch = alignPinMatches(unservableFeeds);
+
     const start = performance.now();
     debugLog(`[Sync] Starting bulk EPG alignment for source: ${sourceId}...`, 'epg');
 
@@ -4229,15 +4341,15 @@ export async function alignOverriddenChannelPrograms(sourceId: string): Promise<
          JOIN channels tc ON tc.stream_id = eco.stream_id
          JOIN channels sc ON sc.epg_channel_id = eco.epg_channel_id AND sc.stream_id != eco.stream_id
          WHERE (tc.source_id = $1 OR sc.source_id = $1)
-           AND ${ALIGN_PIN_MATCHES}
+           AND ${pinMatch.sql}
          UNION
          SELECT eco.stream_id FROM epg_channel_overrides eco
          JOIN channels tc ON tc.stream_id = eco.stream_id
          JOIN channels sc ON sc.name = eco.epg_channel_id AND sc.stream_id != eco.stream_id
          WHERE (tc.source_id = $1 OR sc.source_id = $1)
-           AND ${ALIGN_PIN_MATCHES}
+           AND ${pinMatch.sql}
        )`,
-      [sourceId]
+      [sourceId, ...pinMatch.params]
     );
 
     // 2. Insert fresh programs from native provider channels to target channels
@@ -4258,10 +4370,10 @@ export async function alignOverriddenChannelPrograms(sourceId: string): Promise<
                         AND sc.stream_id NOT IN (SELECT stream_id FROM epg_channel_overrides)
        JOIN programs p ON p.stream_id = sc.stream_id
        WHERE (tc.source_id = $1 OR sc.source_id = $1)
-         AND ${ALIGN_PIN_MATCHES}
+         AND ${pinMatch.sql}
          AND p.end >= datetime('now', '-1 hour')
        GROUP BY eco.stream_id, p.start`,
-      [sourceId]
+      [sourceId, ...pinMatch.params]
     );
 
     // Step 2b: Match by name fallback (uses idx_channels_name index)
@@ -4279,10 +4391,10 @@ export async function alignOverriddenChannelPrograms(sourceId: string): Promise<
                         AND sc.stream_id NOT IN (SELECT stream_id FROM epg_channel_overrides)
        JOIN programs p ON p.stream_id = sc.stream_id
        WHERE (tc.source_id = $1 OR sc.source_id = $1)
-         AND ${ALIGN_PIN_MATCHES}
+         AND ${pinMatch.sql}
          AND p.end >= datetime('now', '-1 hour')
        GROUP BY eco.stream_id, p.start`,
-      [sourceId]
+      [sourceId, ...pinMatch.params]
     );
     
     const alignmentMs = performance.now() - start;

@@ -17,6 +17,7 @@ import {
   type CleanMatchVia,
   type NameMatchCandidate,
 } from '../utils/epgChannelMatch';
+import { buildRestoredOverride, type PriorOverrideSnapshot } from '../utils/epgAutomatchUndo';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -438,6 +439,105 @@ export async function releaseFeedPinsInSource(sourceId: string): Promise<number>
   dbEvents.notify('epg_channel_overrides', 'update');
   dbEvents.notify('channels', 'update');
   return count;
+}
+
+/**
+ * Release every feed lock pointing at one feed.
+ *
+ * A pinned channel is served by the pinned feed alone — every other feed skips
+ * it, including its own playlist's. So a pin has to be released the moment its
+ * feed stops being able to serve it, which happens in exactly two ways: the EPG
+ * source is deleted, or it is detached from the channel's playlist. Leaving the
+ * pin behind would keep those channels blank for good.
+ *
+ * @param sourceIds Restrict the release to channels of these playlists (used
+ *   when a link loses an attached source: only the channels that just lost their
+ *   feed are released, and pins in still-attached playlists are untouched).
+ * @returns how many channels were released
+ */
+export async function releasePinsForFeed(feedRef: string, sourceIds?: string[]): Promise<number> {
+  const feed = feedRef.trim();
+  if (!feed) return 0;
+
+  const scoped = (sourceIds ?? []).filter(id => !!id && id.trim().length > 0);
+
+  try {
+    const dbInstance = await (db as any).dbPromise;
+
+    const where = scoped.length > 0
+      ? `epg_source_id = $1
+         AND stream_id IN (
+           SELECT stream_id FROM channels
+           WHERE source_id IN (${scoped.map((_, i) => `$${i + 2}`).join(', ')})
+         )`
+      : 'epg_source_id = $1';
+    const args = [feed, ...scoped];
+
+    const countRows = await dbInstance.select(
+      `SELECT COUNT(*) AS count FROM epg_channel_overrides WHERE ${where}`,
+      args
+    ) as { count: number }[];
+    const count = countRows?.[0]?.count ?? 0;
+    if (count === 0) return 0;
+
+    await dbInstance.execute(
+      `UPDATE epg_channel_overrides SET epg_source_id = NULL WHERE ${where}`,
+      args
+    );
+
+    const { dbEvents } = await import('../db/sqlite-adapter');
+    dbEvents.notify('epg_channel_overrides', 'update');
+    dbEvents.notify('channels', 'update');
+    return count;
+  } catch (e) {
+    // Column may be missing on an old DB — nothing to release in that case.
+    console.warn(`[EPG] Failed to release feed locks for ${feed}:`, e);
+    return 0;
+  }
+}
+
+/**
+ * Undo one Automatch Missing result: drop the id it wrote, the guide it copied,
+ * and restore the channel's override row from the snapshot taken before the run.
+ *
+ * Restoring rather than deleting matters — a channel with no EPG assignment can
+ * still carry a logo background, padding or timeshift the user set, and those
+ * must survive an unmatch.
+ *
+ * `modified` means the channel was matched by hand after the run, so the row on
+ * disk is no longer the one being undone and the user's newer choice wins.
+ */
+export type UnmatchOutcome = 'unmatched' | 'modified' | 'missing';
+
+export async function unmatchAutomatchChannel(
+  streamId: string,
+  expectedEpgChannelId: string,
+  prior?: PriorOverrideSnapshot | null
+): Promise<UnmatchOutcome> {
+  const dbInstance = await (db as any).dbPromise;
+  const existing = await getChannelOverride(streamId);
+
+  // Already unmatch-ed (or the row was reset) — nothing left to undo.
+  if (!existing?.epg_channel_id) return 'missing';
+  if (existing.epg_channel_id !== expectedEpgChannelId) return 'modified';
+
+  // The match copied the feed's guide onto this stream. Leaving those rows would
+  // keep showing the very guide the user just rejected.
+  await dbInstance.execute(`DELETE FROM programs WHERE stream_id = $1`, [streamId]);
+
+  const restored = buildRestoredOverride(streamId, prior);
+  if (restored) {
+    await db.epgChannelOverrides.put(restored);
+  } else {
+    await db.epgChannelOverrides.delete(streamId);
+  }
+
+  const { dbEvents } = await import('../db/sqlite-adapter');
+  dbEvents.notify('epg_channel_overrides', restored ? 'update' : 'delete');
+  dbEvents.notify('channels', 'update');
+  dbEvents.notify('programs', 'clear');
+  dbEvents.notify('programs', 'add');
+  return 'unmatched';
 }
 
 export async function resetChannelToDefault(streamId: string): Promise<void> {

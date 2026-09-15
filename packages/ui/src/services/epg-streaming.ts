@@ -361,6 +361,13 @@ export async function streamParseEpgMulti(
    * source id. Channels pinned to a different feed are left out of the mappings.
    */
   feedRef?: string,
+  /**
+   * Feed refs a pin may name that no longer exist. The Rust pass reads the pins
+   * out of the DB itself, so it can't tell a live feed from a deleted one —
+   * handed this list it treats those pins as absent instead of honouring a lock
+   * nothing can satisfy (see `dropUnservableFeedPins`).
+   */
+  unservableFeeds?: string[],
   candidateUrls?: string[]
 ): Promise<EpgParseResult[]> {
   const urlsToTry = candidateUrls && candidateUrls.length > 0
@@ -387,6 +394,7 @@ export async function streamParseEpgMulti(
         })),
         userAgent: userAgent || null,
         feedRef: feedRef || null,
+        unservableFeeds: unservableFeeds ?? [],
       });
 
       for (const r of results) {

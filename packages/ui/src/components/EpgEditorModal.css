@@ -980,3 +980,117 @@
   font-size: 0.68rem;
   color: var(--text-secondary, #888);
 }
+
+/* ── EPG matching name: the provider's name and the channel's own name, side by
+   side, with the second one editable in place. ── */
+/* The tag column takes the width of the longest label rather than a fixed one,
+   so it fits "Provider name" / "Anbietername" / "Nom du fournisseur" alike. */
+.epg-editor-match-names {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 6px 10px;
+  margin-top: 4px;
+}
+
+.epg-editor-match-name-tag {
+  font-size: 0.78rem;
+  color: var(--text-secondary, #888);
+}
+
+.epg-editor-match-name-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.85rem;
+  color: var(--text-primary, inherit);
+}
+
+.epg-editor-match-name-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.epg-editor-match-name-control .epg-editor-match-name-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 10px;
+  font-size: 0.85rem;
+}
+
+.epg-editor-match-name-reset {
+  flex: 0 0 auto;
+  padding: 7px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color, rgba(127, 127, 127, 0.35));
+  background: transparent;
+  color: var(--text-secondary, #888);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.epg-editor-match-name-reset:hover:not(:disabled) {
+  color: var(--text-primary, inherit);
+  border-color: var(--accent-primary, var(--accent, #00d4ff));
+}
+
+.epg-editor-match-name-reset:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Automatch results rows: the run's log, with an Unmatch control on the rows
+   that actually applied a match so a wrong one can be taken back in a click. */
+.epg-automatch-detail {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 4px 14px;
+  font-size: 0.8rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+/* Wraps like the plain log line it replaces; the control stays on the right. */
+.epg-automatch-detail-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.epg-automatch-unmatch {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color, rgba(127, 127, 127, 0.35));
+  background: transparent;
+  color: var(--text-secondary, #888);
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.epg-automatch-unmatch:hover:not(:disabled) {
+  color: var(--text-primary, inherit);
+  border-color: var(--accent-color, var(--accent, #35d0a5));
+  background: var(--surface-3, rgba(127, 127, 127, 0.16));
+}
+
+.epg-automatch-unmatch:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.epg-automatch-unmatched {
+  flex: 0 0 auto;
+  font-size: 0.72rem;
+  color: var(--text-secondary, #888);
+  font-style: italic;
+}
+
+.epg-automatch-notice {
+  flex: 0 0 auto;
+  font-size: 0.72rem;
+  color: #ffaa44;
+}

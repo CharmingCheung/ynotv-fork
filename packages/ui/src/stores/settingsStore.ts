@@ -545,6 +545,11 @@ export interface SettingsState {
   /** Extra words to strip, in addition to the built-in quality/codec tags. */
   epgAutomatchStripTags: string[];
   setEpgAutomatchStripTags: (tags: string[]) => void;
+  // On by default: only resolve channels the app actually shows (not disabled,
+  // and not sitting solely in disabled categories). A user with 1,000 enabled
+  // channels out of 50,000 shouldn't wait on the other 49,000.
+  epgAutomatchEnabledOnly: boolean;
+  setEpgAutomatchEnabledOnly: (enabled: boolean) => void;
 
   // Logo / EPG metadata
   channelLogoSize: number;
@@ -1387,6 +1392,13 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   setEpgAutomatchStripTags: (tags) => {
     set({ epgAutomatchStripTags: tags });
     persistSettings({ epgAutomatchStripTags: tags }, true);
+  },
+  // `?? true` rather than `?? false`: existing installs have no stored value and
+  // should get the faster scope, which is the whole point of the option.
+  epgAutomatchEnabledOnly: (cachedSettings?.epgAutomatchEnabledOnly as boolean) ?? true,
+  setEpgAutomatchEnabledOnly: (enabled) => {
+    set({ epgAutomatchEnabledOnly: enabled });
+    persistSettings({ epgAutomatchEnabledOnly: enabled });
   },
 
   // Logo / EPG metadata

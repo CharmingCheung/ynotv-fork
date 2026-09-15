@@ -299,6 +299,29 @@ fn effective_match_name(name: &str, alias: Option<&str>, match_by_alias: bool) -
 /// Best-effort: the column is added by the renderer's schema migration, so on a
 /// database that predates it (or if the table is missing) this returns no pins
 /// and every pass behaves exactly as before.
+/// Drop the pins naming a feed that no longer exists, returning how many went.
+///
+/// A pin reserves its channel for one feed and bars every other writer, so a pin
+/// whose feed is gone would reserve the channel for nobody — blank for good. The
+/// renderer resolves which feeds exist (it owns the playlist and EPG link lists)
+/// and hands them over here; see `dropUnservableFeedPins` for the JS half.
+fn drop_unservable_pins(
+    pins: &mut HashMap<String, String>,
+    unservable_feeds: &[String],
+) -> usize {
+    if unservable_feeds.is_empty() {
+        return 0;
+    }
+    let dead: std::collections::HashSet<&str> = unservable_feeds
+        .iter()
+        .map(|feed| feed.trim())
+        .filter(|feed| !feed.is_empty())
+        .collect();
+    let before = pins.len();
+    pins.retain(|_, pin| !dead.contains(pin.as_str()));
+    before - pins.len()
+}
+
 fn load_feed_pins(conn: &rusqlite::Connection) -> HashMap<String, String> {
     let mut pins = HashMap::new();
     let mut stmt = match conn.prepare(
@@ -355,6 +378,12 @@ fn load_alias_matchers(conn: &rusqlite::Connection) -> std::collections::HashSet
 /// produce the channel mappings the parsers consume (override > epg_channel_id
 /// > name, mirroring the renderer's old JS filter). Pure function so the
 /// priority rules are unit-testable without a database.
+///
+/// A channel pinned to *this* feed is always in the pool, even when its guide
+/// still has data: it is this feed's to fill, and the wipe exemption that keeps
+/// its rows alive (`delete_programs_for_source`) would otherwise also freeze its
+/// horizon at the first fill — the guide would only be extended once it had run
+/// dry, which is the "ran out of program" symptom this rule exists to avoid.
 fn build_needing_mappings(
     channels: Vec<(String, Option<String>, String)>, // stream_id, epg_channel_id, name
     covered: &std::collections::HashSet<String>,
@@ -364,18 +393,20 @@ fn build_needing_mappings(
 ) -> Vec<ChannelMapping> {
     let mut mappings = Vec::with_capacity(channels.len());
     for (stream_id, epg_channel_id, name) in channels {
-        if covered.contains(&stream_id) {
-            continue;
-        }
         // Channel pinned to a specific feed: only that feed may fill it, so it
         // is left out of every other pass' needing pool. Without this a
         // higher-priority global EPG could overwrite the feed the user chose in
         // the channel editor (the override only pins the *id*, and ids are
         // shared across feeds).
-        if let Some(pin) = pins.get(&stream_id) {
+        let pin = pins.get(&stream_id);
+        let pinned_here = matches!(pin, Some(pin) if feed_ref == Some(pin.as_str()));
+        if let Some(pin) = pin {
             if feed_ref != Some(pin.as_str()) {
                 continue;
             }
+        }
+        if !pinned_here && covered.contains(&stream_id) {
+            continue;
         }
         // Override wins, then epg_channel_id, then name (empty strings are
         // falsy, exactly like the JS `a || b || c` chain).
@@ -413,6 +444,11 @@ pub fn load_channel_mappings_from_db(
     // the source id. `None` means "no feed identity" — pinned channels are then
     // skipped, since no feed can prove it is the pinned one.
     feed_ref: Option<&str>,
+    // Feed refs a pin may name that no longer exist (a deleted playlist, a
+    // deleted global EPG link). The renderer owns both lists, so it hands them
+    // over; a pin naming one of these is treated as absent — nothing can serve
+    // it, and honouring it would reserve the channel for nobody.
+    unservable_feeds: &[String],
 ) -> Result<Vec<SourceEpgConfig>, String> {
     let conn = db
         .get_conn()
@@ -445,7 +481,19 @@ pub fn load_channel_mappings_from_db(
     // Feed pins (`epg_source_id`), same for every source in this pass. Read
     // best-effort: the column is added by the renderer's migration, so an older
     // database simply has no pins.
-    let pins = load_feed_pins(&conn);
+    //
+    // Pins naming a feed that no longer exists are dropped here, so the same
+    // channel can't be reserved by a feed that is gone in this pass while the
+    // renderer's filters already treat it as unpinned (see
+    // `dropUnservableFeedPins`).
+    let mut pins = load_feed_pins(&conn);
+    let dropped_pins = drop_unservable_pins(&mut pins, unservable_feeds);
+    if dropped_pins > 0 {
+        info!(
+            "[EPG] Ignoring {} feed pin(s) naming a feed that no longer exists",
+            dropped_pins
+        );
+    }
 
     // Channels whose guide should be matched on their renamed name instead of
     // the provider's (`match_by_alias`).
@@ -897,14 +945,18 @@ pub async fn stream_parse_epg_multi<R: tauri::Runtime>(
     user_agent: Option<String>,
     // Feed identity for channel pins — see `load_channel_mappings_from_db`.
     feed_ref: Option<String>,
+    // Feed refs a pin may name that no longer exist — see
+    // `load_channel_mappings_from_db`.
+    unservable_feeds: Vec<String>,
 ) -> Result<Vec<EpgParseResult>> {
     let start_time = std::time::Instant::now();
 
     // The needing-EPG channel mappings are computed here, from the main DB
     // (channels minus already-filled stream ids, overrides applied) — the
     // renderer no longer builds or ships the ~20k-row mapping payloads.
-    let source_configs = load_channel_mappings_from_db(db, &sources, feed_ref.as_deref())
-        .map_err(|e| anyhow::anyhow!(e))?;
+    let source_configs =
+        load_channel_mappings_from_db(db, &sources, feed_ref.as_deref(), &unservable_feeds)
+            .map_err(|e| anyhow::anyhow!(e))?;
     let source_count = source_configs.len();
 
     if source_configs.is_empty() {
@@ -2838,19 +2890,63 @@ async fn insert_batches_pipeline<R: tauri::Runtime>(
     })
 }
 
-/// Delete all programs for a source (called before inserting new programs)
+/// Delete all programs for a source (called before inserting new programs).
+///
+/// A channel the user pinned to *another* feed is skipped: its guide belongs to
+/// that feed, which replaces it on its own sync. Wiping it here would empty the
+/// channel for as long as the pinned feed hadn't run yet — and the pinned feed
+/// is the only writer it has, so nothing else could refill it in between. Rows
+/// for channels pinned to *this* source are wiped as usual: this pass is their
+/// owner.
 fn delete_programs_for_source(db: &DvrDatabase, source_id: &str) -> Result<usize> {
     with_sync_db_retry(|| {
         // Serialized with all other EPG program writes (see EPG_WRITE_LOCK).
         // Re-acquired per retry so the backoff sleep never holds the mutex.
         let _guard = EPG_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let conn = db.get_conn()?;
-        let deleted = conn.execute(
-            "DELETE FROM programs WHERE source_id = ?1",
-            rusqlite::params![source_id],
-        )?;
-        Ok(deleted)
+        delete_programs_for_source_conn(&conn, source_id)
     })
+}
+
+/// Programs SQL: drop a source's rows, keeping those of channels the user
+/// pinned to another feed. Shared with `db_bulk_ops::bulk_replace_programs`,
+/// which is the same replace-the-source's-programs move on a different path.
+///
+/// A pinned channel's guide belongs to the feed the user chose: that feed
+/// replaces those rows on its own sync, and every other feed is barred from
+/// writing the channel (see `build_needing_mappings`). Wiping them here would
+/// empty the channel the moment the source synced, with nothing able to refill
+/// it until the pinned feed next ran. Rows for channels pinned to *this* source
+/// are wiped as usual — this pass is their owner.
+///
+/// Expired rows are the exception: keeping them would leave this wipe (the only
+/// pruning the `programs` table has) unable to remove anything for a pinned
+/// channel, so its rows would grow without bound while its feed kept appending
+/// new windows. Anything that ended more than a day ago is invisible in the
+/// guide and gets dropped either way; `COALESCE` keeps rows with no end time
+/// comparable instead of falling into the `NOT IN` NULL trap.
+pub(crate) const PIN_AWARE_SOURCE_PROGRAMS_WIPE: &str =
+    "DELETE FROM programs
+      WHERE source_id = ?1
+        AND (
+          stream_id NOT IN (
+            SELECT stream_id FROM epg_channel_overrides
+             WHERE epg_source_id IS NOT NULL
+               AND TRIM(epg_source_id) != ''
+               AND epg_source_id != ?1
+          )
+          OR COALESCE(end, '') < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1 day')
+        )";
+
+fn delete_programs_for_source_conn(
+    conn: &rusqlite::Connection,
+    source_id: &str,
+) -> Result<usize> {
+    let deleted = conn.execute(
+        PIN_AWARE_SOURCE_PROGRAMS_WIPE,
+        rusqlite::params![source_id],
+    )?;
+    Ok(deleted)
 }
 
 /// The secondary indexes on `programs` dropped during a bulk EPG load and
@@ -3544,6 +3640,9 @@ pub async fn cache_entire_epg_db<R: tauri::Runtime>(
     epg_link_id: String,
     user_agent: Option<String>,
     sources: Vec<EpgSourceRef>,
+    // Feed refs a pin may name that no longer exist — see
+    // `load_channel_mappings_from_db`.
+    unservable_feeds: Vec<String>,
 ) -> Result<Vec<EpgParseResult>, String> {
     use tauri::Manager;
     let start_time = std::time::Instant::now();
@@ -3555,7 +3654,7 @@ pub async fn cache_entire_epg_db<R: tauri::Runtime>(
     // side used to gate on this before calling; now Rust does it).
     // This pass IS the pinned feed for channels the user matched to this link.
     let feed_ref = format!("global_epg_{}", epg_link_id);
-    let sources = load_channel_mappings_from_db(db, &sources, Some(&feed_ref))?;
+    let sources = load_channel_mappings_from_db(db, &sources, Some(&feed_ref), &unservable_feeds)?;
     if sources.is_empty() {
         info!(
             "[EPG Cache] No sources need EPG from {}; skipping download and cache refresh",
@@ -4610,6 +4709,193 @@ mod tests {
         // No feed identity (e.g. a direct "update this EPG" run with no link) —
         // pinned channels are skipped rather than guessed at.
         assert_eq!(ids(None), vec!["unpinned"]);
+    }
+
+    #[test]
+    fn a_channel_pinned_to_this_feed_is_refetched_even_when_covered() {
+        use std::collections::HashSet;
+
+        let channels = vec![
+            ("pinned_here".to_string(), Some("ID1".to_string()), "One".to_string()),
+            ("pinned_elsewhere".to_string(), Some("ID2".to_string()), "Two".to_string()),
+            ("unpinned".to_string(), Some("ID3".to_string()), "Three".to_string()),
+        ];
+        // Every channel already has guide data running into the future, which is
+        // the state that used to freeze a pinned channel's horizon.
+        let covered: HashSet<String> = ["pinned_here", "pinned_elsewhere", "unpinned"]
+            .iter()
+            .map(|id| id.to_string())
+            .collect();
+        let pins: HashMap<String, String> = [
+            ("pinned_here".to_string(), "global_epg_link1".to_string()),
+            ("pinned_elsewhere".to_string(), "source_b".to_string()),
+        ]
+        .into_iter()
+        .collect();
+
+        let ids = |feed_ref: Option<&str>| -> Vec<String> {
+            build_needing_mappings(channels.clone(), &covered, &HashMap::new(), &pins, feed_ref)
+                .into_iter()
+                .map(|m| m.stream_id)
+                .collect()
+        };
+
+        // The pinned channel is this link's to fill, so it stays in the pool and
+        // gets refreshed; the covered unpinned one and the one pinned elsewhere
+        // are both left alone.
+        assert_eq!(ids(Some("global_epg_link1")), vec!["pinned_here"]);
+        assert_eq!(ids(Some("source_b")), vec!["pinned_elsewhere"]);
+        // No feed can claim it, so nothing is refetched.
+        assert!(ids(None).is_empty());
+    }
+
+    #[test]
+    fn pins_naming_a_missing_feed_are_dropped() {
+        let mut pins: HashMap<String, String> = [
+            ("ch_dead_source".to_string(), "playlist-gone".to_string()),
+            ("ch_dead_link".to_string(), "global_epg_gone".to_string()),
+            ("ch_live_source".to_string(), "playlist-a".to_string()),
+            ("ch_live_link".to_string(), "global_epg_l1".to_string()),
+        ]
+        .into_iter()
+        .collect();
+
+        let dropped = drop_unservable_pins(
+            &mut pins,
+            &[
+                "playlist-gone".to_string(),
+                "global_epg_gone".to_string(),
+                // Blank entries are ignored rather than treated as a feed named "".
+                "   ".to_string(),
+            ],
+        );
+
+        assert_eq!(dropped, 2, "one pin per missing feed is released");
+        assert_eq!(pins.get("ch_live_source").map(String::as_str), Some("playlist-a"));
+        assert_eq!(pins.get("ch_live_link").map(String::as_str), Some("global_epg_l1"));
+
+        // An empty list is the normal case and must leave every pin in place.
+        let mut untouched: HashMap<String, String> =
+            [("ch".to_string(), "playlist-x".to_string())].into_iter().collect();
+        assert_eq!(drop_unservable_pins(&mut untouched, &[]), 0);
+        assert_eq!(untouched.len(), 1);
+    }
+
+    #[test]
+    fn source_wipe_keeps_channels_pinned_to_another_feed() {
+        let conn = rusqlite::Connection::open_in_memory().expect("in-memory db");
+        conn.execute_batch(
+            "CREATE TABLE programs (
+                 id TEXT PRIMARY KEY, stream_id TEXT, title TEXT, subtitle TEXT,
+                 description TEXT, start TEXT, end TEXT, source_id TEXT
+             );
+             CREATE TABLE epg_channel_overrides (
+                 stream_id TEXT PRIMARY KEY, epg_channel_id TEXT, epg_source_id TEXT
+             );",
+        )
+        .expect("schema");
+
+        for (id, stream_id, source_id) in [
+            ("p_link", "ch_link_pinned", "source_a"),
+            ("p_self", "ch_self_pinned", "source_a"),
+            ("p_plain", "ch_unpinned", "source_a"),
+            ("p_other", "ch_other_pinned", "source_a"),
+            ("p_blank", "ch_blank_pinned", "source_a"),
+            ("p_foreign", "ch_link_pinned", "source_b"),
+        ] {
+            conn.execute(
+                // Future ends: this test is about whose rows survive the wipe,
+                // not about the expired-row pruning the next test covers.
+                "INSERT INTO programs (id, stream_id, title, subtitle, description, start, end, source_id)
+                 VALUES (?1, ?2, 't', '', '', '2998-01-01T00:00:00.000Z', '2999-01-01T01:00:00.000Z', ?3)",
+                rusqlite::params![id, stream_id, source_id],
+            )
+            .expect("insert program");
+        }
+        for (stream_id, pin) in [
+            ("ch_link_pinned", "global_epg_link9"),
+            ("ch_self_pinned", "source_a"),
+            ("ch_other_pinned", "source_b"),
+            ("ch_blank_pinned", "   "),
+        ] {
+            conn.execute(
+                "INSERT INTO epg_channel_overrides (stream_id, epg_source_id) VALUES (?1, ?2)",
+                rusqlite::params![stream_id, pin],
+            )
+            .expect("insert override");
+        }
+
+        let deleted = delete_programs_for_source_conn(&conn, "source_a").expect("wipe");
+        // The unpinned row, the one pinned to this very source, and the one whose
+        // pin is blank are all this pass's to replace. `p_foreign` belongs to
+        // source B and is never in scope.
+        assert_eq!(deleted, 3, "only the rows this source owns are wiped");
+
+        let remaining: Vec<String> = conn
+            .prepare("SELECT id FROM programs ORDER BY id")
+            .expect("select")
+            .query_map([], |row| row.get::<_, String>(0))
+            .expect("query")
+            .map(|row| row.expect("row"))
+            .collect();
+        assert_eq!(
+            remaining,
+            vec!["p_foreign", "p_link", "p_other"],
+            "rows for channels pinned to another feed survive, in this source's name too"
+        );
+    }
+
+    #[test]
+    fn the_wipe_still_prunes_expired_rows_of_a_pinned_channel() {
+        // Keeping a pinned channel's rows must not turn this wipe into a no-op
+        // for that channel: it is the only pruning `programs` gets, so a feed
+        // appending a fresh window every sync would otherwise grow it forever.
+        let conn = rusqlite::Connection::open_in_memory().expect("in-memory db");
+        conn.execute_batch(
+            "CREATE TABLE programs (
+                 id TEXT PRIMARY KEY, stream_id TEXT, title TEXT, subtitle TEXT,
+                 description TEXT, start TEXT, end TEXT, source_id TEXT
+             );
+             CREATE TABLE epg_channel_overrides (
+                 stream_id TEXT PRIMARY KEY, epg_channel_id TEXT, epg_source_id TEXT
+             );",
+        )
+        .expect("schema");
+        conn.execute(
+            "INSERT INTO epg_channel_overrides (stream_id, epg_source_id) VALUES ('ch', 'global_epg_l1')",
+            [],
+        )
+        .expect("override");
+
+        for (id, start, end) in [
+            ("current", "2999-01-01T00:00:00.000Z", "2999-01-01T01:00:00.000Z"),
+            ("ended_long_ago", "2000-01-01T00:00:00.000Z", "2000-01-01T01:00:00.000Z"),
+            ("no_end", "2000-01-01T00:00:00.000Z", ""),
+        ] {
+            conn.execute(
+                "INSERT INTO programs (id, stream_id, title, subtitle, description, start, end, source_id)
+                 VALUES (?1, 'ch', 't', '', '', ?2, ?3, 'source_a')",
+                rusqlite::params![id, start, end],
+            )
+            .expect("insert program");
+        }
+        conn.execute(
+            "UPDATE programs SET end = NULL WHERE id = 'no_end'",
+            [],
+        )
+        .expect("null end");
+
+        let deleted = delete_programs_for_source_conn(&conn, "source_a").expect("wipe");
+        assert_eq!(deleted, 2, "only the expired rows of the pinned channel go");
+
+        let remaining: Vec<String> = conn
+            .prepare("SELECT id FROM programs ORDER BY id")
+            .expect("select")
+            .query_map([], |row| row.get::<_, String>(0))
+            .expect("query")
+            .map(|row| row.expect("row"))
+            .collect();
+        assert_eq!(remaining, vec!["current"]);
     }
 
     // ─── Matchable name keys and all display names ──────────────────────────

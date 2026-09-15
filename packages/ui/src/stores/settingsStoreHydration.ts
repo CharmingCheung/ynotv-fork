@@ -516,6 +516,8 @@ async function hydrateSettingsStore(): Promise<void> {
         epgAutomatchStripTags: Array.isArray(data.epgAutomatchStripTags)
           ? data.epgAutomatchStripTags.filter((t: unknown) => typeof t === 'string')
           : [],
+        // Absent for existing installs, and the default is deliberate: on.
+        epgAutomatchEnabledOnly: data.epgAutomatchEnabledOnly ?? true,
         channelLogoSize: data.channelLogoSize ?? 42,
         channelLogoRoundEdges: data.channelLogoRoundEdges ?? true,
         channelLogoPadding: data.channelLogoPadding ?? 'none',

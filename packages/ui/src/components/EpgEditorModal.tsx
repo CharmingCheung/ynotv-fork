@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import './EpgEditorModal.css';
-import { db } from '../db';
+import { db, updateChannelsBatch } from '../db';
 import type { StoredChannel, StoredCategory } from '../db';
 import { ChannelLogo } from './ChannelLogo';
 import { useEpgClockFormat } from '../stores/uiStore';
@@ -25,6 +25,7 @@ import {
   getPreviewProgramsForEpgId,
   copyProgramsFromEpgChannel,
   resetChannelToDefault,
+  unmatchAutomatchChannel,
   releaseChannelFeedPin,
   countFeedPinsInSource,
   releaseFeedPinsInSource,
@@ -34,7 +35,10 @@ import {
   type EpgMatchCandidate,
 } from '../services/epg-overrides';
 import { effectiveMatchName } from '../utils/epgMatchName';
+import { buildMissingEpgQuery, buildMissingEpgCountQuery } from '../utils/epgAutomatchFilter';
 import { parseStripTags, prepareCleanNameIndex } from '../utils/epgChannelMatch';
+import { priorOverrideSnapshot, type PriorOverrideSnapshot } from '../utils/epgAutomatchUndo';
+import { VirtualList } from './common/VirtualList';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -54,6 +58,39 @@ interface AutomatchRefusal {
   totalChoices: number;
   choices: EpgMatchCandidate[];
 }
+
+/**
+ * One match the run applied, with everything needed to take it back: the id it
+ * wrote (so a hand-match made afterwards is never clobbered) and the channel's
+ * override row as it was before the run (so unmatching restores it instead of
+ * deleting settings the user had set on a channel that merely had no EPG).
+ */
+interface AutomatchMatch {
+  streamId: string;
+  sourceId: string;
+  channelName: string;
+  epgChannelId: string;
+  prior: PriorOverrideSnapshot;
+  /** Set once undone, so a row can't be unmatch-ed twice. */
+  unmatched?: boolean;
+}
+
+/** A line of the run's results. Only matched lines carry an `AutomatchMatch`. */
+interface AutomatchDetail {
+  text: string;
+  match?: AutomatchMatch;
+}
+
+type AutomatchResults = {
+  matched: number;
+  skipped: number;
+  errors: number;
+  ambiguous: number;
+  cleaned: number;
+  filtered: number;
+  unmatched: number;
+  details: AutomatchDetail[];
+};
 
 /**
  * The feed a channel may be pinned to, or `undefined` when the pin could never be
@@ -90,7 +127,42 @@ export interface EpgEditorModalProps {
   /** If set (and no channel provided), opens on the Source EPG tab */
   sourceId?: string;
   sourceName?: string;
+  /**
+   * Channels for the list tab, instead of every channel of `sourceId`. The guide
+   * passes the category it is showing, so the editor opens on the list the user
+   * is already looking at and a click opens that channel — the same view a
+   * right-click → Edit EPG gives, without hunting for the channel first.
+   */
+  channelList?: StoredChannel[];
+  /** What `channelList` is (a category name), used for the tab + filter labels. */
+  channelListName?: string;
   onClose: () => void;
+}
+
+/**
+ * Which of these channels already carry an EPG override (the dot in the list).
+ *
+ * Chunked because a category can hold tens of thousands of stream ids and SQLite
+ * caps bound parameters — one query per chunk of the primary key is still an
+ * indexed lookup, and it avoids pulling the whole overrides table into memory
+ * the way the source-scoped join can.
+ */
+async function loadOverriddenStreamIds(
+  dbInstance: { select: (sql: string, params?: unknown[]) => Promise<unknown> },
+  streamIds: string[]
+): Promise<Set<string>> {
+  const ids = new Set<string>();
+  const CHUNK = 400;
+  for (let i = 0; i < streamIds.length; i += CHUNK) {
+    const chunk = streamIds.slice(i, i + CHUNK);
+    const placeholders = chunk.map((_, j) => `$${j + 1}`).join(',');
+    const rows = await dbInstance.select(
+      `SELECT stream_id FROM epg_channel_overrides WHERE stream_id IN (${placeholders})`,
+      chunk
+    ) as { stream_id: string }[];
+    for (const row of rows) ids.add(row.stream_id);
+  }
+  return ids;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -255,14 +327,23 @@ function ProgramRow({
 
 // ─── Main Modal ───────────────────────────────────────────────────────────────
 
-export function EpgEditorModal({ channel: initialChannel, sourceId, sourceName, onClose }: EpgEditorModalProps) {
+export function EpgEditorModal({
+  channel: initialChannel,
+  sourceId,
+  sourceName,
+  channelList,
+  channelListName,
+  onClose,
+}: EpgEditorModalProps) {
   const { t } = useTranslation('epg');
   const epgClockFormat = useEpgClockFormat();
   const overlayRef = useRef<HTMLDivElement>(null);
 
   // ── Navigation state ──
+  // `channelList` is honoured even when empty: the caller asked for a list view,
+  // and falling back to the channel tab with no channel renders a blank body.
   const [activeTab, setActiveTab] = useState<EditorTab>(
-    initialChannel ? 'channel' : sourceId ? 'source' : 'channel'
+    initialChannel ? 'channel' : (sourceId || channelList) ? 'source' : 'channel'
   );
   const [channel, setChannel] = useState<StoredChannel | undefined>(initialChannel);
   const resolvedSourceId = channel?.source_id ?? sourceId;
@@ -291,6 +372,10 @@ export function EpgEditorModal({ channel: initialChannel, sourceId, sourceName, 
   // 'Use my name for EPG matching' — replaces the provider name as the matching
   // key (epg_channel_overrides.match_by_alias).
   const [matchByAlias, setMatchByAlias] = useState(false);
+  // The channel's own name for matching (`channels.alias`) — editable here so a
+  // provider name that can't match a feed doesn't force a trip to Manage
+  // Channels. Empty means "no name of my own": the provider name is used.
+  const [matchNameDraft, setMatchNameDraft] = useState('');
   // Feed locks in this channel's playlist (Programs tab bulk release).
   const [pinnedInPlaylist, setPinnedInPlaylist] = useState(0);
   const [confirmReleaseAll, setConfirmReleaseAll] = useState(false);
@@ -301,6 +386,18 @@ export function EpgEditorModal({ channel: initialChannel, sourceId, sourceName, 
   const [timeshiftHours, setTimeshiftHours] = useState('0');
   const [channelSaving, setChannelSaving] = useState(false);
   const [channelSaved, setChannelSaved] = useState(false);
+
+  // ── Channel tab: which name EPG matching will use ──
+  // The provider hands us one name; the channel's own name (`channels.alias`) is
+  // the other. Matching uses exactly one of them (see effectiveMatchName), so
+  // both are shown here and the effective one is named in the hint — an
+  // un-renamed channel used to just say "rename it in Manage Channels".
+  const providerName = (rawChannel?.name ?? channel?.name ?? '').trim();
+  const typedMatchName = matchNameDraft.trim();
+  // Typing the provider name back — or clearing the field — means "no name of my
+  // own", the same rule the rename in Manage Channels uses.
+  const customMatchName = typedMatchName && typedMatchName !== providerName ? typedMatchName : '';
+  const effectiveName = matchByAlias && customMatchName ? customMatchName : providerName;
 
   // ── Programs tab state ──
   const [programs, setPrograms] = useState<EditorProgram[]>([]);
@@ -378,16 +475,25 @@ export function EpgEditorModal({ channel: initialChannel, sourceId, sourceName, 
   const setEpgAutomatchCleanNames = useSettingsStore((s) => s.setEpgAutomatchCleanNames);
   const epgAutomatchStripTags = useSettingsStore((s) => s.epgAutomatchStripTags);
   const setEpgAutomatchStripTags = useSettingsStore((s) => s.setEpgAutomatchStripTags);
+  // Persisted and on by default: sweep only the channels the app actually shows.
+  const epgAutomatchEnabledOnly = useSettingsStore((s) => s.epgAutomatchEnabledOnly);
+  const setEpgAutomatchEnabledOnly = useSettingsStore((s) => s.setEpgAutomatchEnabledOnly);
+  const enabledOnly = epgAutomatchEnabledOnly !== false;
   const [stripTagsInput, setStripTagsInput] = useState('');
   useEffect(() => {
     setStripTagsInput((epgAutomatchStripTags ?? []).join(', '));
   }, [epgAutomatchStripTags]);
   const [automatchProgress, setAutomatchProgress] = useState<{ matched: number; total: number } | null>(null);
-  const [automatchResults, setAutomatchResults] = useState<{ matched: number; skipped: number; errors: number; ambiguous: number; cleaned: number; details: string[] } | null>(null);
+  const [automatchResults, setAutomatchResults] = useState<AutomatchResults | null>(null);
   // Ambiguous refusals from the last run, kept as pickable rows so a refusal is a
   // to-do item rather than a dead end.
   const [automatchRefusals, setAutomatchRefusals] = useState<AutomatchRefusal[]>([]);
   const [resolvingRefusal, setResolvingRefusal] = useState<string | null>(null);
+  /** Channel currently being unmatch-ed, and per-row messages after a failure or a stale match. */
+  const [unmatchingId, setUnmatchingId] = useState<string | null>(null);
+  const [unmatchNotices, setUnmatchNotices] = useState<Record<string, string>>({});
+  /** Scroll container for the virtualized results list. */
+  const automatchListRef = useRef<HTMLDivElement>(null);
   const [sourceCategories, setSourceCategories] = useState<StoredCategory[]>([]);
 
   // ── Load channel override and raw channel when channel changes ──
@@ -411,6 +517,7 @@ export function EpgEditorModal({ channel: initialChannel, sourceId, sourceName, 
       setOriginalTvgId(loadedTvgId);
       setPinnedFeed(ov?.epg_source_id || undefined);
       setMatchByAlias(Boolean(ov?.match_by_alias));
+      setMatchNameDraft((rawChan?.alias ?? '').trim());
       
       const playlistIcon = rawChan?.stream_icon ?? channel.stream_icon ?? '';
       setLogoUrl(ov?.stream_icon ?? playlistIcon);
@@ -492,7 +599,24 @@ export function EpgEditorModal({ channel: initialChannel, sourceId, sourceName, 
 
   // ── Load source channels when switching to Source tab ──
   useEffect(() => {
-    if (activeTab !== 'source' || !resolvedSourceId) return;
+    if (activeTab !== 'source') return;
+
+    // A caller that supplies its own list (the guide's current category) already
+    // decided which channels to show, so no source query is needed — and it may
+    // span sources or be a category of one.
+    if (channelList) {
+      setSourceLoading(true);
+      const sorted = [...channelList].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      setSourceChannels(sorted);
+      (db as any).dbPromise
+        .then((dbInstance: any) => loadOverriddenStreamIds(dbInstance, sorted.map(ch => ch.stream_id)))
+        .then((ids: Set<string>) => setOverriddenIds(ids))
+        .catch(() => setOverriddenIds(new Set()))
+        .finally(() => setSourceLoading(false));
+      return;
+    }
+
+    if (!resolvedSourceId) return;
     setSourceLoading(true);
     db.channels.where('source_id').equals(resolvedSourceId).toArray().then(async chans => {
       const sorted = chans.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
@@ -508,7 +632,7 @@ export function EpgEditorModal({ channel: initialChannel, sourceId, sourceName, 
       setOverriddenIds(ids);
       setSourceLoading(false);
     });
-  }, [activeTab, resolvedSourceId]);
+  }, [activeTab, resolvedSourceId, channelList]);
 
   // ── Load sources for Automatch tab ──
   useEffect(() => {
@@ -569,12 +693,39 @@ export function EpgEditorModal({ channel: initialChannel, sourceId, sourceName, 
     return () => document.removeEventListener('keydown', handleKey);
   }, [onClose]);
 
+  /**
+   * Edit the channel's own name. A name typed here is meant to *match*, so
+   * matching switches to it — a rename that matching ignores is the exact trap
+   * this field exists to close. The toggle below puts matching back on the
+   * provider name without discarding the name.
+   */
+  function handleMatchNameChange(value: string) {
+    setMatchNameDraft(value);
+    const trimmed = value.trim();
+    setMatchByAlias(Boolean(trimmed) && trimmed !== providerName);
+  }
+
+  /** Back to the provider's name: drops both the rename and the matching flag. */
+  function handleResetMatchName() {
+    setMatchNameDraft('');
+    setMatchByAlias(false);
+  }
+
   // ── Channel tab: save ──
   async function handleSaveChannel() {
     if (!channel) return;
     setChannelSaving(true);
     try {
       const hours = parseFloat(timeshiftHours);
+      // The channel's own name lives on the channels row, not the override, so a
+      // rename here is written directly — through the same batch helper the
+      // rename in Manage Channels uses, where `null` clears the override (a
+      // plain update() drops `undefined` and would silently do nothing).
+      const nextAlias = customMatchName || null;
+      if ((rawChannel?.alias ?? null) !== nextAlias) {
+        await updateChannelsBatch([{ streamId: channel.stream_id, alias: nextAlias }]);
+        setRawChannel(prev => prev ? { ...prev, alias: nextAlias ?? undefined } : prev);
+      }
       // Editing the TVG-ID by hand means the pinned feed may not be the one that
       // provides the new id any more, so the pin is dropped. Saving other fields
       // (logo, timeshift) keeps it. `put` is INSERT OR REPLACE, so the pin must
@@ -677,13 +828,15 @@ export function EpgEditorModal({ channel: initialChannel, sourceId, sourceName, 
   }
 
   // ── Search tab: auto-suggest ──
-  // Searches with the SAME name the sync matches on, so the suggestion and the
-  // next sync can't disagree (see effectiveMatchName).
+  // Searches with the SAME name the sync matches on (see effectiveMatchName),
+  // taken from the Channel tab's field — so a name you are still deciding on can
+  // be tried against the feeds before you save it, and once saved the suggestion
+  // and the next sync cannot disagree.
   const handleAutoSuggest = useCallback(async () => {
     if (!channel) return;
     setAutoSearching(true);
     const results = await autoMatchChannelName(
-      effectiveMatchName({ name: channel.name, alias: rawChannel?.alias }, matchByAlias),
+      effectiveName,
       searchScope === 'source' ? resolvedSourceId : undefined,
       10,
       searchMode
@@ -691,7 +844,7 @@ export function EpgEditorModal({ channel: initialChannel, sourceId, sourceName, 
     setSearchResults(results);
     if (results.length > 0) setSearchQuery(results[0].display_name);
     setAutoSearching(false);
-  }, [channel, rawChannel, matchByAlias, searchScope, searchMode, resolvedSourceId]);
+  }, [channel, effectiveName, searchScope, searchMode, resolvedSourceId]);
 
   // ── Search tab: apply match ──
   async function handleApplyMatch(epgChan: ScoredEpgChannel) {
@@ -757,39 +910,40 @@ export function EpgEditorModal({ channel: initialChannel, sourceId, sourceName, 
   async function getChannelsMissingEpg(
     sourceId: string | undefined,
     categoryIds: string[],
-    scope: SearchScope
-  ): Promise<StoredChannel[]> {
+    scope: SearchScope,
+    enabledOnly: boolean
+  ): Promise<{ channels: StoredChannel[]; hidden: number }> {
     const dbInstance = await (db as any).dbPromise;
 
     // `match_by_alias` comes along so the matcher looks the channel up under the
     // same name the sync will use.
-    let sql = `
-      SELECT c.*, COALESCE(o.match_by_alias, 0) AS match_by_alias
-      FROM channels c
-      LEFT JOIN epg_channel_overrides o ON o.stream_id = c.stream_id
-      WHERE (COALESCE(o.epg_channel_id, c.epg_channel_id) IS NULL OR TRIM(COALESCE(o.epg_channel_id, c.epg_channel_id)) = '')
-    `;
-
-    const params: any[] = [];
-
-    if (scope === 'source' && sourceId) {
-      sql += ` AND c.source_id = $${params.length + 1}`;
-      params.push(sourceId);
-    }
-
-    if (categoryIds.length > 0) {
-      const likeClauses = categoryIds.map((_, i) => `c.category_ids LIKE $${params.length + i + 1}`).join(' OR ');
-      sql += ` AND (${likeClauses})`;
-      categoryIds.forEach(id => params.push(`%"${id}"%`));
-    }
-
-    sql += ` ORDER BY c.name COLLATE NOCASE`;
-
-    const rows = await dbInstance.select(sql, params) as any[];
-    return rows.map(r => ({
+    const query = buildMissingEpgQuery({
+      scope,
+      sourceId,
+      categoryIds,
+      visibility: enabledOnly ? 'visible' : 'all',
+    });
+    const rows = await dbInstance.select(query.sql, query.params) as any[];
+    const channels = rows.map(r => ({
       ...r,
       category_ids: r.category_ids ? JSON.parse(r.category_ids) : [],
     }));
+
+    // Count what the visible-only scope left out, so the run can say "skipped
+    // 12,480 hidden channels" instead of silently doing less work than before.
+    let hidden = 0;
+    if (enabledOnly) {
+      const countQuery = buildMissingEpgCountQuery({
+        scope,
+        sourceId,
+        categoryIds,
+        visibility: 'hidden',
+      });
+      const countRows = await dbInstance.select(countQuery.sql, countQuery.params) as Array<{ cnt: number }>;
+      hidden = countRows[0]?.cnt ?? 0;
+    }
+
+    return { channels, hidden };
   }
 
   // ── Automatch tab: run auto-match for all missing channels ──
@@ -799,27 +953,35 @@ export function EpgEditorModal({ channel: initialChannel, sourceId, sourceName, 
     setAutomatchProgress(null);
 
     try {
-      const channels = await getChannelsMissingEpg(
+      const { channels, hidden: hiddenChannels } = await getChannelsMissingEpg(
         automatchScope === 'source' ? automatchSourceId : undefined,
         automatchAllCategories ? [] : automatchCategories,
-        automatchScope
+        automatchScope,
+        enabledOnly
       );
 
       if (channels.length === 0) {
-        setAutomatchResults({ matched: 0, skipped: 0, errors: 0, ambiguous: 0, cleaned: 0, details: [t('noChannelsMissing')] });
+        const lines = hiddenChannels > 0
+          ? [t('noChannelsMissing'), t('enabledOnlySkipped', { count: hiddenChannels })]
+          : [t('noChannelsMissing')];
+        setAutomatchResults({
+          matched: 0, skipped: 0, errors: 0, ambiguous: 0, cleaned: 0, filtered: hiddenChannels, unmatched: 0,
+          details: lines.map(text => ({ text })),
+        });
         setAutomatchRunning(false);
         return;
       }
 
       setAutomatchProgress({ matched: 0, total: channels.length });
       setAutomatchRefusals([]);
+      setUnmatchNotices({});
 
       let matched = 0;
       let skipped = 0;
       let errors = 0;
       let ambiguous = 0;
       let cleaned = 0;
-      const details: string[] = [];
+      const details: AutomatchDetail[] = [];
       const refusals: AutomatchRefusal[] = [];
       const threshold = automatchThreshold / 100;
       const scopeId = automatchScope === 'source' ? (automatchSourceId || undefined) : undefined;
@@ -868,10 +1030,10 @@ export function EpgEditorModal({ channel: initialChannel, sourceId, sourceName, 
               totalChoices: cleanedMatch.totalChoices,
               choices: cleanedMatch.choices,
             });
-            details.push(`⚠ ${ch.name} — ${t('automatchAmbiguous', {
+            details.push({ text: `⚠ ${ch.name} — ${t('automatchAmbiguous', {
               name: cleanedMatch.cleanedName,
               count: cleanedMatch.totalChoices,
-            })}`);
+            })}` });
             setAutomatchProgress({ matched: matched + skipped + errors + ambiguous, total: channels.length });
             if (i % 3 === 0) await new Promise(r => setTimeout(r, 1));
             continue;
@@ -886,6 +1048,8 @@ export function EpgEditorModal({ channel: initialChannel, sourceId, sourceName, 
 
           if (topMatch) {
             if (cleanedMatch?.match) cleaned++;
+            // The row as it stood before this write, so Unmatch can restore it.
+            const prior = priorOverrideSnapshot(ch as unknown as Record<string, unknown>);
             // Bulk auto-match picks a *new* id, so any previous feed pin is
             // cleared rather than left pointing at a feed for the old id.
             await upsertChannelOverride({
@@ -907,22 +1071,31 @@ export function EpgEditorModal({ channel: initialChannel, sourceId, sourceName, 
             }
 
             matched++;
-            details.push(`✓ ${ch.name} → ${topMatch.display_name} (${(topMatch.score * 100).toFixed(0)}%)${cleanedMatch?.match ? ` · ${t('automatchViaCleaned')}` : ''}`);
+            details.push({
+              text: `✓ ${ch.name} → ${topMatch.display_name} (${(topMatch.score * 100).toFixed(0)}%)${cleanedMatch?.match ? ` · ${t('automatchViaCleaned')}` : ''}`,
+              match: {
+                streamId: ch.stream_id,
+                sourceId: ch.source_id,
+                channelName: ch.name,
+                epgChannelId: topMatch.id,
+                prior,
+              },
+            });
           } else {
             skipped++;
             if (cleanedMatch) {
-              details.push(`✗ ${ch.name} — ${t('automatchCleanNoMatch', {
+              details.push({ text: `✗ ${ch.name} — ${t('automatchCleanNoMatch', {
                 name: cleanedMatch.cleanedName,
                 threshold: automatchThreshold,
-              })}`);
+              })}` });
             } else {
               const bestScore = results.length > 0 ? results[0].score : 0;
-              details.push(`✗ ${ch.name} — best match ${(bestScore * 100).toFixed(0)}% (below ${automatchThreshold}%)`);
+              details.push({ text: `✗ ${ch.name} — best match ${(bestScore * 100).toFixed(0)}% (below ${automatchThreshold}%)` });
             }
           }
         } catch (e) {
           errors++;
-          details.push(`⚠ ${ch.name} — error`);
+          details.push({ text: `⚠ ${ch.name} — error` });
         }
 
         setAutomatchProgress({ matched: matched + skipped + errors + ambiguous, total: channels.length });
@@ -933,7 +1106,7 @@ export function EpgEditorModal({ channel: initialChannel, sourceId, sourceName, 
         }
       }
 
-      setAutomatchResults({ matched, skipped, errors, ambiguous, cleaned, details });
+      setAutomatchResults({ matched, skipped, errors, ambiguous, cleaned, filtered: hiddenChannels, unmatched: 0, details });
       setAutomatchRefusals(refusals);
     } finally {
       setAutomatchRunning(false);
@@ -992,9 +1165,69 @@ export function EpgEditorModal({ channel: initialChannel, sourceId, sourceName, 
     setAutomatchRefusals(prev => prev.filter(r => r.streamId !== streamId));
   }
 
+  /**
+   * Undo one match from the last run, straight from its results list.
+   *
+   * The run's snapshot is restored rather than the row simply being deleted, so a
+   * logo background, padding or timeshift set on that channel earlier is not lost,
+   * and the feed's copied guide is dropped so the rejected match stops showing.
+   */
+  async function handleUnmatchMatch(match: AutomatchMatch) {
+    if (unmatchingId) return;
+    setUnmatchingId(match.streamId);
+    setUnmatchNotices(prev => {
+      const next = { ...prev };
+      delete next[match.streamId];
+      return next;
+    });
+
+    try {
+      const outcome = await unmatchAutomatchChannel(match.streamId, match.epgChannelId, match.prior);
+
+      if (outcome === 'modified') {
+        // Matched by hand after the run — that choice is newer than this row.
+        setUnmatchNotices(prev => ({ ...prev, [match.streamId]: t('automatchUnmatchStale') }));
+        return;
+      }
+
+      // `missing` means the row was already gone, which for the user is the same
+      // outcome as a successful unmatch — so the row is retired either way.
+      setAutomatchResults(prev => prev ? {
+        ...prev,
+        matched: Math.max(0, prev.matched - 1),
+        unmatched: prev.unmatched + 1,
+        details: prev.details.map(d => d.match?.streamId === match.streamId
+          ? { ...d, match: { ...d.match, unmatched: true } }
+          : d),
+      } : prev);
+
+      // If this is the channel the modal has open, the Channel tab is still
+      // showing the id, feed and icon that were just removed.
+      if (channel && channel.stream_id === match.streamId) {
+        setTvgId('');
+        setOriginalTvgId('');
+        setPinnedFeed(match.prior.feedSourceId ?? undefined);
+        setLogoUrl(match.prior.streamIcon ?? rawChannel?.stream_icon ?? channel.stream_icon ?? '');
+        setLogoBackground((match.prior.logoBackground as 'auto' | 'light' | 'dark') ?? 'auto');
+        setLogoPadding((match.prior.logoPadding as 'default' | 'none') ?? 'default');
+        setTimeshiftHours(String(match.prior.timeshiftHours ?? 0));
+        setMatchByAlias(Boolean(match.prior.matchByAlias));
+      }
+    } catch (e) {
+      console.error('[EPG Editor] Could not unmatch channel:', e);
+      setUnmatchNotices(prev => ({ ...prev, [match.streamId]: t('automatchUnmatchFailed') }));
+    } finally {
+      setUnmatchingId(null);
+    }
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // RENDER
   // ─────────────────────────────────────────────────────────────────────────────
+
+  // The list tab says where its channels came from when the caller passed a set
+  // (a category), rather than "All Channels" for an entire source.
+  const listTabLabel = channelList ? (channelListName || t('allChannelsTab')) : t('allChannelsTab');
 
   const filteredSourceChannels = sourceChannels.filter(ch =>
     !sourceFilter || ch.name.toLowerCase().includes(sourceFilter.toLowerCase())
@@ -1005,11 +1238,11 @@ export function EpgEditorModal({ channel: initialChannel, sourceId, sourceName, 
         { key: 'channel',  label: `📡 ${t('channelTab')}` },
         { key: 'programs', label: `📋 ${t('programsTab')}` },
         { key: 'search',   label: `🔍 ${t('epgSearchTab')}` },
-        { key: 'source',   label: `📺 ${t('allChannelsTab')}` },
+        { key: 'source',   label: `📺 ${listTabLabel}` },
         { key: 'automatch', label: `🤖 ${t('automatchTab')}` },
       ]
     : [
-        { key: 'source',   label: `📺 ${t('allChannelsTab')}` },
+        { key: 'source',   label: `📺 ${listTabLabel}` },
         { key: 'search',   label: `🔍 ${t('epgSearchTab')}` },
         { key: 'automatch', label: `🤖 ${t('automatchTab')}` },
       ];
@@ -1070,50 +1303,79 @@ export function EpgEditorModal({ channel: initialChannel, sourceId, sourceName, 
                 )}
               </div>
 
-              {/* Which name EPG matching uses. Only offered when the channel has
-                  been renamed — matching always uses the provider name otherwise.
-                  Gated on the raw row being loaded so the tab can't briefly claim
-                  there is no rename. */}
+              {/*
+                Which name EPG matching uses, with both names always visible and
+                the channel's own name editable in place — a provider name that
+                can't match a feed no longer means leaving the editor to rename
+                the channel first. Gated on the raw row being loaded so the tab
+                can't briefly claim there is no rename.
+              */}
               {rawChannel && (
               <div className="epg-editor-field">
                 <label className="epg-editor-label">{t('matchNameLabel')}</label>
-                {rawChannel?.alias?.trim() ? (
-                  <>
-                    <div className="card-segmented-control" style={{ marginTop: 4 }}>
-                      <button
-                        type="button"
-                        className={`segmented-btn ${!matchByAlias ? 'active' : ''}`}
-                        onClick={() => setMatchByAlias(false)}
-                        title={t('matchNameProviderTitle')}
-                      >
-                        📺 {t('matchNameProvider')}
-                      </button>
-                      <button
-                        type="button"
-                        className={`segmented-btn ${matchByAlias ? 'active' : ''}`}
-                        onClick={() => setMatchByAlias(true)}
-                        title={t('matchNameAliasTitle')}
-                      >
-                        ✏️ {t('matchNameAlias')}
-                      </button>
-                    </div>
-                    <div className="epg-editor-hint">
-                      {matchByAlias
-                        ? t('matchNameAliasHint', {
-                            name: rawChannel.alias.trim(),
-                            provider: rawChannel.name || channel.name,
-                          })
-                        : t('matchNameProviderHint', {
-                            name: rawChannel.alias.trim(),
-                            provider: rawChannel.name || channel.name,
-                          })}
-                    </div>
-                  </>
-                ) : (
-                  <div className="epg-editor-hint">
-                    {t('matchNameNeedsRename')}
+
+                {/* A grid, so the tag column sizes itself to the longest label
+                    in any language and both rows stay aligned. */}
+                <div className="epg-editor-match-names">
+                  <span className="epg-editor-match-name-tag">📺 {t('matchNameProvider')}</span>
+                  <span className="epg-editor-match-name-value" title={providerName}>
+                    {providerName}
+                  </span>
+                  <span className="epg-editor-match-name-tag">✏️ {t('matchNameAlias')}</span>
+                  <div className="epg-editor-match-name-control">
+                    <input
+                      className="epg-editor-input epg-editor-match-name-input"
+                      value={matchNameDraft}
+                      onChange={e => handleMatchNameChange(e.target.value)}
+                      placeholder={t('matchNameCustomPlaceholder', { provider: providerName })}
+                    />
+                    <button
+                      type="button"
+                      className="epg-editor-match-name-reset"
+                      onClick={handleResetMatchName}
+                      disabled={!customMatchName && !matchByAlias}
+                      title={t('matchNameResetToProvider')}
+                    >
+                      ↺ {t('matchNameResetToProvider')}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Only meaningful once there are two names to choose between. */}
+                {customMatchName && (
+                  <div className="card-segmented-control" style={{ marginTop: 8 }}>
+                    <button
+                      type="button"
+                      className={`segmented-btn ${!matchByAlias ? 'active' : ''}`}
+                      onClick={() => setMatchByAlias(false)}
+                      title={t('matchNameProviderTitle')}
+                    >
+                      📺 {t('matchNameProvider')}
+                    </button>
+                    <button
+                      type="button"
+                      className={`segmented-btn ${matchByAlias ? 'active' : ''}`}
+                      onClick={() => setMatchByAlias(true)}
+                      title={t('matchNameAliasTitle')}
+                    >
+                      ✏️ {t('matchNameAlias')}
+                    </button>
                   </div>
                 )}
+
+                <div className="epg-editor-hint">
+                  {customMatchName
+                    ? (matchByAlias
+                        ? t('matchNameAliasHint', {
+                            name: customMatchName,
+                            provider: providerName,
+                          })
+                        : t('matchNameProviderHint', {
+                            name: customMatchName,
+                            provider: providerName,
+                          }))
+                    : t('matchNameNoCustomName', { provider: providerName })}
+                </div>
               </div>
               )}
 
@@ -1591,7 +1853,9 @@ export function EpgEditorModal({ channel: initialChannel, sourceId, sourceName, 
               <div className="epg-source-filter">
                 <input
                   className="epg-editor-input"
-                  placeholder={t('filterChannels', { source: resolvedSourceId ? `${sourceName ?? ''} ` : '' })}
+                  placeholder={t('filterChannels', {
+                    source: channelList ? `${channelListName ?? ''} ` : (resolvedSourceId ? `${sourceName ?? ''} ` : ''),
+                  })}
                   value={sourceFilter}
                   onChange={e => setSourceFilter(e.target.value)}
                 />
@@ -1731,6 +1995,24 @@ export function EpgEditorModal({ channel: initialChannel, sourceId, sourceName, 
                 </div>
               )}
 
+              {/* Enabled-only scope */}
+              <div className="epg-editor-field">
+                <label
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: automatchRunning ? 'default' : 'pointer' }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={enabledOnly}
+                    onChange={e => setEpgAutomatchEnabledOnly(e.target.checked)}
+                    disabled={automatchRunning}
+                  />
+                  <span className="epg-editor-label" style={{ margin: 0 }}>{t('enabledOnlyLabel')}</span>
+                </label>
+                <div className="epg-editor-hint">
+                  {t('enabledOnlyHint')}
+                </div>
+              </div>
+
               {/* Threshold slider */}
               <div className="epg-editor-field">
                 <label className="epg-editor-label">
@@ -1857,18 +2139,67 @@ export function EpgEditorModal({ channel: initialChannel, sourceId, sourceName, 
                         <strong>{automatchResults.ambiguous}</strong> {t('ambiguous')}
                       </span>
                     )}
+                    {automatchResults.filtered > 0 && (
+                      <span style={{ color: 'var(--text-secondary, #888)' }} title={t('enabledOnlyHint')}>
+                        <strong>{automatchResults.filtered.toLocaleString()}</strong> {t('enabledOnlyFiltered')}
+                      </span>
+                    )}
+                    {automatchResults.unmatched > 0 && (
+                      <span style={{ color: 'var(--text-secondary, #888)' }}>
+                        <strong>{automatchResults.unmatched}</strong> {t('automatchUnmatched')}
+                      </span>
+                    )}
                   </div>
-                  <div style={{ maxHeight: 280, overflowY: 'auto', padding: '6px 0' }}>
-                    {automatchResults.details.map((detail, i) => (
-                      <div key={i} style={{
-                        padding: '4px 14px',
-                        fontSize: '0.8rem',
-                        color: detail.startsWith('✓') ? '#4caf50' : detail.startsWith('⚠') ? '#ffaa44' : 'var(--text-secondary, #888)',
-                        borderBottom: '1px solid rgba(255,255,255,0.03)',
-                      }}>
-                        {detail}
-                      </div>
-                    ))}
+                  {/*
+                    A run touches up to every channel in scope and logs a line per
+                    channel, so this list is virtualized — mounting tens of
+                    thousands of rows is what would make the modal stutter after a
+                    big run. Rows wrap, so heights are measured rather than assumed.
+                  */}
+                  <div
+                    ref={automatchListRef}
+                    style={{ maxHeight: 280, overflowY: 'auto', padding: '6px 0' }}
+                  >
+                    <VirtualList
+                      scrollRef={automatchListRef}
+                      items={automatchResults.details}
+                      estimateItemHeight={26}
+                      overscan={10}
+                      getKey={(_, index) => index}
+                      renderItem={(detail) => {
+                        const match = detail.match;
+                        const busy = match ? unmatchingId === match.streamId : false;
+                        const notice = match ? unmatchNotices[match.streamId] : undefined;
+                        return (
+                          <div className="epg-automatch-detail">
+                            <span
+                              className="epg-automatch-detail-text"
+                              style={{
+                                color: detail.text.startsWith('✓') ? '#4caf50'
+                                  : detail.text.startsWith('⚠') ? '#ffaa44'
+                                  : 'var(--text-secondary, #888)',
+                              }}
+                            >
+                              {detail.text}
+                            </span>
+                            {match && !match.unmatched && (
+                              <button
+                                className="epg-automatch-unmatch"
+                                onClick={() => handleUnmatchMatch(match)}
+                                disabled={unmatchingId !== null}
+                                title={t('automatchUnmatchHint')}
+                              >
+                                {busy ? '…' : t('automatchUnmatch')}
+                              </button>
+                            )}
+                            {match?.unmatched && (
+                              <span className="epg-automatch-unmatched">{t('automatchUnmatched')}</span>
+                            )}
+                            {notice && <span className="epg-automatch-notice">{notice}</span>}
+                          </div>
+                        );
+                      }}
+                    />
                   </div>
                 </div>
               )}

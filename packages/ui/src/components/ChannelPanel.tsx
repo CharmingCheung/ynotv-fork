@@ -18,6 +18,7 @@ import { CustomGroupManager } from './CustomGroupManager';
 import { FailoverGroupListModal } from './FailoverGroupListModal';
 import { ViewAllProgramsModal } from './ViewAllProgramsModal';
 import { PlaylistListModal } from './PlaylistListModal';
+import { EpgEditorModal } from './EpgEditorModal';
 
 import { useChannelSortOrder, useEpgView, useEpgVisibleHours, useEpgClockFormat, useEpgShowDate, useUIStore, useEpgThreeColumn } from '../stores/uiStore';
 import { NowPlayingBar } from './NowPlayingBar';
@@ -936,6 +937,10 @@ export function ChannelPanel({
   // State for failover group list modal
   const [showFailoverGroupModal, setShowFailoverGroupModal] = useState(false);
   const [showPlaylistListModal, setShowPlaylistListModal] = useState(false);
+  // Channels the EPG Editor was opened with. Snapshot at click time, so the modal
+  // opens on the list the user was looking at and a re-render of the guide can't
+  // swap its contents (or its identity) underneath it.
+  const [epgEditorList, setEpgEditorList] = useState<{ channels: StoredChannel[]; name: string } | null>(null);
 
   // Volume/mute state for mini media bar
   const [previewVolume, setPreviewVolume] = useState(100);
@@ -1373,6 +1378,13 @@ export function ChannelPanel({
   const categoryName = playlistCatLink
     ? (playlistCatLink.displayName ?? t('linkedCategory'))
     : (currentCategory?.category_name ?? i18n.t('live:allChannels'));
+
+  // The EPG editor's list tab names the category it was handed. Left empty when
+  // there is no real category (All Channels / Favorites), so the modal falls back
+  // to its own label instead of producing "Filter All Channels channels…".
+  const epgEditorListName = playlistCatLink
+    ? (playlistCatLink.displayName ?? '')
+    : (currentCategory?.category_name ?? '');
 
   // Get source ID from current category or playlist link
   const sourceId = playlistCatLink
@@ -2898,6 +2910,24 @@ export function ChannelPanel({
                       </>
                     )}
 
+                    {/* EPG Editor for the list on screen: opens on this category's
+                        channels, and a click goes straight into that channel's
+                        editor — the same view as right-click → Edit EPG. Hidden in
+                        Search/Watchlist mode, where the guide's rows are not a
+                        category's channels. */}
+                    {!epgHiddenButtons.includes('epg-editor') && !isSearchMode && !isWatchlistMode && channels.length > 0 && (
+                      <button
+                        className="guide-epg-shift-btn"
+                        onClick={() => setEpgEditorList({ channels, name: epgEditorListName })}
+                        title={t('epgEditor')}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                          <path d="M12 20h9" />
+                          <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                        </svg>
+                        <span className="btn-label">{t('epgEditor')}</span>
+                      </button>
+                    )}
                     {!epgHiddenButtons.includes('playlist-editor') && (
                       <button
                         className="guide-epg-shift-btn"
@@ -4366,6 +4396,17 @@ export function ChannelPanel({
       {showFailoverGroupModal && (
         <FailoverGroupListModal
           onClose={() => setShowFailoverGroupModal(false)}
+        />
+      )}
+
+      {/* EPG Editor Modal — opened for the current category's channels */}
+      {epgEditorList && (
+        <EpgEditorModal
+          channelList={epgEditorList.channels}
+          channelListName={epgEditorList.name}
+          sourceId={sourceId || undefined}
+          sourceName={categoryName}
+          onClose={() => setEpgEditorList(null)}
         />
       )}
 
