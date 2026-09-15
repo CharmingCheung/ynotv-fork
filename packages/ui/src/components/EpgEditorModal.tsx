@@ -26,6 +26,7 @@ import {
   copyProgramsFromEpgChannel,
   resetChannelToDefault,
   unmatchAutomatchChannel,
+  unmatchAutomatchChannels,
   releaseChannelFeedPin,
   countFeedPinsInSource,
   releaseFeedPinsInSource,
@@ -466,7 +467,11 @@ export function EpgEditorModal({
   const [automatchSourceId, setAutomatchSourceId] = useState('');
   const [automatchScope, setAutomatchScope] = useState<SearchScope>('source');
   const [automatchMode, setAutomatchMode] = useState<EpgSearchMode>('m3u');
-  const [automatchThreshold, setAutomatchThreshold] = useState(40);
+  // 90% by default: a run writes what it matches straight to the library, and a
+  // loose threshold (the old 40%) will happily fill a source with lookalike
+  // channels before the user has read the results. Lowering it is a deliberate
+  // choice now, rather than what happens when nobody touches the slider.
+  const [automatchThreshold, setAutomatchThreshold] = useState(90);
   const [automatchCategories, setAutomatchCategories] = useState<string[]>([]);
   const [automatchAllCategories, setAutomatchAllCategories] = useState(true);
   const [automatchRunning, setAutomatchRunning] = useState(false);
@@ -492,6 +497,10 @@ export function EpgEditorModal({
   /** Channel currently being unmatch-ed, and per-row messages after a failure or a stale match. */
   const [unmatchingId, setUnmatchingId] = useState<string | null>(null);
   const [unmatchNotices, setUnmatchNotices] = useState<Record<string, string>>({});
+  /** The whole-run undo: armed (two-step confirm), in flight, or reporting a failure. */
+  const [confirmUndoAll, setConfirmUndoAll] = useState(false);
+  const [undoingAll, setUndoingAll] = useState(false);
+  const [undoAllError, setUndoAllError] = useState<string | null>(null);
   /** Scroll container for the virtualized results list. */
   const automatchListRef = useRef<HTMLDivElement>(null);
   const [sourceCategories, setSourceCategories] = useState<StoredCategory[]>([]);
@@ -600,6 +609,9 @@ export function EpgEditorModal({
   // ── Load source channels when switching to Source tab ──
   useEffect(() => {
     if (activeTab !== 'source') return;
+    // No list tab on a single-channel modal, so never build the source-wide list
+    // it would have shown.
+    if (channel && !channelList) return;
 
     // A caller that supplies its own list (the guide's current category) already
     // decided which channels to show, so no source query is needed — and it may
@@ -975,6 +987,10 @@ export function EpgEditorModal({
       setAutomatchProgress({ matched: 0, total: channels.length });
       setAutomatchRefusals([]);
       setUnmatchNotices({});
+      // A fresh run replaces the previous results, so an armed Undo all from the
+      // last one has nothing left to act on.
+      setConfirmUndoAll(false);
+      setUndoAllError(null);
 
       let matched = 0;
       let skipped = 0;
@@ -1166,6 +1182,22 @@ export function EpgEditorModal({
   }
 
   /**
+   * If the Channel tab has this stream open, its id, feed and icon are the ones the
+   * match wrote, so they have to go back to the pre-run values with it.
+   */
+  function restoreChannelTabFromPrior(streamId: string, prior: PriorOverrideSnapshot) {
+    if (!channel || channel.stream_id !== streamId) return;
+    setTvgId('');
+    setOriginalTvgId('');
+    setPinnedFeed(prior.feedSourceId ?? undefined);
+    setLogoUrl(prior.streamIcon ?? rawChannel?.stream_icon ?? channel.stream_icon ?? '');
+    setLogoBackground((prior.logoBackground as 'auto' | 'light' | 'dark') ?? 'auto');
+    setLogoPadding((prior.logoPadding as 'default' | 'none') ?? 'default');
+    setTimeshiftHours(String(prior.timeshiftHours ?? 0));
+    setMatchByAlias(Boolean(prior.matchByAlias));
+  }
+
+  /**
    * Undo one match from the last run, straight from its results list.
    *
    * The run's snapshot is restored rather than the row simply being deleted, so a
@@ -1201,23 +1233,71 @@ export function EpgEditorModal({
           : d),
       } : prev);
 
-      // If this is the channel the modal has open, the Channel tab is still
-      // showing the id, feed and icon that were just removed.
-      if (channel && channel.stream_id === match.streamId) {
-        setTvgId('');
-        setOriginalTvgId('');
-        setPinnedFeed(match.prior.feedSourceId ?? undefined);
-        setLogoUrl(match.prior.streamIcon ?? rawChannel?.stream_icon ?? channel.stream_icon ?? '');
-        setLogoBackground((match.prior.logoBackground as 'auto' | 'light' | 'dark') ?? 'auto');
-        setLogoPadding((match.prior.logoPadding as 'default' | 'none') ?? 'default');
-        setTimeshiftHours(String(match.prior.timeshiftHours ?? 0));
-        setMatchByAlias(Boolean(match.prior.matchByAlias));
-      }
+      restoreChannelTabFromPrior(match.streamId, match.prior);
     } catch (e) {
       console.error('[EPG Editor] Could not unmatch channel:', e);
       setUnmatchNotices(prev => ({ ...prev, [match.streamId]: t('automatchUnmatchFailed') }));
     } finally {
       setUnmatchingId(null);
+    }
+  }
+
+  /**
+   * Undo every match of the last run in one pass.
+   *
+   * Same outcome per channel as the row-level Unmatch — newer hand-matches are left
+   * alone — but the work is batched in the service so a run of thousands only
+   * refreshes the library once.
+   */
+  async function handleUndoAllMatches() {
+    if (undoingAll || !automatchResults) return;
+
+    const targets = automatchResults.details
+      .map(d => d.match)
+      .filter((m): m is AutomatchMatch => m !== undefined && !m.unmatched);
+    if (targets.length === 0) {
+      setConfirmUndoAll(false);
+      return;
+    }
+
+    setUndoingAll(true);
+    setUndoAllError(null);
+    try {
+      const { undoneStreamIds, modifiedStreamIds } = await unmatchAutomatchChannels(
+        targets.map(m => ({ streamId: m.streamId, epgChannelId: m.epgChannelId, prior: m.prior }))
+      );
+      const undone = new Set(undoneStreamIds);
+
+      setAutomatchResults(prev => prev ? {
+        ...prev,
+        matched: Math.max(0, prev.matched - undoneStreamIds.length),
+        unmatched: prev.unmatched + undoneStreamIds.length,
+        details: prev.details.map(d => {
+          const m = d.match;
+          if (!m || m.unmatched || !undone.has(m.streamId)) return d;
+          return { ...d, match: { ...m, unmatched: true } };
+        }),
+      } : prev);
+
+      if (modifiedStreamIds.length > 0) {
+        // The bulk pass leaves these alone, so the rows say why they stayed.
+        setUnmatchNotices(prev => {
+          const next = { ...prev };
+          for (const id of modifiedStreamIds) next[id] = t('automatchUnmatchStale');
+          return next;
+        });
+      }
+
+      if (channel && undone.has(channel.stream_id)) {
+        const target = targets.find(m => m.streamId === channel.stream_id);
+        if (target) restoreChannelTabFromPrior(target.streamId, target.prior);
+      }
+    } catch (e) {
+      console.error('[EPG Editor] Could not undo all matches:', e);
+      setUndoAllError(t('automatchUndoAllFailed'));
+    } finally {
+      setUndoingAll(false);
+      setConfirmUndoAll(false);
     }
   }
 
@@ -1229,16 +1309,31 @@ export function EpgEditorModal({
   // (a category), rather than "All Channels" for an entire source.
   const listTabLabel = channelList ? (channelListName || t('allChannelsTab')) : t('allChannelsTab');
 
+  /**
+   * The list tab is for callers that asked for a list (the guide's current
+   * category). Opened on one channel — right-click → EPG Editor — an "All
+   * Channels" list of the whole source has nothing to do with the channel in
+   * front of the user, and a stray click on one of its rows silently swaps the
+   * modal over to a different channel, discarding whatever was unsaved. So it is
+   * only offered when the caller supplied the list.
+   */
+  const showListTab = Boolean(channelList) || !channel;
+
   const filteredSourceChannels = sourceChannels.filter(ch =>
     !sourceFilter || ch.name.toLowerCase().includes(sourceFilter.toLowerCase())
   );
+
+  /** Matches from the last run that are still applied — what "Undo all" takes back. */
+  const automatchUndoCount = automatchResults
+    ? automatchResults.details.reduce((n, d) => (d.match && !d.match.unmatched ? n + 1 : n), 0)
+    : 0;
 
   const tabs: { key: EditorTab; label: string }[] = channel
     ? [
         { key: 'channel',  label: `📡 ${t('channelTab')}` },
         { key: 'programs', label: `📋 ${t('programsTab')}` },
         { key: 'search',   label: `🔍 ${t('epgSearchTab')}` },
-        { key: 'source',   label: `📺 ${listTabLabel}` },
+        ...(showListTab ? [{ key: 'source' as const, label: `📺 ${listTabLabel}` }] : []),
         { key: 'automatch', label: `🤖 ${t('automatchTab')}` },
       ]
     : [
@@ -2121,6 +2216,8 @@ export function EpgEditorModal({
                     background: 'rgba(255,255,255,0.03)',
                     borderBottom: '1px solid var(--border-color, rgba(255,255,255,0.07))',
                     display: 'flex',
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
                     gap: 16,
                     fontSize: '0.82rem',
                   }}>
@@ -2149,7 +2246,41 @@ export function EpgEditorModal({
                         <strong>{automatchResults.unmatched}</strong> {t('automatchUnmatched')}
                       </span>
                     )}
+                    {automatchUndoCount > 0 && (
+                      <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {confirmUndoAll ? (
+                          <>
+                            <button
+                              className="epg-automatch-unmatch epg-automatch-undo-all"
+                              onClick={() => setConfirmUndoAll(false)}
+                              disabled={undoingAll}
+                            >
+                              {i18n.t('common:cancel')}
+                            </button>
+                            <button
+                              className="epg-automatch-unmatch epg-automatch-undo-all epg-automatch-undo-all-confirm"
+                              onClick={handleUndoAllMatches}
+                              disabled={undoingAll}
+                            >
+                              {undoingAll ? '…' : t('automatchUndoAllConfirm', { count: automatchUndoCount })}
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            className="epg-automatch-unmatch epg-automatch-undo-all"
+                            onClick={() => setConfirmUndoAll(true)}
+                            disabled={unmatchingId !== null || undoingAll}
+                            title={t('automatchUndoAllHint')}
+                          >
+                            {t('automatchUndoAll')}
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
+                  {undoAllError && (
+                    <div className="epg-automatch-undo-error">{undoAllError}</div>
+                  )}
                   {/*
                     A run touches up to every channel in scope and logs a line per
                     channel, so this list is virtualized — mounting tens of
@@ -2186,7 +2317,7 @@ export function EpgEditorModal({
                               <button
                                 className="epg-automatch-unmatch"
                                 onClick={() => handleUnmatchMatch(match)}
-                                disabled={unmatchingId !== null}
+                                disabled={unmatchingId !== null || undoingAll}
                                 title={t('automatchUnmatchHint')}
                               >
                                 {busy ? '…' : t('automatchUnmatch')}

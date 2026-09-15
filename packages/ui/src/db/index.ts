@@ -1571,6 +1571,13 @@ class YnotvDatabase extends SqliteDatabase {
       match_by_alias INTEGER
     )`);
 
+    // Feed locks are read on every EPG pass (the pin map, the needing-mappings,
+    // the pin-aware wipe, a link's locked targets), and a link's sync now writes
+    // one per channel it fills — so the pin column is looked up far more often
+    // than the rest of the table. Without this index those queries walk every
+    // override row (15k+ on a large library).
+    await db.execute(`CREATE INDEX IF NOT EXISTS idx_epg_overrides_pin ON epg_channel_overrides(epg_source_id)`);
+
     // Per-program overrides (edited fields) + custom programs + tombstones
     await db.execute(`CREATE TABLE IF NOT EXISTS epg_program_overrides (
       id          TEXT PRIMARY KEY,

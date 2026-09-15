@@ -1184,6 +1184,15 @@ pub async fn stream_parse_epg_multi<R: tauri::Runtime>(
             spools.entry(source_id.to_string()).or_default().push(batch);
             true
         };
+        // First successful match per stream, so the pass can record which feed
+        // channel a filled channel now follows (and lock it there — see
+        // `save_epg_channel_overrides`).
+        let mut overrides: HashMap<String, String> = HashMap::new();
+        let mut on_match = |stream_id: &str, feed_id: &str| {
+            overrides
+                .entry(stream_id.to_string())
+                .or_insert_with(|| feed_id.to_string());
+        };
 
         let (channels, result) = parse_and_stream_multi_once(
             reader,
@@ -1191,13 +1200,14 @@ pub async fn stream_parse_epg_multi<R: tauri::Runtime>(
             &mut sink,
             &mut on_progress,
             None,
-            None,
+            Some(&mut on_match),
         )?;
 
         Ok(MultiSpooledParse {
             spools,
             channels,
             result,
+            overrides,
         })
     });
 
@@ -1251,6 +1261,7 @@ pub async fn stream_parse_epg_multi<R: tauri::Runtime>(
         spools,
         channels,
         result: mut parse_result,
+        overrides,
     } = spooled;
     parse_result.bytes_processed = total_bytes_downloaded;
 
@@ -1266,6 +1277,15 @@ pub async fn stream_parse_epg_multi<R: tauri::Runtime>(
             let deleted = delete_programs_for_source(db, &config.source_id)?;
             info!("[EPG] Deleted {} old programs for source {}", deleted, config.source_id);
             log_pin_kept_programs(db, &config.source_id);
+        }
+    }
+
+    // Channels locked to this feed get a replace, not a merge: they are this
+    // feed's projection, so the previous owner's rows must go before the new
+    // ones land (see `replace_locked_guides`).
+    if let Some(feed_ref) = feed_ref.as_deref() {
+        for (source_id, spool) in &spools {
+            replace_locked_guides(db, source_id, feed_ref, spool.iter().flatten());
         }
     }
 
@@ -1328,6 +1348,20 @@ pub async fn stream_parse_epg_multi<R: tauri::Runtime>(
                 per_source_lock_wait_ms.insert(sid, 0);
             }
         }
+    }
+
+    // Record which feed channel each filled channel now follows, and lock the
+    // ones this link filled to it (same rule as the cache path — see
+    // `save_epg_channel_overrides`). Written after the guides landed, so a lock
+    // never points at a channel this pass filled nothing for.
+    let link_lock = lockable_feed_ref(feed_ref.as_deref());
+    match with_sync_db_retry(|| save_epg_channel_overrides(db, &overrides, link_lock)) {
+        Ok(0) => {}
+        Ok(saved) => match link_lock {
+            Some(feed) => info!("[EPG] Locked {} channel(s) this link filled to {}", saved, feed),
+            None => info!("[EPG] Saved {} channel override(s)", saved),
+        },
+        Err(e) => warn!("[EPG] Failed to save EPG channel overrides: {}", e),
     }
 
     let duration_ms = start_time.elapsed().as_millis() as u64;
@@ -1419,6 +1453,8 @@ struct MultiSpooledParse {
     spools: HashMap<String, Vec<Vec<EpgProgram>>>,
     channels: Vec<EpgChannelInfo>,
     result: MultiSourceParserResult,
+    /// stream_id -> first matched EPG channel id (for epg_channel_overrides).
+    overrides: HashMap<String, String>,
 }
 
 /// Sync reader over an async download channel. Blocks only a blocking thread,
@@ -2982,6 +3018,106 @@ pub(crate) fn pin_kept_programs_conn(
     Ok(rows)
 }
 
+/// Stream ids a parse actually filled, read from its spooled programmes. The
+/// router rewrites `channel_id` to the matching channel's `stream_id` (see the
+/// batch sink), so a spool holds real stream ids, not feed channel ids.
+fn spooled_stream_ids<'a>(
+    programs: impl IntoIterator<Item = &'a EpgProgram>,
+) -> std::collections::HashSet<String> {
+    programs
+        .into_iter()
+        .map(|program| program.channel_id.clone())
+        .collect()
+}
+
+/// Replace the guide of the channels locked to `feed_ref` that this parse
+/// matched: drop their rows so the incoming programmes are not merged with what
+/// the previous owner (the playlist's own EPG, an earlier lock) had written.
+///
+/// A locked channel is supposed to be a projection of the feed the user chose,
+/// and merging can't produce that: the old rows survive at every start time the
+/// new feed doesn't repeat, and overlap it wherever the schedule shifted.
+///
+/// Only channels locked to *this* feed and matched *by this pass* are touched.
+/// Everything else here is a gap-fill and must not delete, and a locked channel
+/// the feed carries nothing for keeps whatever guide it has.
+///
+/// Programmes older than the feed's own window are not preserved: the parser
+/// stores whatever the feed sends, so the channel ends up with exactly the
+/// feed's coverage — the same result the playlist-pin alignment produces.
+///
+/// Returns (locked channels cleared, rows deleted).
+pub(crate) fn replace_locked_guides_conn(
+    conn: &rusqlite::Connection,
+    feed_ref: &str,
+    matched: &std::collections::HashSet<String>,
+) -> Result<(usize, usize)> {
+    if matched.is_empty() {
+        return Ok((0, 0));
+    }
+
+    let locked: Vec<String> = {
+        let mut stmt = conn.prepare(
+            "SELECT stream_id FROM epg_channel_overrides WHERE epg_source_id = ?1",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![feed_ref], |row| row.get::<_, String>(0))?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()?
+    };
+
+    let mut del = conn.prepare("DELETE FROM programs WHERE stream_id = ?1")?;
+    let mut channels = 0usize;
+    let mut cleared = 0usize;
+    for stream_id in locked {
+        if !matched.contains(&stream_id) {
+            continue;
+        }
+        cleared += del.execute(rusqlite::params![stream_id])?;
+        channels += 1;
+    }
+    Ok((channels, cleared))
+}
+
+/// Serialized entry point for `replace_locked_guides_conn`, used by both global
+/// EPG paths right after their download is verified and before the new
+/// programmes are stored. Silent when nothing is locked to the feed.
+fn replace_locked_guides<'a>(
+    db: &DvrDatabase,
+    source_id: &str,
+    feed_ref: &str,
+    programs: impl IntoIterator<Item = &'a EpgProgram>,
+) {
+    // "global_epg_<linkId>" only: a source's own feed pass replaces its rows
+    // through the pin-aware wipe, and its extra-URL waterfall must stay additive.
+    if !feed_ref.starts_with("global_epg_") {
+        return;
+    }
+
+    let matched = spooled_stream_ids(programs);
+    if matched.is_empty() {
+        return;
+    }
+
+    let result = with_sync_db_retry(|| {
+        // Serialized with all other EPG program writes (see EPG_WRITE_LOCK).
+        let _guard = EPG_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let conn = db.get_conn()?;
+        replace_locked_guides_conn(&conn, feed_ref, &matched)
+    });
+
+    match result {
+        Ok((channels, cleared)) if channels > 0 => info!(
+            "[EPG] Replaced the guide for {} feed-locked channel(s) of source {} ({} row(s) cleared before storing feed {})",
+            channels, source_id, cleared, feed_ref
+        ),
+        Ok(_) => {}
+        Err(e) => warn!(
+            "[EPG] Could not replace feed-locked channel guides for source {}: {}",
+            source_id,
+            e
+        ),
+    }
+}
+
 /// Report what the pin-aware wipe spared, so a pinned channel's guide surviving
 /// a source's sync — and which feed it is waiting on — is visible in the log
 /// instead of having to be inferred from the program counts.
@@ -3659,39 +3795,86 @@ struct CacheSpooledParse {
     cache_programs: usize,
 }
 
-/// Persist matched EPG channel ids as overrides (INSERT OR IGNORE — never
-/// overwrites an existing override). Mirrors the renderer's previous
-/// behaviour of saving the first successful match per stream.
+/// Persist matched EPG channel ids as overrides, and — when the pass is a global
+/// EPG link — lock the channels it just filled to that feed.
+///
+/// The id write never overwrites an existing override (INSERT OR IGNORE): the
+/// renderer's previous behaviour of saving the first successful match per stream.
+///
+/// `pin` is `Some("global_epg_<linkId>")` for a link pass and `None` otherwise.
+/// A channel a link has just filled is locked to it exactly as if the user had
+/// picked that feed in the EPG editor: the channel's own playlist feed no longer
+/// writes it, the source's wipe spares its guide, and the link replaces (rather
+/// than merges into) that guide on its own syncs. Without this the fill is a
+/// one-off — the next source sync deletes it and only a wipe-the-channel-again
+/// cycle brings it back.
+///
+/// An existing lock is never replaced (a channel the user pinned to another feed
+/// keeps it) and an existing id is never overwritten. Rows with a lock naming a
+/// feed that no longer exists are left for the renderer's release pass.
 fn save_epg_channel_overrides(
     db: &DvrDatabase,
     overrides: &HashMap<String, String>,
+    pin: Option<&str>,
 ) -> Result<usize> {
     if overrides.is_empty() {
         return Ok(0);
     }
     let mut conn = db.get_conn()?;
-    save_epg_channel_overrides_conn(&mut conn, overrides)
+    save_epg_channel_overrides_conn(&mut conn, overrides, pin)
 }
 
 fn save_epg_channel_overrides_conn(
     conn: &mut rusqlite::Connection,
     overrides: &HashMap<String, String>,
+    pin: Option<&str>,
 ) -> Result<usize> {
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    let mut stmt = tx.prepare(
-        "INSERT OR IGNORE INTO epg_channel_overrides (stream_id, epg_channel_id) VALUES (?1, ?2)",
-    )?;
     let mut saved = 0usize;
-    for (stream_id, epg_channel_id) in overrides {
-        match stmt.execute(rusqlite::params![stream_id, epg_channel_id]) {
-            Ok(1) => saved += 1,
-            Ok(_) => {}
-            Err(e) => return Err(e.into()),
+
+    if let Some(feed_ref) = pin {
+        // The SELECT-free upsert: a new row gets id + lock, and an existing row
+        // only gains the lock — and only when it has none.
+        let mut stmt = tx.prepare(
+            "INSERT INTO epg_channel_overrides (stream_id, epg_channel_id, epg_source_id)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(stream_id) DO UPDATE SET epg_source_id = excluded.epg_source_id
+              WHERE epg_channel_overrides.epg_source_id IS NULL
+                 OR TRIM(epg_channel_overrides.epg_source_id) = ''",
+        )?;
+        for (stream_id, epg_channel_id) in overrides {
+            match stmt.execute(rusqlite::params![stream_id, epg_channel_id, feed_ref]) {
+                // Every changed row is a row that now carries this lock.
+                Ok(n) if n > 0 => saved += n,
+                Ok(_) => {}
+                Err(e) => return Err(e.into()),
+            }
         }
+        stmt.finalize()?;
+    } else {
+        let mut stmt = tx.prepare(
+            "INSERT OR IGNORE INTO epg_channel_overrides (stream_id, epg_channel_id) VALUES (?1, ?2)",
+        )?;
+        for (stream_id, epg_channel_id) in overrides {
+            match stmt.execute(rusqlite::params![stream_id, epg_channel_id]) {
+                Ok(1) => saved += 1,
+                Ok(_) => {}
+                Err(e) => return Err(e.into()),
+            }
+        }
+        stmt.finalize()?;
     }
-    stmt.finalize()?;
+
     tx.commit()?;
     Ok(saved)
+}
+
+/// The feed a pass may lock the channels it fills to: only a global EPG link
+/// pass locks anything. A playlist's own feed/extra-URL pass must not, or every
+/// matched channel would end up pinned to its own source, which bars every other
+/// feed — including the global EPG links that are meant to fill it.
+fn lockable_feed_ref(feed_ref: Option<&str>) -> Option<&str> {
+    feed_ref.filter(|feed| feed.starts_with("global_epg_"))
 }
 
 /// Sync and save all EPG channels and programs to a separate database cache file.
@@ -4059,6 +4242,10 @@ pub async fn cache_entire_epg_db<R: tauri::Runtime>(
     let mut per_source_insert_ms: HashMap<String, u64> = HashMap::new();
     let mut per_source_lock_wait_ms: HashMap<String, u64> = HashMap::new();
     for (source_id, spool) in &spools {
+        // Channels locked to this link are this feed's projection, not a gap to
+        // fill: replace their guide instead of merging into it.
+        replace_locked_guides(db, source_id, &feed_ref, spool.iter());
+
         let ins_start = std::time::Instant::now();
         match insert_programs_batch_timed(db, source_id, spool).await {
             Ok((inserted, lock_wait_ms)) => {
@@ -4074,12 +4261,23 @@ pub async fn cache_entire_epg_db<R: tauri::Runtime>(
     }
 
     // Persist the first successful match per stream as a channel override
-    // (INSERT OR IGNORE — never overwrites an existing override), mirroring
-    // the renderer's previous behaviour.
-    let saved_overrides = save_epg_channel_overrides(db, &overrides)
-        .map_err(|e| format!("Failed to save EPG channel overrides: {}", e))?;
-    if saved_overrides > 0 {
-        info!("[EPG Cache] Saved {} channel override(s)", saved_overrides);
+    // (INSERT OR IGNORE — never overwrites an existing override), and lock the
+    // channels this link filled to it, so its guide survives the source's wipe
+    // and is replaced (not merged) on the link's next sync.
+    // Best-effort like the multi-source path: in-memory preferences, and the
+    // guides are already stored — a metadata write must not fail the whole pass
+    // (the user would see an error over a fill that actually succeeded).
+    let link_lock = lockable_feed_ref(Some(&feed_ref));
+    match with_sync_db_retry(|| save_epg_channel_overrides(db, &overrides, link_lock)) {
+        Ok(0) => {}
+        Ok(saved) => match link_lock {
+            Some(feed) => info!(
+                "[EPG Cache] Locked {} channel(s) this link filled to {}",
+                saved, feed
+            ),
+            None => info!("[EPG Cache] Saved {} channel override(s)", saved),
+        },
+        Err(e) => warn!("[EPG Cache] Failed to save EPG channel overrides: {}", e),
     }
 
     // Per-source results + timing records, shaped exactly like the multi
@@ -4849,6 +5047,241 @@ mod tests {
             [("ch".to_string(), "playlist-x".to_string())].into_iter().collect();
         assert_eq!(drop_unservable_pins(&mut untouched, &[]), 0);
         assert_eq!(untouched.len(), 1);
+    }
+
+    fn program_row(channel_id: &str) -> EpgProgram {
+        EpgProgram {
+            channel_id: channel_id.to_string(),
+            title: "t".to_string(),
+            sub_title: None,
+            description: None,
+            start: "2026-09-15T20:00:00.000Z".to_string(),
+            stop: "2026-09-15T21:00:00.000Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn spooled_stream_ids_reads_the_mapped_channels() {
+        // The router rewrites channel_id to the target stream id, so a spool's
+        // channel ids are the channels this pass filled.
+        let spool = vec![
+            vec![program_row("ch_a"), program_row("ch_b")],
+            vec![program_row("ch_a")],
+        ];
+        let ids = spooled_stream_ids(spool.iter().flatten());
+        assert_eq!(ids.len(), 2, "duplicates across batches collapse");
+        assert!(ids.contains("ch_a") && ids.contains("ch_b"));
+        assert!(spooled_stream_ids(std::iter::empty()).is_empty());
+    }
+
+    fn overrides_conn() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().expect("in-memory db");
+        conn.execute_batch(
+            "CREATE TABLE epg_channel_overrides (
+                 stream_id TEXT PRIMARY KEY, epg_channel_id TEXT, epg_source_id TEXT
+             );",
+        )
+        .expect("schema");
+        conn
+    }
+
+    fn override_row(conn: &rusqlite::Connection, stream_id: &str) -> (Option<String>, Option<String>) {
+        conn.query_row(
+            "SELECT epg_channel_id, epg_source_id FROM epg_channel_overrides WHERE stream_id = ?1",
+            rusqlite::params![stream_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("override row")
+    }
+
+    #[test]
+    fn only_a_link_pass_may_lock_the_channels_it_filled() {
+        assert_eq!(lockable_feed_ref(Some("global_epg_link1")), Some("global_epg_link1"));
+        assert_eq!(
+            lockable_feed_ref(Some("source_a")),
+            None,
+            "a playlist's own feed must not lock: every match would end up pinned to its own source"
+        );
+        assert_eq!(lockable_feed_ref(None), None);
+    }
+
+    #[test]
+    fn link_pass_locks_the_channels_it_filled_without_clobbering_choices() {
+        let mut conn = overrides_conn();
+        // A channel carrying a user's own id but no lock, one locked elsewhere,
+        // one locked to its own source, and one with a blank lock string.
+        conn.execute(
+            "INSERT INTO epg_channel_overrides (stream_id, epg_channel_id) VALUES ('ch_user_id', 'user.pick')",
+            [],
+        )
+        .expect("insert");
+        conn.execute(
+            "INSERT INTO epg_channel_overrides (stream_id, epg_channel_id, epg_source_id) VALUES ('ch_other_feed', 'other.pick', 'source_b')",
+            [],
+        )
+        .expect("insert");
+        conn.execute(
+            "INSERT INTO epg_channel_overrides (stream_id, epg_channel_id, epg_source_id) VALUES ('ch_self_pinned', 'self.pick', 'source_a')",
+            [],
+        )
+        .expect("insert");
+        conn.execute(
+            "INSERT INTO epg_channel_overrides (stream_id, epg_source_id) VALUES ('ch_blank_pin', '  ')",
+            [],
+        )
+        .expect("insert");
+
+        let overrides: HashMap<String, String> = [
+            ("ch_new", "feed.new"),
+            ("ch_user_id", "feed.user"),
+            ("ch_other_feed", "feed.other"),
+            ("ch_self_pinned", "feed.self"),
+            ("ch_blank_pin", "feed.blank"),
+        ]
+        .iter()
+        .map(|(stream_id, id)| (stream_id.to_string(), id.to_string()))
+        .collect();
+
+        let saved = save_epg_channel_overrides_conn(&mut conn, &overrides, Some("global_epg_link9"))
+            .expect("save");
+        // The new channel, the user-id row and the blank-lock row gained a lock;
+        // the two rows that already named a feed did not.
+        assert_eq!(saved, 3);
+
+        assert_eq!(
+            override_row(&conn, "ch_new"),
+            (Some("feed.new".to_string()), Some("global_epg_link9".to_string())),
+            "a filled channel is recorded and locked to the link"
+        );
+        assert_eq!(
+            override_row(&conn, "ch_user_id"),
+            (Some("user.pick".to_string()), Some("global_epg_link9".to_string())),
+            "the user's id survives; only the missing lock is added"
+        );
+        assert_eq!(
+            override_row(&conn, "ch_other_feed"),
+            (Some("other.pick".to_string()), Some("source_b".to_string())),
+            "a channel locked to another feed is never taken over"
+        );
+        assert_eq!(
+            override_row(&conn, "ch_self_pinned"),
+            (Some("self.pick".to_string()), Some("source_a".to_string())),
+            "a channel locked to its own playlist keeps that lock"
+        );
+        assert_eq!(
+            override_row(&conn, "ch_blank_pin").1,
+            Some("global_epg_link9".to_string()),
+            "a blank lock counts as no lock"
+        );
+
+        // Every row it could lock is locked, so a second pass writes nothing.
+        let again = save_epg_channel_overrides_conn(&mut conn, &overrides, Some("global_epg_link9"))
+            .expect("save again");
+        assert_eq!(again, 0, "the lock write is idempotent");
+    }
+
+    #[test]
+    fn non_link_pass_saves_ids_without_locking_anything() {
+        let mut conn = overrides_conn();
+        let overrides: HashMap<String, String> = [("ch_a", "feed.a"), ("ch_b", "feed.b")]
+            .iter()
+            .map(|(stream_id, id)| (stream_id.to_string(), id.to_string()))
+            .collect();
+
+        let saved = save_epg_channel_overrides_conn(&mut conn, &overrides, None).expect("save");
+        assert_eq!(saved, 2);
+        assert_eq!(override_row(&conn, "ch_a").1, None, "no feed is locked by this pass");
+
+        // The user later matched ch_a by hand (id) and locked it to another feed.
+        conn.execute(
+            "UPDATE epg_channel_overrides SET epg_channel_id = 'hand.pick', epg_source_id = 'source_b' WHERE stream_id = 'ch_a'",
+            [],
+        )
+        .expect("update");
+
+        let saved = save_epg_channel_overrides_conn(&mut conn, &overrides, None).expect("save");
+        assert_eq!(saved, 0, "an existing override keeps its id");
+        assert_eq!(override_row(&conn, "ch_a").0, Some("hand.pick".to_string()));
+    }
+
+    #[test]
+    fn feed_locked_guides_are_replaced_not_merged() {
+        let conn = rusqlite::Connection::open_in_memory().expect("in-memory db");
+        conn.execute_batch(
+            "CREATE TABLE programs (
+                 id TEXT PRIMARY KEY, stream_id TEXT, title TEXT, subtitle TEXT,
+                 description TEXT, start TEXT, end TEXT, source_id TEXT
+             );
+             CREATE TABLE epg_channel_overrides (
+                 stream_id TEXT PRIMARY KEY, epg_channel_id TEXT, epg_source_id TEXT
+             );",
+        )
+        .expect("schema");
+
+        for (id, stream_id) in [
+            // The locked channel this pass matched: its stale row (a start the
+            // new feed doesn't repeat) must go.
+            ("l1a", "ch_locked_matched"),
+            ("l1b", "ch_locked_matched"),
+            // Locked to the same feed but the feed carries nothing for it — its
+            // guide must survive.
+            ("l2a", "ch_locked_unmatched"),
+            // Ordinary gap-fill channel: this pass is additive for it.
+            ("ua", "ch_unlocked"),
+            // Locked to a *different* feed: not this feed's to replace.
+            ("l3a", "ch_locked_elsewhere"),
+        ] {
+            conn.execute(
+                "INSERT INTO programs (id, stream_id, title, subtitle, description, start, end, source_id)
+                 VALUES (?1, ?2, 't', '', '', '2998-01-01T00:00:00.000Z', '2999-01-01T01:00:00.000Z', 'source_a')",
+                rusqlite::params![id, stream_id],
+            )
+            .expect("insert program");
+        }
+        for (stream_id, pin) in [
+            ("ch_locked_matched", "global_epg_link9"),
+            ("ch_locked_unmatched", "global_epg_link9"),
+            ("ch_locked_elsewhere", "system_epg"),
+        ] {
+            conn.execute(
+                "INSERT INTO epg_channel_overrides (stream_id, epg_source_id) VALUES (?1, ?2)",
+                rusqlite::params![stream_id, pin],
+            )
+            .expect("insert override");
+        }
+
+        let matched: std::collections::HashSet<String> =
+            ["ch_locked_matched".to_string(), "ch_unlocked".to_string()]
+                .into_iter()
+                .collect();
+
+        let (channels, cleared) =
+            replace_locked_guides_conn(&conn, "global_epg_link9", &matched).expect("replace");
+        assert_eq!(channels, 1, "only the matched, locked channel is replaced");
+        assert_eq!(cleared, 2, "all of that channel's rows, not just overlapping ones");
+
+        let remaining: Vec<String> = conn
+            .prepare("SELECT id FROM programs ORDER BY id")
+            .expect("select")
+            .query_map([], |row| row.get::<_, String>(0))
+            .expect("query")
+            .map(|row| row.expect("row"))
+            .collect();
+        assert_eq!(
+            remaining,
+            vec!["l2a", "l3a", "ua"],
+            "unmatched locked, other-feed locked and unpinned rows all survive"
+        );
+
+        // Nothing matched: nothing may be deleted (a feed with no data for the
+        // channel must leave its guide alone).
+        let (channels, cleared) = replace_locked_guides_conn(
+            &conn,
+            "global_epg_link9",
+            &std::collections::HashSet::new(),
+        )
+        .expect("replace");
+        assert_eq!((channels, cleared), (0, 0));
     }
 
     #[test]

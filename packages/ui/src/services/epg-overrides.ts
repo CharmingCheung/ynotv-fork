@@ -509,21 +509,23 @@ export async function releasePinsForFeed(feedRef: string, sourceIds?: string[]):
  */
 export type UnmatchOutcome = 'unmatched' | 'modified' | 'missing';
 
-export async function unmatchAutomatchChannel(
+/**
+ * The override-row half of an unmatch: decide whether the row on disk is still the
+ * one being undone, and write the pre-run row back (or delete it).
+ *
+ * The guide the match copied is deliberately not touched here — the single and the
+ * bulk undo delete those rows their own way, since the bulk one batches them.
+ */
+async function applyUnmatch(
   streamId: string,
   expectedEpgChannelId: string,
   prior?: PriorOverrideSnapshot | null
-): Promise<UnmatchOutcome> {
-  const dbInstance = await (db as any).dbPromise;
+): Promise<{ outcome: UnmatchOutcome; restored: boolean }> {
   const existing = await getChannelOverride(streamId);
 
   // Already unmatch-ed (or the row was reset) — nothing left to undo.
-  if (!existing?.epg_channel_id) return 'missing';
-  if (existing.epg_channel_id !== expectedEpgChannelId) return 'modified';
-
-  // The match copied the feed's guide onto this stream. Leaving those rows would
-  // keep showing the very guide the user just rejected.
-  await dbInstance.execute(`DELETE FROM programs WHERE stream_id = $1`, [streamId]);
+  if (!existing?.epg_channel_id) return { outcome: 'missing', restored: false };
+  if (existing.epg_channel_id !== expectedEpgChannelId) return { outcome: 'modified', restored: false };
 
   const restored = buildRestoredOverride(streamId, prior);
   if (restored) {
@@ -531,6 +533,21 @@ export async function unmatchAutomatchChannel(
   } else {
     await db.epgChannelOverrides.delete(streamId);
   }
+  return { outcome: 'unmatched', restored: Boolean(restored) };
+}
+
+export async function unmatchAutomatchChannel(
+  streamId: string,
+  expectedEpgChannelId: string,
+  prior?: PriorOverrideSnapshot | null
+): Promise<UnmatchOutcome> {
+  const { outcome, restored } = await applyUnmatch(streamId, expectedEpgChannelId, prior);
+  if (outcome !== 'unmatched') return outcome;
+
+  // The match copied the feed's guide onto this stream. Leaving those rows would
+  // keep showing the very guide the user just rejected.
+  const dbInstance = await (db as any).dbPromise;
+  await dbInstance.execute(`DELETE FROM programs WHERE stream_id = $1`, [streamId]);
 
   const { dbEvents } = await import('../db/sqlite-adapter');
   dbEvents.notify('epg_channel_overrides', restored ? 'update' : 'delete');
@@ -538,6 +555,90 @@ export async function unmatchAutomatchChannel(
   dbEvents.notify('programs', 'clear');
   dbEvents.notify('programs', 'add');
   return 'unmatched';
+}
+
+/** One match to take back, straight from an Automatch run's results. */
+export interface UnmatchTarget {
+  streamId: string;
+  epgChannelId: string;
+  prior?: PriorOverrideSnapshot | null;
+}
+
+/**
+ * What a bulk undo did with each target, so the caller can retire exactly the rows
+ * that were taken back and flag the ones a later hand-match protected.
+ */
+export interface BulkUnmatchResult {
+  /** Channels whose match — and copied guide — was undone. */
+  undoneStreamIds: string[];
+  /** Channels left alone because they were matched by hand after the run. */
+  modifiedStreamIds: string[];
+}
+
+/**
+ * Undo every match of one Automatch run.
+ *
+ * Same decision per channel as `unmatchAutomatchChannel`, but the copied guides
+ * are dropped a chunk of 200 at a time instead of one statement per channel, and
+ * the tables are announced once at the end.
+ *
+ * The override rows themselves are still written one at a time, exactly as the
+ * single undo writes them: a bulk row write takes its column list from the first
+ * row of the batch, which would silently drop the settings a restored row happens
+ * not to carry. Each of those writes announces its own table, but live queries
+ * debounce at 50ms, so they fold into one refresh per window.
+ *
+ * Rows that were already gone are reported as undone (that is the outcome the
+ * caller shows), while rows matched by hand since the run are left untouched.
+ */
+export async function unmatchAutomatchChannels(targets: UnmatchTarget[]): Promise<BulkUnmatchResult> {
+  const result: BulkUnmatchResult = { undoneStreamIds: [], modifiedStreamIds: [] };
+  if (targets.length === 0) return result;
+
+  let anyRestoredRow = false;
+  let anyDeletedRow = false;
+  // Only rows this pass actually matched back out still carry the feed's copied
+  // guide; a 'missing' row was unmatch-ed earlier, which dropped its guide then.
+  const guideStreamIds: string[] = [];
+
+  for (const target of targets) {
+    const { outcome, restored } = await applyUnmatch(target.streamId, target.epgChannelId, target.prior);
+    if (outcome === 'modified') {
+      result.modifiedStreamIds.push(target.streamId);
+      continue;
+    }
+    // 'missing' means the row was already gone: for the user that is the same
+    // outcome as a successful unmatch, so the row is retired either way.
+    result.undoneStreamIds.push(target.streamId);
+    if (outcome !== 'unmatched') continue;
+    guideStreamIds.push(target.streamId);
+    if (restored) anyRestoredRow = true;
+    else anyDeletedRow = true;
+  }
+
+  if (guideStreamIds.length > 0) {
+    const dbInstance = await (db as any).dbPromise;
+    for (let i = 0; i < guideStreamIds.length; i += 200) {
+      const chunk = guideStreamIds.slice(i, i + 200);
+      const placeholders = chunk.map((_, n) => `$${n + 1}`).join(',');
+      await dbInstance.execute(
+        `DELETE FROM programs WHERE stream_id IN (${placeholders})`,
+        chunk
+      );
+    }
+  }
+
+  // Nothing on disk changed when every target was already gone or hand-matched.
+  if (anyRestoredRow || anyDeletedRow) {
+    const { dbEvents } = await import('../db/sqlite-adapter');
+    if (anyRestoredRow) dbEvents.notify('epg_channel_overrides', 'update');
+    else dbEvents.notify('epg_channel_overrides', 'delete');
+    dbEvents.notify('channels', 'update');
+    dbEvents.notify('programs', 'clear');
+    dbEvents.notify('programs', 'add');
+  }
+
+  return result;
 }
 
 export async function resetChannelToDefault(streamId: string): Promise<void> {

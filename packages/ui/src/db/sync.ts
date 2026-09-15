@@ -14,7 +14,13 @@ import {
   clearGlobalEpgSourceStamps,
   linkNeedsSyncForAnySource,
 } from '../utils/globalEpgFreshness';
-import { dropUnservableFeedPins, type ServableFeedIds } from '../utils/epgBackupSanitize';
+import {
+  dropUnservableFeedPins,
+  globalEpgPinRef,
+  isGlobalEpgPin,
+  GLOBAL_EPG_PIN_PREFIX,
+  type ServableFeedIds,
+} from '../utils/epgBackupSanitize';
 import { effectiveMatchName, buildAliasMatchNames } from '../utils/epgMatchName';
 
 import { invoke } from '@tauri-apps/api/core';
@@ -1410,7 +1416,26 @@ export async function applyGlobalEpgToSource(
     // too — they read the pins from the DB themselves, so the list has to be
     // handed over. Resolved after the guards above: a source with no links or no
     // channels has nothing to hand it to.
-    const { unservableFeeds } = await loadServableFeedPins();
+    const { pins: feedPinMap, unservableFeeds } = await loadServableFeedPins();
+
+    // Channels locked to one of these links. A lock bars every other feed, so a
+    // link that owns locked channels must be consulted even when nothing needs
+    // filling: it is their only writer, and the refresh that keeps their guide
+    // moving comes from its own pass (the Rust needing-mappings always include a
+    // channel pinned to the feed being parsed). Without this the "nothing needs
+    // EPG" shortcut below skips the pass, and a locked channel keeps its first
+    // fill until a link-level sync happens to run.
+    const linkIds = new Set(linksForSource.map(link => link.id));
+    const sourceStreamIds = new Set(channels.map(ch => ch.stream_id));
+    const lockedByLink = new Map<string, number>();
+    for (const [streamId, pin] of feedPinMap) {
+      if (!sourceStreamIds.has(streamId)) continue;
+      if (!isGlobalEpgPin(pin)) continue;
+      const linkId = pin.slice(GLOBAL_EPG_PIN_PREFIX.length);
+      if (!linkIds.has(linkId)) continue;
+      lockedByLink.set(linkId, (lockedByLink.get(linkId) ?? 0) + 1);
+    }
+    const lockedTotal = [...lockedByLink.values()].reduce((sum, count) => sum + count, 0);
 
     // Find channels that currently have no programs
     let channelsWithPrograms = await getStreamIdsWithUpcomingPrograms(source.id);
@@ -1418,10 +1443,16 @@ export async function applyGlobalEpgToSource(
 
     console.log(`[EPG] Global EPG sync starting: ${channelsNeedingEpg.length} channels out of ${channels.length} need EPG.`);
 
-    if (channelsNeedingEpg.length === 0) {
+    if (channelsNeedingEpg.length === 0 && lockedTotal === 0) {
       console.log(`[EPG] Global EPG sync skipped: no channel needs EPG (all have current guide data).`);
-      debugLog('No channel needs EPG, skipping global EPG links', 'epg');
+      debugLog('No channel needs EPG and no channel is locked to a link, skipping global EPG links', 'epg');
       return 0;
+    }
+    if (channelsNeedingEpg.length === 0) {
+      debugLog(
+        `Nothing needs EPG on ${source.name}, but ${lockedTotal} channel(s) are locked to its links - running them for those channels`,
+        'epg'
+      );
     }
 
     let totalInserted = 0;
@@ -1429,14 +1460,24 @@ export async function applyGlobalEpgToSource(
     const linkResultCounts = new Map<string, { programs: number; channels: number; matchedStreamIds: string[] }>();
 
     for (let i = 0; i < linksForSource.length; i++) {
-      if (channelsNeedingEpg.length === 0) break;
-
       const link = linksForSource[i];
+      // Per link, not a loop-wide break: when nothing needs filling, later links
+      // that own a locked channel still have work to do.
+      const lockedHere = lockedByLink.get(link.id) ?? 0;
+      if (channelsNeedingEpg.length === 0 && lockedHere === 0) {
+        debugLog(
+          `Global EPG ${i + 1}/${linksForSource.length}: ${link.name} skipped (nothing needs EPG, no channel locked to it)`,
+          'epg'
+        );
+        continue;
+      }
+
       const epgUrl = link.url.trim();
       if (!epgUrl) continue;
 
       debugLog(
-        `Global EPG ${i + 1}/${linksForSource.length}: ${link.name} - ${epgUrl.substring(0, 80)}...`,
+        `Global EPG ${i + 1}/${linksForSource.length}: ${link.name} - ${epgUrl.substring(0, 80)}...` +
+          (lockedHere > 0 ? ` (${lockedHere} channel(s) locked to it)` : ''),
         'epg'
       );
       onProgress?.(`Updating EPG (global ${i + 1}/${linksForSource.length})...`);
@@ -1845,6 +1886,12 @@ async function syncGlobalEpgLinkStandaloneImpl(
   const perSourceChannels: Record<string, number> = {};
   let syncSucceeded = false;
 
+  // Channels locked to this link, read before and after the passes so the log
+  // shows whether their guide was refreshed. The Rust pass includes them even
+  // when they already have data, so counts alone can't tell whether it ran
+  // (empty and cheap when no channel is locked to this link).
+  const lockedBefore = await readLinkFeedLockedTargets(epgLink.id);
+
   // Snapshot which stream ids already have current guide data so newly-filled
   // channels can be attributed to this link afterwards
   // (lastSyncResult.matchedStreamIds).
@@ -1921,6 +1968,15 @@ async function syncGlobalEpgLinkStandaloneImpl(
       debugLog(`Multi-source Rust parser failed: ${errMsg}`, 'epg');
     }
   }
+
+  // Report the channels this link is the only writer for, while its effect is
+  // still attributable to it, before anything else writes rows.
+  logLinkPinRefresh(
+    epgLink.name,
+    lockedBefore,
+    await readLinkFeedLockedTargets(epgLink.id),
+    syncSucceeded ? totalInserted : null
+  );
 
   // Only mark as synced if the Rust call succeeded (even if 0 programmes inserted)
   if (syncSucceeded) {
@@ -4314,11 +4370,13 @@ type CrossFeedPinTarget = {
  * Restricted to real pins, so a library with thousands of plain tvg-id overrides
  * pays one small existence check and nothing more.
  */
-async function readCrossFeedPinTargets(
-  dbInstance: any,
-  sourceId: string
+async function readFeedLockedTargets(
+  feedRef: string,
+  direction: 'source' | 'link'
 ): Promise<CrossFeedPinTarget[]> {
   try {
+    const dbInstance = await (db as any).dbPromise;
+
     const anyPins = (await selectWithRetry(
       dbInstance,
       `SELECT EXISTS(SELECT 1 FROM epg_channel_overrides
@@ -4326,6 +4384,14 @@ async function readCrossFeedPinTargets(
       []
     )) as { has_pins: number }[];
     if (!anyPins[0]?.has_pins) return [];
+
+    // A source's sync serves pins in both directions (its own channels pinned
+    // elsewhere, and other sources' channels pinned to it). A link's pass serves
+    // exactly the pins naming that link.
+    const scope =
+      direction === 'source'
+        ? `(tc.source_id = $1 OR eco.epg_source_id = $1)`
+        : `eco.epg_source_id = $1`;
 
     return (await selectWithRetry(
       dbInstance,
@@ -4340,12 +4406,57 @@ async function readCrossFeedPinTargets(
          JOIN channels tc ON tc.stream_id = eco.stream_id
         WHERE eco.epg_source_id IS NOT NULL AND TRIM(eco.epg_source_id) != ''
           AND eco.epg_source_id != tc.source_id
-          AND (tc.source_id = $1 OR eco.epg_source_id = $1)`,
-      [sourceId]
+          AND ${scope}`,
+      [feedRef]
     )) as CrossFeedPinTarget[];
   } catch (err) {
-    console.warn('[Sync] Could not read cross-feed EPG pins:', err);
+    console.warn('[Sync] Could not read feed-locked EPG pins:', err);
     return [];
+  }
+}
+
+/** Feed-locked targets a source's sync serves, in either direction. */
+function readCrossFeedPinTargets(sourceId: string): Promise<CrossFeedPinTarget[]> {
+  return readFeedLockedTargets(sourceId, 'source');
+}
+
+/** Channels locked to one global EPG link — the only targets its pass writes. */
+function readLinkFeedLockedTargets(linkId: string): Promise<CrossFeedPinTarget[]> {
+  return readFeedLockedTargets(globalEpgPinRef(linkId), 'link');
+}
+
+/**
+ * Report what a global EPG link's pass did to the channels locked to it. The
+ * link's Rust pass includes those channels even when they already have guide
+ * data (they are never "covered" for their own feed), so this is where a pinned
+ * channel's refresh is visible without querying the database afterwards.
+ */
+function logLinkPinRefresh(
+  linkName: string,
+  before: CrossFeedPinTarget[],
+  after: CrossFeedPinTarget[],
+  inserted: number | null
+): void {
+  if (before.length === 0 && after.length === 0) return;
+
+  const toId = (ref: string) => (ref.length > 8 ? `${ref.slice(0, 8)}…` : ref);
+  const beforeByStream = new Map(before.map((t) => [t.stream_id, t]));
+
+  debugLog(
+    `[Sync] Link ${linkName}: ${after.length} channel(s) feed-locked to it; ` +
+      `inserted ${inserted ?? '?'} program(s) for its attached sources`,
+    'epg'
+  );
+  for (const t of after.slice(0, 20)) {
+    const was = beforeByStream.get(t.stream_id);
+    debugLog(
+      `[Sync]   ${t.channel_name ?? t.stream_id} (${toId(t.channel_source)}): ` +
+        `rows ${was?.rows_now ?? '?'} → ${t.rows_now}, guide ends ${was?.end_now ?? '?'} → ${t.end_now ?? 'nowhere'}`,
+      'epg'
+    );
+  }
+  if (after.length > 20) {
+    debugLog(`[Sync]   …and ${after.length - 20} more channel(s) locked to this link`, 'epg');
   }
 }
 
@@ -4427,7 +4538,7 @@ export async function alignOverriddenChannelPrograms(sourceId: string): Promise<
     // Cross-feed pins this source can serve, read before and after so the log
     // shows whether a feed-locked channel's guide was replaced, not just that
     // rows moved somewhere. Empty (and cheap) for a library without pins.
-    const pinnedBefore = await readCrossFeedPinTargets(dbInstance, sourceId);
+    const pinnedBefore = await readCrossFeedPinTargets(sourceId);
 
     // 1. Delete existing copied programs for target channels in this alignment to avoid stale overlaps (using index-friendly UNION subquery)
     const deletedResult = await executeWithRetry(
@@ -4496,7 +4607,7 @@ export async function alignOverriddenChannelPrograms(sourceId: string): Promise<
     
     // Report the feed-locked targets while the alignment's effect is still
     // attributable to this source, before anything else writes rows.
-    const pinnedAfter = await readCrossFeedPinTargets(dbInstance, sourceId);
+    const pinnedAfter = await readCrossFeedPinTargets(sourceId);
     logCrossFeedPinAlignment(sourceId, pinnedBefore, pinnedAfter, unservableFeeds, {
       deleted: deletedResult?.rowsAffected ?? null,
       insertedById: insertedByIdResult?.rowsAffected ?? null,

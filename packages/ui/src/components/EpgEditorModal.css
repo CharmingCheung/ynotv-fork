@@ -1082,6 +1082,32 @@
   cursor: default;
 }
 
+/* Whole-run undo, in the results header — a step up from the 0.72rem row buttons. */
+.epg-automatch-undo-all {
+  padding: 3px 10px;
+  font-size: 0.75rem;
+}
+
+/* Armed state: unmistakable, and only a second click on this does the work. */
+.epg-automatch-undo-all-confirm {
+  color: var(--error-color, #ef4444);
+  border-color: rgba(255, 90, 90, 0.55);
+  background: rgba(255, 90, 90, 0.12);
+}
+
+.epg-automatch-undo-all-confirm:hover:not(:disabled) {
+  color: var(--text-primary, #fff);
+  border-color: rgba(255, 90, 90, 0.8);
+  background: rgba(255, 90, 90, 0.22);
+}
+
+.epg-automatch-undo-error {
+  padding: 8px 14px;
+  font-size: 0.75rem;
+  color: var(--error-color, #ef4444);
+  border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.07));
+}
+
 .epg-automatch-unmatched {
   flex: 0 0 auto;
   font-size: 0.72rem;
