@@ -355,6 +355,12 @@ export async function streamParseEpgMulti(
   epgUrl: string,
   sourceRefs: EpgSourceRef[],
   userAgent?: string,
+  /**
+   * Identity of the feed being parsed, for channel feed pins: a global EPG link
+   * passes `global_epg_<linkId>`, a source's own feed/extra URL passes the
+   * source id. Channels pinned to a different feed are left out of the mappings.
+   */
+  feedRef?: string,
   candidateUrls?: string[]
 ): Promise<EpgParseResult[]> {
   const urlsToTry = candidateUrls && candidateUrls.length > 0
@@ -380,6 +386,7 @@ export async function streamParseEpgMulti(
           clearExisting: c.clearExisting ?? false,
         })),
         userAgent: userAgent || null,
+        feedRef: feedRef || null,
       });
 
       for (const r of results) {

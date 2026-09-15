@@ -111,6 +111,10 @@ export interface GlobalEpgLink {
         channelsMatched?: number;
         perSourceChannels?: Record<string, number>; // sourceId -> count
         matchedStreamIds?: string[];
+        // sourceId -> timestamp of the last pass that covered that source.
+        // Freshness is tracked per source so one source's no-match pass can't
+        // back off the gap-fill for another attached source.
+        perSourceSyncedAt?: Record<string, number>;
     };
 }
 
@@ -149,6 +153,8 @@ export interface AppSettings {
     epgBoldSourceCategories?: boolean;
     epgPreferEpgLogos?: boolean;
     epgLogoDisplay?: 'square' | 'rectangle';
+    epgAutomatchCleanNames?: boolean;
+    epgAutomatchStripTags?: string[];
     sourceLogoDisplayOverrides?: Record<string, 'square' | 'rectangle'>;
     sourceLogoBackgroundOverrides?: Record<string, 'auto' | 'light' | 'dark'>;
     channelLogoSize?: number;

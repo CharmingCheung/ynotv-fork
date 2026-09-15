@@ -165,6 +165,21 @@
   margin-top: 4px;
 }
 
+/* Feed pin: the channel's guide is locked to one EPG source — worth standing out
+   from the plain explanatory hints, since it changes what a sync will do. */
+.epg-editor-pinned-feed {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border-left: 3px solid var(--accent-color, var(--accent, #35d0a5));
+  background: var(--surface-2, rgba(127, 127, 127, 0.12));
+  color: var(--text-primary, inherit);
+  line-height: 1.35;
+}
+
 /* ── Logo Preview ── */
 .epg-editor-logo-row {
   display: flex;
@@ -287,6 +302,49 @@
   align-items: center;
   margin-bottom: 14px;
   gap: 10px;
+}
+
+/* ── Feed locks (Programs tab) ──
+   Which EPG source a channel's guide is locked to, plus the bulk release for
+   the whole playlist. Only shown when at least one lock exists. */
+.epg-editor-feed-pin-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color, rgba(127, 127, 127, 0.3));
+  border-left: 3px solid var(--accent-color, var(--accent, #35d0a5));
+  background: var(--surface-2, rgba(127, 127, 127, 0.1));
+}
+
+.epg-editor-feed-pin-chip,
+.epg-editor-feed-pin-playlist {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 0.8rem;
+  color: var(--text-primary, inherit);
+  line-height: 1.35;
+}
+
+.epg-editor-feed-pin-playlist {
+  color: var(--text-secondary, #888);
+}
+
+.epg-editor-feed-pin-playlist strong {
+  color: var(--text-primary, inherit);
+  font-variant-numeric: tabular-nums;
+}
+
+.epg-editor-feed-pin-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-color, var(--accent, #35d0a5));
 }
 
 .epg-programs-list {
@@ -777,4 +835,148 @@
   background: #ffc107;
   color: #000;
   font-weight: 700;
+}
+
+/* ── Ambiguity worklist (Automatch tab) ──
+   Channels the opt-in cleaned-name tier refused to guess at, each with the feed
+   channels it couldn't choose between. A refusal is a decision waiting to be
+   made, so it gets standing-out treatment rather than a muted log line. */
+.epg-refusal-panel {
+  margin-top: 18px;
+  padding: 10px 12px 4px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color, rgba(127, 127, 127, 0.3));
+  border-left: 3px solid #ffaa44;
+  background: var(--surface-2, rgba(127, 127, 127, 0.1));
+}
+
+.epg-refusal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.epg-refusal-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary, inherit);
+}
+
+.epg-refusal-dismiss-all {
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  font-size: 0.75rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-color, rgba(127, 127, 127, 0.3));
+  background: transparent;
+  color: var(--text-secondary, #888);
+  cursor: pointer;
+}
+
+.epg-refusal-dismiss-all:hover:not(:disabled) {
+  color: var(--text-primary, inherit);
+  background: var(--surface-3, rgba(127, 127, 127, 0.16));
+}
+
+.epg-refusal-dismiss-all:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.epg-refusal-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.epg-refusal-row {
+  padding: 8px 0;
+  border-top: 1px solid var(--border-color, rgba(127, 127, 127, 0.18));
+}
+
+.epg-refusal-row-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.epg-refusal-channel {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.82rem;
+  color: var(--text-primary, inherit);
+}
+
+.epg-refusal-cleaned {
+  flex: 0 1 auto;
+  font-size: 0.75rem;
+  color: var(--text-secondary, #888);
+}
+
+.epg-refusal-dismiss {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-secondary, #888);
+  font-size: 0.75rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.epg-refusal-dismiss:hover:not(:disabled) {
+  color: var(--text-primary, inherit);
+  background: var(--surface-3, rgba(127, 127, 127, 0.16));
+}
+
+.epg-refusal-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.epg-refusal-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 100%;
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color, rgba(127, 127, 127, 0.35));
+  background: var(--surface-1, rgba(127, 127, 127, 0.06));
+  color: var(--text-primary, inherit);
+  text-align: left;
+  cursor: pointer;
+}
+
+.epg-refusal-choice:hover:not(:disabled) {
+  border-color: var(--accent-color, var(--accent, #35d0a5));
+  background: var(--surface-3, rgba(127, 127, 127, 0.16));
+}
+
+.epg-refusal-choice:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.epg-refusal-choice-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8rem;
+}
+
+.epg-refusal-choice-feed {
+  font-size: 0.68rem;
+  color: var(--text-secondary, #888);
 }

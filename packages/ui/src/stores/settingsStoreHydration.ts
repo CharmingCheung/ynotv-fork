@@ -512,6 +512,10 @@ async function hydrateSettingsStore(): Promise<void> {
         flatChrome: data.flatChrome ?? false,
         epgPreferEpgLogos: data.epgPreferEpgLogos ?? false,
         epgLogoDisplay: data.epgLogoDisplay ?? 'square',
+        epgAutomatchCleanNames: data.epgAutomatchCleanNames ?? false,
+        epgAutomatchStripTags: Array.isArray(data.epgAutomatchStripTags)
+          ? data.epgAutomatchStripTags.filter((t: unknown) => typeof t === 'string')
+          : [],
         channelLogoSize: data.channelLogoSize ?? 42,
         channelLogoRoundEdges: data.channelLogoRoundEdges ?? true,
         channelLogoPadding: data.channelLogoPadding ?? 'none',

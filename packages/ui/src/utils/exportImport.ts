@@ -110,6 +110,10 @@ export interface ExportData {
         epgChannelId?: string;
         streamIcon?: string;
         timeshiftHours?: number;
+        /** Feed pin: 'global_epg_<linkId>' or a source id (see epg-overrides). */
+        epgSourceId?: string;
+        /** Match EPG on the channel's renamed name instead of the provider's. */
+        matchByAlias?: boolean;
     }>;
     epgProgramOverrides: Array<{
         id: string;
@@ -405,7 +409,9 @@ async function buildExportData(): Promise<ExportData> {
             streamIcon: o.stream_icon,
             logoBackground: o.logo_background,
             logoPadding: o.logo_padding,
-            timeshiftHours: o.timeshift_hours
+            timeshiftHours: o.timeshift_hours,
+            epgSourceId: o.epg_source_id,
+            matchByAlias: o.match_by_alias
         }));
 
         const epgProgramOverrides = (await db.epgProgramOverrides.toArray()).map(o => ({
@@ -1161,7 +1167,9 @@ export async function importAllData(): Promise<{ success: boolean; error?: strin
                         stream_icon: o.streamIcon !== undefined ? o.streamIcon : (o as any).stream_icon,
                         logo_background: (o as any).logoBackground !== undefined ? (o as any).logoBackground : (o as any).logo_background,
                         logo_padding: (o as any).logoPadding !== undefined ? (o as any).logoPadding : (o as any).logo_padding,
-                        timeshift_hours: o.timeshiftHours !== undefined ? o.timeshiftHours : (o as any).timeshift_hours
+                        timeshift_hours: o.timeshiftHours !== undefined ? o.timeshiftHours : (o as any).timeshift_hours,
+                        epg_source_id: (o as any).epgSourceId !== undefined ? (o as any).epgSourceId : (o as any).epg_source_id,
+                        match_by_alias: (o as any).matchByAlias !== undefined ? (o as any).matchByAlias : (o as any).match_by_alias
                     }));
                     await db.epgChannelOverrides.bulkAdd(overrides);
                 }

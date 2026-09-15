@@ -201,9 +201,9 @@ pub struct SourceEpgConfig {
 
 /// Lightweight per-source reference passed from the renderer for the
 /// multi-source and cache-path EPG parses. The needing-EPG channel mappings
-/// are computed in Rust from the main database (channels minus already-filled
-/// stream ids, with user overrides taking priority) instead of being built
-/// and shipped across IPC.
+/// are computed in Rust from the main database (channels minus those whose
+/// guide has not run out yet, with user overrides taking priority) instead of
+/// being built and shipped across IPC.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EpgSourceRef {
@@ -214,20 +214,168 @@ pub struct EpgSourceRef {
     pub clear_existing: bool,
 }
 
+/// Timestamp the gap-fill gate compares programme end times against. Stored
+/// programme timestamps are RFC 3339 UTC with milliseconds
+/// (`2026-09-14T08:00:00.000Z`), so a cutoff in the same format compares
+/// correctly as a plain string — which is exactly what the gate relies on.
+fn epg_coverage_cutoff() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
+/// Programme end times per stream id for one source (`stream_id -> MAX(end)`).
+/// `None` means the stream has rows but no usable end time. Sources are gated
+/// independently, so only this source's programmes are read.
+fn load_stream_end_times(
+    conn: &rusqlite::Connection,
+    source_id: &str,
+) -> Result<HashMap<String, Option<String>>, String> {
+    let mut stmt = conn
+        .prepare("SELECT stream_id, MAX(end) FROM programs WHERE source_id = ?1 GROUP BY stream_id")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(rusqlite::params![source_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        })
+        .map_err(|e| e.to_string())?;
+    let mut out = HashMap::new();
+    for row in rows {
+        let (stream_id, max_end) = row.map_err(|e| e.to_string())?;
+        out.insert(stream_id, max_end);
+    }
+    Ok(out)
+}
+
+/// The stream ids a gap-fill pass must leave alone: those whose guide has not
+/// run out yet, i.e. that still have a programme ending at or after `cutoff`.
+///
+/// "Has any programmes at all" is deliberately not the test. The gap-fill paths
+/// (`additional_epg_urls` and global EPG links) never re-visit a channel they
+/// consider filled, so an existence-only check freezes a channel's guide at the
+/// horizon of the sync that first filled it: a few days later every programme
+/// has ended, the channel shows "no programme information" for good, and the
+/// user has to apply an EPG override by hand to get it back. Treating those
+/// channels as needing EPG again lets the next sync extend the guide.
+fn covered_stream_ids(
+    end_times: &HashMap<String, Option<String>>,
+    cutoff: &str,
+) -> std::collections::HashSet<String> {
+    end_times
+        .iter()
+        .filter(|(_, max_end)| match max_end {
+            Some(end) => end.as_str() >= cutoff,
+            // Rows with no end time cannot be shown, so the channel still
+            // needs EPG.
+            None => false,
+        })
+        .map(|(stream_id, _)| stream_id.clone())
+        .collect()
+}
+
+/// The name EPG matching should use for a channel.
+///
+/// `match_by_alias` (per channel, off by default) makes the user's rename — the
+/// app's alias for the channel — *replace* the provider's name as the matching
+/// key. Replacement, not a fallback: the provider name is then never turned into
+/// a key, so a feed channel that happens to match the raw name can't fill the
+/// channel either. That is what lets a rename fix a *wrong* match, not just an
+/// empty one, which matters for Xtream/Stalker channels whose names can't be
+/// corrected at the source.
+///
+/// A flagged channel with no alias keeps its provider name (never an empty key).
+fn effective_match_name(name: &str, alias: Option<&str>, match_by_alias: bool) -> String {
+    if !match_by_alias {
+        return name.to_string();
+    }
+    match alias.map(str::trim) {
+        Some(a) if !a.is_empty() => a.to_string(),
+        _ => name.to_string(),
+    }
+}
+
+/// Channel → pinned feed (`epg_channel_overrides.epg_source_id`). A value of
+/// `global_epg_<linkId>` pins the channel to that global EPG link; a bare
+/// source id pins it to that source's own feed (its primary EPG + extra URLs).
+///
+/// Best-effort: the column is added by the renderer's schema migration, so on a
+/// database that predates it (or if the table is missing) this returns no pins
+/// and every pass behaves exactly as before.
+fn load_feed_pins(conn: &rusqlite::Connection) -> HashMap<String, String> {
+    let mut pins = HashMap::new();
+    let mut stmt = match conn.prepare(
+        "SELECT stream_id, epg_source_id FROM epg_channel_overrides 
+         WHERE epg_source_id IS NOT NULL AND TRIM(epg_source_id) != ''",
+    ) {
+        Ok(stmt) => stmt,
+        Err(_) => return pins,
+    };
+    let rows = match stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, Option<String>>(1)?,
+        ))
+    }) {
+        Ok(rows) => rows,
+        Err(_) => return pins,
+    };
+    for row in rows.flatten() {
+        let (stream_id, pin) = row;
+        if let Some(pin) = pin {
+            if !pin.trim().is_empty() {
+                pins.insert(stream_id, pin.trim().to_string());
+            }
+        }
+    }
+    pins
+}
+
+/// Stream ids whose override asks matching to use the renamed channel name
+/// (`epg_channel_overrides.match_by_alias`). Best-effort for the same reason as
+/// the feed pins: the column is added by the renderer's migration.
+fn load_alias_matchers(conn: &rusqlite::Connection) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    let mut stmt = match conn.prepare(
+        "SELECT stream_id FROM epg_channel_overrides 
+         WHERE match_by_alias IS NOT NULL AND match_by_alias != 0",
+    ) {
+        Ok(stmt) => stmt,
+        Err(_) => return out,
+    };
+    let rows = match stmt.query_map([], |row| row.get::<_, String>(0)) {
+        Ok(rows) => rows,
+        Err(_) => return out,
+    };
+    for stream_id in rows.flatten() {
+        out.insert(stream_id);
+    }
+    out
+}
+
 /// Core needing-EPG mapping logic: given a source's channels, the set of
-/// stream ids that already have programmes, and the user override map, produce
-/// the channel mappings the parsers consume (override > epg_channel_id > name,
-/// mirroring the renderer's old JS filter). Pure function so the priority
-/// rules are unit-testable without a database.
+/// stream ids whose guide data is still current, and the user override map,
+/// produce the channel mappings the parsers consume (override > epg_channel_id
+/// > name, mirroring the renderer's old JS filter). Pure function so the
+/// priority rules are unit-testable without a database.
 fn build_needing_mappings(
     channels: Vec<(String, Option<String>, String)>, // stream_id, epg_channel_id, name
-    with_programs: &std::collections::HashSet<String>,
+    covered: &std::collections::HashSet<String>,
     overrides: &HashMap<String, String>,
+    pins: &HashMap<String, String>,
+    feed_ref: Option<&str>,
 ) -> Vec<ChannelMapping> {
     let mut mappings = Vec::with_capacity(channels.len());
     for (stream_id, epg_channel_id, name) in channels {
-        if with_programs.contains(&stream_id) {
+        if covered.contains(&stream_id) {
             continue;
+        }
+        // Channel pinned to a specific feed: only that feed may fill it, so it
+        // is left out of every other pass' needing pool. Without this a
+        // higher-priority global EPG could overwrite the feed the user chose in
+        // the channel editor (the override only pins the *id*, and ids are
+        // shared across feeds).
+        if let Some(pin) = pins.get(&stream_id) {
+            if feed_ref != Some(pin.as_str()) {
+                continue;
+            }
         }
         // Override wins, then epg_channel_id, then name (empty strings are
         // falsy, exactly like the JS `a || b || c` chain).
@@ -260,6 +408,11 @@ fn build_needing_mappings(
 pub fn load_channel_mappings_from_db(
     db: &DvrDatabase,
     sources: &[EpgSourceRef],
+    // Identity of the feed this pass is parsing, for channel pins: a global EPG
+    // link passes `global_epg_<linkId>`, a source's own feed/extra URL passes
+    // the source id. `None` means "no feed identity" — pinned channels are then
+    // skipped, since no feed can prove it is the pinned one.
+    feed_ref: Option<&str>,
 ) -> Result<Vec<SourceEpgConfig>, String> {
     let conn = db
         .get_conn()
@@ -289,11 +442,25 @@ pub fn load_channel_mappings_from_db(
         }
     }
 
+    // Feed pins (`epg_source_id`), same for every source in this pass. Read
+    // best-effort: the column is added by the renderer's migration, so an older
+    // database simply has no pins.
+    let pins = load_feed_pins(&conn);
+
+    // Channels whose guide should be matched on their renamed name instead of
+    // the provider's (`match_by_alias`).
+    let alias_matchers = load_alias_matchers(&conn);
+
+    // One cutoff for the whole pass; every source is classified against it.
+    let cutoff = epg_coverage_cutoff();
+
     let mut configs = Vec::with_capacity(sources.len());
     for src in sources {
         let channels: Vec<(String, Option<String>, String)> = {
             let mut stmt = conn
-                .prepare("SELECT stream_id, epg_channel_id, name FROM channels WHERE source_id = ?")
+                .prepare(
+                    "SELECT stream_id, epg_channel_id, name, alias FROM channels WHERE source_id = ?",
+                )
                 .map_err(|e| e.to_string())?;
             let rows = stmt
                 .query_map(rusqlite::params![src.source_id], |row| {
@@ -301,34 +468,34 @@ pub fn load_channel_mappings_from_db(
                         row.get::<_, String>(0)?,
                         row.get::<_, Option<String>>(1)?,
                         row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
                     ))
                 })
                 .map_err(|e| e.to_string())?;
             let mut out = Vec::new();
             for row in rows {
-                let (stream_id, epg_channel_id, name) = row.map_err(|e| e.to_string())?;
-                out.push((stream_id, epg_channel_id, name.unwrap_or_default()));
+                let (stream_id, epg_channel_id, name, alias) = row.map_err(|e| e.to_string())?;
+                let flagged = alias_matchers.contains(&stream_id);
+                let name = effective_match_name(
+                    &name.unwrap_or_default(),
+                    alias.as_deref(),
+                    flagged,
+                );
+                out.push((stream_id, epg_channel_id, name));
             }
             out
         };
 
-        let with_programs: std::collections::HashSet<String> = {
-            let mut stmt = conn
-                .prepare("SELECT DISTINCT stream_id FROM programs WHERE source_id = ?")
-                .map_err(|e| e.to_string())?;
-            let rows = stmt
-                .query_map(rusqlite::params![src.source_id], |row| {
-                    row.get::<_, String>(0)
-                })
-                .map_err(|e| e.to_string())?;
-            let mut out = std::collections::HashSet::new();
-            for row in rows {
-                out.insert(row.map_err(|e| e.to_string())?);
-            }
-            out
-        };
+        let end_times = load_stream_end_times(&conn, &src.source_id)?;
+        let covered = covered_stream_ids(&end_times, &cutoff);
+        // Stream ids whose programmes have all ended. They rejoin the needing
+        // pool so the next sync extends their guide rather than freezing it at
+        // whatever horizon the first fill happened to reach.
+        let ran_out = end_times.len().saturating_sub(covered.len());
 
-        let channel_mappings = build_needing_mappings(channels, &with_programs, &overrides);
+        let channel_mappings =
+            build_needing_mappings(channels, &covered, &overrides, &pins, feed_ref);
+
         if channel_mappings.is_empty() {
             info!(
                 "[EPG] Source {}: no channels need EPG, skipping",
@@ -337,9 +504,10 @@ pub fn load_channel_mappings_from_db(
             continue;
         }
         info!(
-            "[EPG] Source {}: {} channel mappings prepared (needing EPG)",
+            "[EPG] Source {}: {} channel mappings prepared (needing EPG; {} filled stream(s) had run out and rejoined)",
             src.source_id,
-            channel_mappings.len()
+            channel_mappings.len(),
+            ran_out
         );
         configs.push(SourceEpgConfig {
             source_id: src.source_id.clone(),
@@ -727,13 +895,15 @@ pub async fn stream_parse_epg_multi<R: tauri::Runtime>(
     epg_url: String,
     sources: Vec<EpgSourceRef>,
     user_agent: Option<String>,
+    // Feed identity for channel pins — see `load_channel_mappings_from_db`.
+    feed_ref: Option<String>,
 ) -> Result<Vec<EpgParseResult>> {
     let start_time = std::time::Instant::now();
 
     // The needing-EPG channel mappings are computed here, from the main DB
     // (channels minus already-filled stream ids, overrides applied) — the
     // renderer no longer builds or ships the ~20k-row mapping payloads.
-    let source_configs = load_channel_mappings_from_db(db, &sources)
+    let source_configs = load_channel_mappings_from_db(db, &sources, feed_ref.as_deref())
         .map_err(|e| anyhow::anyhow!(e))?;
     let source_count = source_configs.len();
 
@@ -3383,7 +3553,9 @@ pub async fn cache_entire_epg_db<R: tauri::Runtime>(
     // nothing needs filling we skip the download entirely — the existing cache
     // file stays untouched and the caller marks the link as synced (the JS
     // side used to gate on this before calling; now Rust does it).
-    let sources = load_channel_mappings_from_db(db, &sources)?;
+    // This pass IS the pinned feed for channels the user matched to this link.
+    let feed_ref = format!("global_epg_{}", epg_link_id);
+    let sources = load_channel_mappings_from_db(db, &sources, Some(&feed_ref))?;
     if sources.is_empty() {
         info!(
             "[EPG Cache] No sources need EPG from {}; skipping download and cache refresh",
@@ -4275,6 +4447,74 @@ mod tests {
     }
 
     #[test]
+    fn gap_fill_gate_reopens_channels_whose_guide_ran_out() {
+        use tempfile::tempdir;
+
+        let dir = tempdir().expect("tempdir");
+        let conn = rusqlite::Connection::open(dir.path().join("gate.db")).expect("open");
+        conn.execute_batch(
+            "CREATE TABLE programs (
+                 id TEXT PRIMARY KEY, stream_id TEXT, title TEXT, subtitle TEXT,
+                 description TEXT, start TEXT, end TEXT, source_id TEXT
+             );",
+        )
+        .expect("schema");
+
+        let insert = |id: &str, stream_id: &str, end: Option<&str>, source: &str| {
+            conn.execute(
+                "INSERT INTO programs (id, stream_id, title, subtitle, description, start, end, source_id)
+                 VALUES (?1, ?2, 't', '', '', '2026-01-01T00:00:00.000Z', ?3, ?4)",
+                rusqlite::params![id, stream_id, end, source],
+            )
+            .expect("insert");
+        };
+        // Still has upcoming guide data -> stays out of the needing pool.
+        insert("p1", "s1", Some("2030-01-01T00:00:00.000Z"), "src");
+        // Every programme has ended -> must rejoin the needing pool.
+        insert("p2", "s2", Some("2020-01-01T00:00:00.000Z"), "src");
+        // Rows without a usable end time -> also needs EPG.
+        insert("p3", "s3", None, "src");
+        // Another source's programmes must not leak into this source's gate.
+        insert("p4", "s4", Some("2030-01-01T00:00:00.000Z"), "other");
+
+        let cutoff = "2026-06-01T00:00:00.000Z";
+        let end_times = load_stream_end_times(&conn, "src").expect("end times");
+        assert_eq!(end_times.len(), 3, "only this source's stream ids are read");
+        let covered = covered_stream_ids(&end_times, cutoff);
+        assert_eq!(covered.len(), 1, "only s1 still has guide data");
+        assert!(covered.contains("s1"));
+
+        // The run-out channels come back, channels that never had programmes
+        // still need EPG, and the cutoff compares as a plain RFC 3339 string.
+        let channels = vec![
+            ("s1".to_string(), Some("ID1".to_string()), "One".to_string()),
+            ("s2".to_string(), Some("ID2".to_string()), "Two".to_string()),
+            ("s3".to_string(), Some("ID3".to_string()), "Three".to_string()),
+            ("s9".to_string(), Some("ID9".to_string()), "Nine".to_string()),
+        ];
+        let mappings =
+            build_needing_mappings(channels, &covered, &HashMap::new(), &HashMap::new(), None);
+        let ids: Vec<&str> = mappings.iter().map(|m| m.stream_id.as_str()).collect();
+        assert_eq!(ids, vec!["s2", "s3", "s9"]);
+
+        // The generated cutoff uses the stored timestamp format, so a future
+        // guide is always classed as covered and a past one never is.
+        let now = epg_coverage_cutoff();
+        assert_eq!(now.len(), 24, "RFC 3339 with millis: {}", now);
+        assert!(now.ends_with('Z'));
+        let future = HashMap::from([(
+            "f".to_string(),
+            Some("2999-01-01T00:00:00.000Z".to_string()),
+        )]);
+        let past = HashMap::from([(
+            "p".to_string(),
+            Some("2000-01-01T00:00:00.000Z".to_string()),
+        )]);
+        assert!(covered_stream_ids(&future, &now).contains("f"));
+        assert!(covered_stream_ids(&past, &now).is_empty());
+    }
+
+    #[test]
     fn needing_mappings_apply_override_then_id_then_name() {
         use std::collections::HashSet;
 
@@ -4287,12 +4527,13 @@ mod tests {
             ("s6".to_string(), None, "".to_string()),
             ("s7".to_string(), Some("ID7".to_string()), "Name Seven".to_string()),
         ];
-        // s2 already has programmes -> excluded. s7 has an override -> override wins.
-        let with_programs: HashSet<String> = ["s2".to_string()].into_iter().collect();
+        // s2's guide is still current -> excluded. s7 has an override -> override wins.
+        let with_upcoming: HashSet<String> = ["s2".to_string()].into_iter().collect();
         let overrides: HashMap<String, String> =
             [("s7".to_string(), "OVERRIDE".to_string())].into_iter().collect();
 
-        let mappings = build_needing_mappings(channels, &with_programs, &overrides);
+        let mappings =
+            build_needing_mappings(channels, &with_upcoming, &overrides, &HashMap::new(), None);
 
         // s2 skipped (already filled); s6 skipped (no usable id); others kept.
         let ids: Vec<&str> = mappings.iter().map(|m| m.stream_id.as_str()).collect();
@@ -4307,6 +4548,68 @@ mod tests {
         assert_eq!(by_id["s4"], "Name Four", "name used when no epg_channel_id");
         assert_eq!(by_id["s5"], "ID5", "name empty but id present");
         assert_eq!(by_id["s7"], "OVERRIDE", "override beats epg_channel_id");
+    }
+
+    #[test]
+    fn match_by_alias_replaces_the_provider_name() {
+        // Off by default: the provider name is what matching sees.
+        assert_eq!(effective_match_name("|DE| ZDF HD", Some("ZDF"), false), "|DE| ZDF HD");
+        // Opted in: the rename replaces it (so the raw name stops being a key).
+        assert_eq!(effective_match_name("|DE| ZDF HD", Some("ZDF"), true), "ZDF");
+        // A flag with no usable alias must never produce an empty match key.
+        assert_eq!(effective_match_name("ARD-ALPHA HD", None, true), "ARD-ALPHA HD");
+        assert_eq!(effective_match_name("ARD-ALPHA HD", Some("  "), true), "ARD-ALPHA HD");
+        // Aliases are trimmed, and a missing provider name stays empty.
+        assert_eq!(effective_match_name("x", Some("  ZDF HD "), true), "ZDF HD");
+        assert_eq!(effective_match_name("", None, true), "");
+    }
+
+    #[test]
+    fn feed_pins_restrict_a_channel_to_its_chosen_feed() {
+        use std::collections::HashSet;
+
+        let channels = vec![
+            ("pinned_to_link".to_string(), Some("ID1".to_string()), "One".to_string()),
+            ("pinned_to_source".to_string(), Some("ID2".to_string()), "Two".to_string()),
+            ("unpinned".to_string(), Some("ID3".to_string()), "Three".to_string()),
+        ];
+        let covered = HashSet::new();
+        let overrides = HashMap::new();
+        let pins: HashMap<String, String> = [
+            ("pinned_to_link".to_string(), "global_epg_link3".to_string()),
+            ("pinned_to_source".to_string(), "source_a".to_string()),
+        ]
+        .into_iter()
+        .collect();
+
+        let ids = |feed_ref: Option<&str>| -> Vec<String> {
+            build_needing_mappings(
+                channels.clone(),
+                &covered,
+                &overrides,
+                &pins,
+                feed_ref,
+            )
+            .into_iter()
+            .map(|m| m.stream_id)
+            .collect()
+        };
+
+        // A different global EPG link is a different feed: both pins are excluded,
+        // so a higher-priority link can never overwrite the user's chosen feed.
+        assert_eq!(ids(Some("global_epg_link1")), vec!["unpinned"]);
+
+        // Its own feed sees only its own pin (the other pin still belongs
+        // elsewhere), and the unpinned channel stays available to every feed.
+        assert_eq!(
+            ids(Some("global_epg_link3")),
+            vec!["pinned_to_link", "unpinned"]
+        );
+        assert_eq!(ids(Some("source_a")), vec!["pinned_to_source", "unpinned"]);
+
+        // No feed identity (e.g. a direct "update this EPG" run with no link) —
+        // pinned channels are skipped rather than guessed at.
+        assert_eq!(ids(None), vec!["unpinned"]);
     }
 
     // ─── Matchable name keys and all display names ──────────────────────────

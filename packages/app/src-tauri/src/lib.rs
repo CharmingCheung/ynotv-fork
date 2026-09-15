@@ -2975,8 +2975,9 @@ async fn stream_parse_epg_multi(
     epg_url: String,
     sources: Vec<epg_streaming::EpgSourceRef>,
     user_agent: Option<String>,
+    feed_ref: Option<String>,
 ) -> Result<Vec<epg_streaming::EpgParseResult>, String> {
-    epg_streaming::stream_parse_epg_multi(app, &state.db, epg_url, sources, user_agent)
+    epg_streaming::stream_parse_epg_multi(app, &state.db, epg_url, sources, user_agent, feed_ref)
         .await
         .map_err(|e| format!("Stream parse EPG multi failed: {}", e))
 }

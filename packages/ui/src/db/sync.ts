@@ -9,6 +9,12 @@ import { epgStreaming, getEpgUrlCandidates, type EpgProgressCallback, type EpgPa
 import { dbEvents, withSyncGate } from './sqlite-adapter';
 import { matchAllMoviesLazy, matchAllSeriesLazy } from '../services/title-match';
 import type { GlobalEpgLink } from '../types/app';
+import {
+  attachedEpgSourceIds,
+  clearGlobalEpgSourceStamps,
+  linkNeedsSyncForAnySource,
+} from '../utils/globalEpgFreshness';
+import { effectiveMatchName, buildAliasMatchNames } from '../utils/epgMatchName';
 
 import { invoke } from '@tauri-apps/api/core';
 
@@ -87,6 +93,74 @@ async function loadEpgChannelOverrideMap(): Promise<Map<string, string>> {
     // Table may not exist on very old DBs — silently ignore
   }
   return map;
+}
+
+/**
+ * Load `epg_channel_overrides.epg_source_id` as a streamId → feed map.
+ * A pinned channel may only be filled by the feed it names, so every waterfall
+ * stage skips it (see `load_channel_mappings_from_db` on the Rust side, which
+ * enforces the same rule for the global-EPG passes).
+ */
+async function loadEpgFeedPinMap(): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  try {
+    const overrides = await db.epgChannelOverrides.toArray();
+    for (const o of overrides) {
+      if (o.epg_source_id) map.set(o.stream_id, o.epg_source_id);
+    }
+  } catch {
+    // Column/table may be missing on an old DB — silently ignore
+  }
+  return map;
+}
+
+/**
+ * stream_id → the name EPG matching must use, for channels that opted into
+ * matching on their renamed name (`epg_channel_overrides.match_by_alias`).
+ *
+ * Loaded from the DB rather than read off the passed channel array: sync passes
+ * the *provider's* fresh list for Xtream/Stalker, which carries no alias of its
+ * own, so a rename made in the app would otherwise be invisible here.
+ * Only channels that are flagged *and* have a usable alias appear — a flagged
+ * channel with no alias keeps its provider name (see effectiveMatchName).
+ */
+async function loadEpgAliasMatchNames(): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  try {
+    const dbInstance = await (db as any).dbPromise;
+    const rows = await dbInstance.select(
+      `SELECT c.stream_id AS stream_id, c.alias AS alias
+       FROM channels c
+       JOIN epg_channel_overrides o ON o.stream_id = c.stream_id
+       WHERE o.match_by_alias IS NOT NULL AND o.match_by_alias != 0
+         AND c.alias IS NOT NULL AND TRIM(c.alias) != ''`
+    ) as { stream_id: string; alias: string }[];
+    return buildAliasMatchNames(rows);
+  } catch {
+    // Columns may be missing on an old DB — silently ignore
+    return map;
+  }
+}
+
+/**
+ * Channels a feed must not write: those the user locked to a *different* feed.
+ *
+ * The source's own EPG is a wipe-and-replace, not a waterfall stage, so without
+ * this a provider feed re-writes the very channels the user pinned elsewhere
+ * (the id it matches on is shared). The wipe itself is deliberately left alone:
+ * it has to empty the channel so the pinned feed's programmes replace the
+ * provider's, and an emptied channel is exactly what the gap-fill passes pick up
+ * ("needs EPG" means no programme ending in the future).
+ *
+ * `feedRef` is the source's own id for a provider feed — a channel pinned to
+ * that same source is still eligible.
+ */
+function filterChannelsForFeed<T extends { stream_id: string }>(
+  channels: T[],
+  pinMap: Map<string, string>,
+  feedRef: string
+): T[] {
+  return channels.filter(ch => (pinMap.get(ch.stream_id) ?? feedRef) === feedRef);
 }
 
 // Helper to detect and fix duplicated URLs (e.g., "urlurl" -> "url")
@@ -357,18 +431,35 @@ async function syncEpgFromUrl(
   try {
     // Load user-applied EPG channel ID overrides so they win over the raw channel value
     const epgOverrideMap = await loadEpgChannelOverrideMap();
+    // Feed pins: a channel locked to another feed must not be written by this
+    // source's own feed. The Rust pass still wipes the whole source, so the
+    // pinned channel is emptied here and refilled by its pinned feed.
+    const feedPinMap = await loadEpgFeedPinMap();
+    const eligibleChannels = filterChannelsForFeed(channels, feedPinMap, source.id);
+    if (eligibleChannels.length !== channels.length) {
+      console.log(`[EPG] ${channels.length - eligibleChannels.length} channel(s) skipped by feed locks (pinned to another EPG source)`);
+      debugLog(`${channels.length - eligibleChannels.length} channels pinned to another feed, excluded from this EPG pass`, 'epg');
+    }
+
+    // Channels that match on their renamed name instead of the provider's. When
+    // one applies it REPLACES the provider name, so the raw name stops being a
+    // matching key and a feed channel that happens to match it can no longer
+    // fill this channel.
+    const aliasMatchNames = await loadEpgAliasMatchNames();
+    const matchName = (ch: { stream_id: string; name?: string | null }) =>
+      effectiveMatchName({ name: ch.name, alias: aliasMatchNames.get(ch.stream_id) }, true);
 
     // Create channel mappings for Rust parser
     // Include all channels (even without epg_channel_id) for name-based fallback matching
-    const channelMappings = channels
-      .filter((ch) => epgOverrideMap.has(ch.stream_id) || ch.epg_channel_id || ch.name)
+    const channelMappings = eligibleChannels
+      .filter((ch) => epgOverrideMap.has(ch.stream_id) || ch.epg_channel_id || matchName(ch))
       .map((ch) => ({
-        epg_channel_id: epgOverrideMap.get(ch.stream_id) || ch.epg_channel_id || ch.name || '',
+        epg_channel_id: epgOverrideMap.get(ch.stream_id) || ch.epg_channel_id || matchName(ch),
         stream_id: ch.stream_id,
-        channel_name: ch.name || '',
+        channel_name: matchName(ch),
       }));
 
-    console.log(`[EPG] Channels with EPG mapping (tvg-id or name): ${channelMappings.length}/${channels.length}`);
+    console.log(`[EPG] Channels with EPG mapping (tvg-id or name): ${channelMappings.length}/${eligibleChannels.length}`);
 
     // Log sample mappings for debugging
     if (channelMappings.length > 0) {
@@ -378,7 +469,8 @@ async function syncEpgFromUrl(
     }
 
     debugLog(
-      `${channelMappings.length}/${channels.length} channels have EPG mapping (tvg-id or name)`,
+      `${channelMappings.length}/${eligibleChannels.length} channels have EPG mapping (tvg-id or name); ` +
+      `${channels.length - eligibleChannels.length} excluded by feed locks`,
       'epg'
     );
 
@@ -470,25 +562,39 @@ async function syncEpgForSource(source: Source, channels: Channel[], epgUrl?: st
     // Load user-applied EPG channel ID overrides so they win over the raw channel value
     const epgOverrideMap = await loadEpgChannelOverrideMap();
 
+    // Feed pins: exclude channels locked to another feed (see syncEpgFromUrl).
+    const feedPinMap = await loadEpgFeedPinMap();
+    const eligibleChannels = filterChannelsForFeed(channels, feedPinMap, source.id);
+    if (eligibleChannels.length !== channels.length) {
+      console.log(`[EPG] ${channels.length - eligibleChannels.length} channel(s) skipped by feed locks (pinned to another EPG source)`);
+    }
+
+    // Channels matching on their renamed name replace the provider name where
+    // the user opted in (see syncEpgFromUrl).
+    const aliasMatchNames = await loadEpgAliasMatchNames();
+    const matchName = (ch: { stream_id: string; name?: string | null }) =>
+      effectiveMatchName({ name: ch.name, alias: aliasMatchNames.get(ch.stream_id) }, true);
+
     // Build channel mappings for Rust parser (overrides take precedence)
-    const channelMappings = channels
-      .filter(ch => epgOverrideMap.has(ch.stream_id) || ch.epg_channel_id || ch.name)
+    const channelMappings = eligibleChannels
+      .filter(ch => epgOverrideMap.has(ch.stream_id) || ch.epg_channel_id || matchName(ch))
       .map(ch => ({
-        epg_channel_id: epgOverrideMap.get(ch.stream_id) || ch.epg_channel_id || ch.name || '',
+        epg_channel_id: epgOverrideMap.get(ch.stream_id) || ch.epg_channel_id || matchName(ch),
         stream_id: ch.stream_id,
-        channel_name: ch.name || '',
+        channel_name: matchName(ch),
       }));
 
-    console.log(`[EPG] Channels with EPG mapping (tvg-id or name): ${channelMappings.length}/${channels.length}`);
+    console.log(`[EPG] Channels with EPG mapping (tvg-id or name): ${channelMappings.length}/${eligibleChannels.length}`);
     // Report the real counts separately: `channelMappings` includes channels
     // that only have a *name* for matching, so logging it as "have
     // epg_channel_id" made it look like every channel carried a tvg-id.
-    const channelsWithTvgId = channels.filter(
+    const channelsWithTvgId = eligibleChannels.filter(
       ch => (epgOverrideMap.get(ch.stream_id) || ch.epg_channel_id || '').length > 0
     ).length;
     debugLog(
-      `${channelsWithTvgId}/${channels.length} channels have a tvg-id; ` +
-      `${channelMappings.length}/${channels.length} usable for matching (name fallback included)`,
+      `${channelsWithTvgId}/${eligibleChannels.length} channels have a tvg-id; ` +
+      `${channelMappings.length}/${eligibleChannels.length} usable for matching (name fallback included); ` +
+      `${channels.length - eligibleChannels.length} excluded by feed locks`,
       'epg'
     );
 
@@ -586,12 +692,30 @@ async function syncEpgForStalker(source: Source, channels: Channel[]): Promise<n
     // Convert Stalker EPG format to StoredProgram format
     const storedPrograms: StoredProgram[] = [];
 
+    // Feed pins: this payload is keyed by the portal's own channel ids, so both
+    // the raw id and the prefixed stream id are matched. The source-wide replace
+    // below still clears their old rows — the pinned feed refills them.
+    const feedPinMap = await loadEpgFeedPinMap();
+    const pinnedElsewhere = new Set<string>();
+    for (const ch of channels as any[]) {
+      const pin = feedPinMap.get(ch.stream_id);
+      if (pin && pin !== source.id) {
+        pinnedElsewhere.add(ch.stream_id);
+        pinnedElsewhere.add(String(ch.stream_id).replace(`${source.id}_`, ''));
+      }
+    }
+    let skippedByPin = 0;
+
     // NOTE: Do NOT apply epg_timeshift_hours here.
     // Timestamps are stored as pure UTC. The programs_effective SQL view applies
     // (sm.epg_timeshift_hours + co.timeshift_hours) at read time, consistent with
     // M3U and Xtream sources. Baking the shift here would cause a double-application.
 
     for (const [channelId, programList] of epgMap.entries()) {
+      if (pinnedElsewhere.has(channelId)) {
+        skippedByPin++;
+        continue;
+      }
       // Helper to parse Stalker date string formatted in user's local timezone (via timezone cookie)
       const parseStalkerDate = (dateStr: string | undefined): Date | null => {
         if (!dateStr || typeof dateStr !== 'string') return null;
@@ -632,8 +756,8 @@ async function syncEpgForStalker(source: Source, channels: Channel[]): Promise<n
       }
     }
 
-    console.log(`[EPG] Converted ${storedPrograms.length} programs from ${epgMap.size} channels`);
-    debugLog(`Converted ${storedPrograms.length} programs from ${epgMap.size} channels`, 'epg');
+    console.log(`[EPG] Converted ${storedPrograms.length} programs from ${epgMap.size} channels${skippedByPin > 0 ? ` (${skippedByPin} skipped by feed locks)` : ''}`);
+    debugLog(`Converted ${storedPrograms.length} programs from ${epgMap.size} channels${skippedByPin > 0 ? `; ${skippedByPin} pinned to another feed, excluded` : ''}`, 'epg');
 
     // SAFETY: Only clear old data if we have new data to replace it
     if (storedPrograms.length === 0) {
@@ -800,8 +924,14 @@ async function syncStalkerShortEpgInternal(
 
   const now = Date.now();
 
+  // Feed pins: the portal's short EPG is this source's own feed, so it must not
+  // fill a channel the user locked to a different EPG source.
+  const feedPinMap = await loadEpgFeedPinMap();
+
   // Filter channels to only those not synced in the last 3 hours, unless forced
   const channelsToFetch = channels.filter(ch => {
+    const pin = feedPinMap.get(ch.stream_id);
+    if (pin && pin !== source.id) return false;
     if (force) return true;
     const lastSynced = channelSyncCache.get(ch.stream_id);
     return !lastSynced || (now - lastSynced) >= THREE_HOURS_MS;
@@ -961,15 +1091,25 @@ async function syncStalkerShortEpgInternal(
 
 // ─── Additional EPG waterfall helper ─────────────────────────────────────────
 /**
- * Get the set of stream_ids that currently have at least one program for a source.
+ * Get the set of stream_ids whose guide data is still current — i.e. that have
+ * at least one program ending in the future.
+ *
+ * Deliberately NOT "has any programs at all". These waterfall passes never
+ * re-visit a channel they consider filled, so an existence-only check freezes a
+ * channel's guide at the horizon of the sync that first filled it: a few days
+ * later every program has ended and the channel shows "no program information"
+ * until the user assigns an EPG override by hand. Treating those channels as
+ * needing EPG again lets the next sync extend the guide.
+ *
+ * Program start/end are stored as RFC 3339 UTC with milliseconds, so the same
+ * format compares correctly as a plain string.
  */
-async function getStreamIdsWithPrograms(sourceId: string): Promise<Set<string>> {
+async function getStreamIdsWithUpcomingPrograms(sourceId: string): Promise<Set<string>> {
   try {
     const dbInstance = await (db as any).dbPromise;
-    // Use a single aggregated query to find all stream_ids with programs
     const rows = await dbInstance.select(
-      `SELECT DISTINCT stream_id FROM programs WHERE source_id = ?`,
-      [sourceId]
+      `SELECT DISTINCT stream_id FROM programs WHERE source_id = ? AND end >= ?`,
+      [sourceId, new Date().toISOString()]
     );
     return new Set((rows || []).map((r: any) => r.stream_id as string));
   } catch (err) {
@@ -996,9 +1136,18 @@ async function syncAdditionalEpgUrls(
 
   debugLog(`Starting waterfall additional EPG sync for source: ${source.name}`, 'epg');
 
-  // Find channels that currently have no programs
-  let channelsWithPrograms = await getStreamIdsWithPrograms(source.id);
-  let channelsNeedingEpg = channels.filter(ch => !channelsWithPrograms.has(ch.stream_id));
+  // Feed pins: a channel the user matched to a specific feed may only be filled
+  // by that feed. This waterfall's feed identity is the source itself (its own
+  // primary EPG and these extra URLs).
+  const feedPinMap = await loadEpgFeedPinMap();
+  const feedRef = source.id;
+  const eligibleForThisFeed = (streamId: string) => (feedPinMap.get(streamId) ?? feedRef) === feedRef;
+
+  // Find channels whose guide has run out (never filled, or filled by an
+  // earlier sync whose programs have all since ended), excluding channels the
+  // user pinned to a different feed.
+  let channelsWithPrograms = await getStreamIdsWithUpcomingPrograms(source.id);
+  let channelsNeedingEpg = channels.filter(ch => !channelsWithPrograms.has(ch.stream_id) && eligibleForThisFeed(ch.stream_id));
 
   console.log(`[EPG] Additional EPG sync starting: ${channelsNeedingEpg.length} channels out of ${channels.length} need EPG.`);
   
@@ -1008,8 +1157,8 @@ async function syncAdditionalEpgUrls(
   );
 
   if (channelsNeedingEpg.length === 0) {
-    console.log(`[EPG] Additional EPG sync skipped: All channels already have EPG.`);
-    debugLog('All channels already have EPG, skipping additional EPGs', 'epg');
+    console.log(`[EPG] Additional EPG sync skipped: no channel needs EPG (all have current guide data).`);
+    debugLog('No channel needs EPG, skipping additional EPGs', 'epg');
     return 0;
   }
 
@@ -1021,6 +1170,13 @@ async function syncAdditionalEpgUrls(
   if (!additionalUrls || additionalUrls.length === 0) {
     return 0;
   }
+
+  // Channels that match on their renamed name (see syncEpgFromUrl — the provider
+  // name is replaced by the alias when the user opted in). Loaded once: it does
+  // not depend on which channels still need EPG.
+  const aliasMatchNames = await loadEpgAliasMatchNames();
+  const matchName = (ch: { stream_id: string; name?: string | null }) =>
+    effectiveMatchName({ name: ch.name, alias: aliasMatchNames.get(ch.stream_id) }, true);
 
   for (let i = 0; i < additionalUrls.length; i++) {
     if (channelsNeedingEpg.length === 0) break;
@@ -1038,11 +1194,11 @@ async function syncAdditionalEpgUrls(
       // Build channel mappings for Rust parser
       // We only pass channels that STILL need EPGs
       const channelMappings = channelsNeedingEpg
-        .filter((ch) => epgOverrideMap.has(ch.stream_id) || ch.epg_channel_id || ch.name)
+        .filter((ch) => epgOverrideMap.has(ch.stream_id) || ch.epg_channel_id || matchName(ch))
         .map((ch) => ({
-          epg_channel_id: epgOverrideMap.get(ch.stream_id) || ch.epg_channel_id || ch.name || '',
+          epg_channel_id: epgOverrideMap.get(ch.stream_id) || ch.epg_channel_id || matchName(ch),
           stream_id: ch.stream_id,
-          channel_name: ch.name || '',
+          channel_name: matchName(ch),
         }));
 
       if (channelMappings.length === 0) {
@@ -1106,8 +1262,8 @@ async function syncAdditionalEpgUrls(
       // After streaming insertion, we need to know which channels ACTUALLY got programs
       // so we can filter them out of channelsNeedingEpg for the next additional URL.
       // Easiest way is just to re-query the DB for channelsWithPrograms!
-      channelsWithPrograms = await getStreamIdsWithPrograms(source.id);
-      channelsNeedingEpg = channels.filter(ch => !channelsWithPrograms.has(ch.stream_id));
+      channelsWithPrograms = await getStreamIdsWithUpcomingPrograms(source.id);
+      channelsNeedingEpg = channels.filter(ch => !channelsWithPrograms.has(ch.stream_id) && eligibleForThisFeed(ch.stream_id));
 
       debugLog(
         `${channelsNeedingEpg.length} channels still need EPG after additional ${i + 1}`,
@@ -1173,14 +1329,14 @@ export async function applyGlobalEpgToSource(
     debugLog(`Applying global EPG to source: ${source.name} (${linksForSource.length} links, waterfall order)`, 'epg');
 
     // Find channels that currently have no programs
-    let channelsWithPrograms = await getStreamIdsWithPrograms(source.id);
+    let channelsWithPrograms = await getStreamIdsWithUpcomingPrograms(source.id);
     let channelsNeedingEpg = channels.filter(ch => !channelsWithPrograms.has(ch.stream_id));
 
     console.log(`[EPG] Global EPG sync starting: ${channelsNeedingEpg.length} channels out of ${channels.length} need EPG.`);
 
     if (channelsNeedingEpg.length === 0) {
-      console.log(`[EPG] Global EPG sync skipped: All channels already have EPG.`);
-      debugLog('All channels already have EPG, skipping global EPG links', 'epg');
+      console.log(`[EPG] Global EPG sync skipped: no channel needs EPG (all have current guide data).`);
+      debugLog('No channel needs EPG, skipping global EPG links', 'epg');
       return 0;
     }
 
@@ -1247,7 +1403,10 @@ export async function applyGlobalEpgToSource(
               timeshiftHours: source.epg_timeshift_hours ?? 0,
               clearExisting: false,
             }],
-            source.user_agent || undefined
+            source.user_agent || undefined,
+            // This pass IS this link, so channels pinned to it are included and
+            // channels pinned to any other feed are left alone.
+            `global_epg_${link.id}`
           );
           const result = results[0];
           resultInsertedPrograms = result?.inserted_programs ?? 0;
@@ -1269,7 +1428,7 @@ export async function applyGlobalEpgToSource(
         // Newly-filled channels = stream ids that gained programmes during this
         // link's pass (after − before). No mapping payload needed in JS.
         const newlyMatched: string[] = [];
-        const channelsWithProgramsAfter = await getStreamIdsWithPrograms(source.id);
+        const channelsWithProgramsAfter = await getStreamIdsWithUpcomingPrograms(source.id);
         for (const streamId of channelsWithProgramsAfter) {
           if (!channelsWithPrograms.has(streamId)) {
             newlyMatched.push(streamId);
@@ -1348,6 +1507,11 @@ export async function applyGlobalEpgToSource(
               channelsMatched: newTotalChannels,
               perSourceChannels: updatedPerSourceChannels,
               matchedStreamIds: Array.from(matchedSet),
+              // Per-source freshness: this pass covered exactly this source.
+              perSourceSyncedAt: {
+                ...(existingResult?.perSourceSyncedAt || {}),
+                [source.id]: Date.now(),
+              },
             },
           };
         });
@@ -1414,18 +1578,30 @@ async function syncAllStaleGlobalEpgLinksImpl(
   }
 
   try {
-    const globalEpgLinks = useSettingsStore.getState().globalEpgLinks;
+    // Every source in `sourceIds` was just resynced, which means its programmes
+    // were rewritten by its primary EPG pass. Clear those sources' freshness
+    // stamps first so the links attached to them are reconsidered even if they
+    // ran a moment ago (a link that filled source A must still be allowed to
+    // fill source B when B syncs later in the round).
     const sourceIdFilter = sourceIds && sourceIds.length > 0 ? new Set(sourceIds) : null;
-    // A link is attempted when it's stale (feed may have new data) OR the last
-    // sync actually inserted programs (it can fill gaps again — e.g. right
-    // after a playlist sync wiped the sources). Links synced recently whose
-    // last attempt matched nothing are backed off by the freshness window so a
-    // no-match feed isn't re-downloaded every cycle. The per-link impl also
-    // skips the download entirely when no channels currently need EPG.
-    // Sort by display_order so higher priority EPGs are synced first
+    let globalEpgLinks = useSettingsStore.getState().globalEpgLinks;
+    if (sourceIdFilter) {
+      const cleared = clearGlobalEpgSourceStamps(globalEpgLinks, sourceIdFilter);
+      if (cleared.changed) {
+        globalEpgLinks = cleared.links;
+        useSettingsStore.getState().setGlobalEpgLinks(globalEpgLinks);
+      }
+    }
+
+    // A link is attempted when, for at least one attached source, it has never
+    // run or it's stale (feed may have new data) or its last run actually
+    // inserted programs (it can fill gaps again). Freshness is per source, so a
+    // no-match pass for one source can't back off a second source's gap-fill.
+    // The per-link impl also skips the download entirely when no channels
+    // currently need EPG. Sort by display_order so higher priority EPGs go first.
     const linksToSync = globalEpgLinks
       .filter(link => !sourceIdFilter || link.sourceIds.some(sourceId => sourceIdFilter.has(sourceId)))
-      .filter(link => !isGlobalEpgFresh(link) || (link.lastSyncResult?.totalInserted ?? 0) > 0)
+      .filter(link => linkNeedsSyncForAnySource(link, attachedEpgSourceIds(link, sourceIdFilter)))
       .sort((a, b) => (a.display_order ?? Number.MAX_SAFE_INTEGER) - (b.display_order ?? Number.MAX_SAFE_INTEGER));
 
     if (linksToSync.length === 0) {
@@ -1469,7 +1645,8 @@ async function syncAllStaleGlobalEpgLinksImpl(
 /**
  * Sync a global EPG link standalone using the Rust multi-source streaming parser.
  * Downloads the EPG ONCE and applies it to all linked sources in a single Rust call.
- * Each source only receives programmes for channels that don't already have EPG.
+ * Each source only receives programmes for channels whose guide has run out
+ * (never filled, or filled by an earlier sync whose programmes have all ended).
  * @returns total programs inserted across all linked sources
  */
 export async function syncGlobalEpgLinkStandalone(
@@ -1562,8 +1739,10 @@ async function syncGlobalEpgLinkStandaloneImpl(
 
   if (sourceRefs.length === 0) {
     console.log(`[Global EPG] No sources need EPG from ${epgLink.name}`);
-    // Mark as synced so we don't retry every 10 min, but only for 30 min freshness window
-    await updateGlobalEpgLastSynced(epgLink.id, 0, {});
+    // Mark as attempted so we don't retry every 10 min, but only for the 30 min
+    // freshness window. Every attached source is stamped: this pass covered all
+    // of them (it simply found nothing to fill).
+    await updateGlobalEpgLastSynced(epgLink.id, 0, {}, undefined, undefined, undefined, epgLink.sourceIds);
     return 0;
   }
 
@@ -1575,11 +1754,12 @@ async function syncGlobalEpgLinkStandaloneImpl(
   const perSourceChannels: Record<string, number> = {};
   let syncSucceeded = false;
 
-  // Snapshot which stream ids already have programmes so newly-filled channels
-  // can be attributed to this link afterwards (lastSyncResult.matchedStreamIds).
+  // Snapshot which stream ids already have current guide data so newly-filled
+  // channels can be attributed to this link afterwards
+  // (lastSyncResult.matchedStreamIds).
   const beforeSets = new Map<string, Set<string>>();
   for (const ref of sourceRefs) {
-    beforeSets.set(ref.sourceId, await getStreamIdsWithPrograms(ref.sourceId));
+    beforeSets.set(ref.sourceId, await getStreamIdsWithUpcomingPrograms(ref.sourceId));
   }
 
   if (epgLink.saveEntireEpg) {
@@ -1622,7 +1802,12 @@ async function syncGlobalEpgLinkStandaloneImpl(
     }
   } else {
     try {
-      const results = await epgStreaming.streamParseEpgMulti(url, sourceRefs, userAgent);
+      const results = await epgStreaming.streamParseEpgMulti(
+        url,
+        sourceRefs,
+        userAgent,
+        `global_epg_${epgLink.id}`
+      );
       syncSucceeded = true;
 
       for (const result of results) {
@@ -1656,7 +1841,7 @@ async function syncGlobalEpgLinkStandaloneImpl(
         const inserted = perSourceCounts[ref.sourceId] ?? 0;
         if (inserted <= 0) continue;
         const before = beforeSets.get(ref.sourceId) || new Set<string>();
-        const channelsWithProgramsAfter = await getStreamIdsWithPrograms(ref.sourceId);
+        const channelsWithProgramsAfter = await getStreamIdsWithUpcomingPrograms(ref.sourceId);
         for (const streamId of channelsWithProgramsAfter) {
           if (!before.has(streamId)) {
             newlyMatchedStreamIds.push(streamId);
@@ -1679,7 +1864,9 @@ async function syncGlobalEpgLinkStandaloneImpl(
       perSourceCounts,
       totalChannelsMatched,
       perSourceChannels,
-      matchedStreamIds
+      matchedStreamIds,
+      // Only the sources this pass actually included get their stamp refreshed.
+      sourceRefs.map(r => r.sourceId)
     );
   }
 
@@ -1697,27 +1884,34 @@ async function updateGlobalEpgLastSynced(
   perSourceCounts: Record<string, number>,
   totalChannelsMatched?: number,
   perSourceChannels?: Record<string, number>,
-  matchedStreamIds?: string[]
+  matchedStreamIds?: string[],
+  /** Sources this pass covered — each gets its own freshness stamp. */
+  syncedSourceIds?: string[]
 ): Promise<void> {
   if (!window.storage) return;
   try {
     const existingLinks = useSettingsStore.getState().globalEpgLinks;
-    const updatedLinks = existingLinks.map((link: GlobalEpgLink) =>
-      link.id === epgLinkId
-        ? {
-            ...link,
-            lastSynced: Date.now(),
-            lastSyncResult: {
-              timestamp: Date.now(),
-              totalInserted,
-              perSource: perSourceCounts,
-              channelsMatched: totalChannelsMatched,
-              perSourceChannels,
-              matchedStreamIds,
-            },
-          }
-        : link
-    );
+    const updatedLinks = existingLinks.map((link: GlobalEpgLink) => {
+      if (link.id !== epgLinkId) return link;
+      const perSourceSyncedAt = { ...(link.lastSyncResult?.perSourceSyncedAt || {}) };
+      const stamp = Date.now();
+      for (const sourceId of syncedSourceIds || []) {
+        perSourceSyncedAt[sourceId] = stamp;
+      }
+      return {
+        ...link,
+        lastSynced: stamp,
+        lastSyncResult: {
+          timestamp: stamp,
+          totalInserted,
+          perSource: perSourceCounts,
+          channelsMatched: totalChannelsMatched,
+          perSourceChannels,
+          matchedStreamIds,
+          perSourceSyncedAt,
+        },
+      };
+    });
     useSettingsStore.getState().setGlobalEpgLinks(updatedLinks);
     console.log(`[Global EPG] Updated lastSynced for link ${epgLinkId}`);
   } catch (err) {
@@ -1725,16 +1919,11 @@ async function updateGlobalEpgLastSynced(
   }
 }
 
-// How recently a global EPG must have been synced to be considered fresh (ms)
-const GLOBAL_EPG_FRESH_MS = 30 * 60 * 1000; // 30 minutes
+// Freshness rules for global EPG links live in utils/globalEpgFreshness so they
+// can be unit-tested without pulling in the store/db graph. Eligibility is per
+// (link, source): `lastSynced` alone is a per-link field, which used to let one
+// source's no-match pass back off every other attached source's gap-fill.
 
-/**
- * Check if a global EPG link was synced recently enough to skip re-downloading.
- */
-function isGlobalEpgFresh(epgLink: GlobalEpgLink): boolean {
-  if (!epgLink.lastSynced) return false;
-  return Date.now() - epgLink.lastSynced < GLOBAL_EPG_FRESH_MS;
-}
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Check if EPG needs refresh
@@ -3986,6 +4175,22 @@ async function selectWithRetry(
   }
 }
 
+// Feed-pin predicate for the alignment queries (`sc` = the provider channel the
+// programmes are copied from, `eco` = the override row):
+//
+//   * no pin            → unchanged behaviour (any provider channel with the id)
+//   * pinned to a feed  → only a provider channel belonging to that feed may
+//                         supply the copy
+//   * pinned to a global EPG link → skipped entirely; those programmes are
+//                         written by that link's own pass, never copied here.
+//
+// Without this the alignment re-copied a pinned channel from whichever source
+// happened to own the id, silently undoing the feed the user chose.
+const ALIGN_PIN_MATCHES = `(
+           eco.epg_source_id IS NULL
+           OR (substr(eco.epg_source_id, 1, 11) != 'global_epg_' AND eco.epg_source_id = sc.source_id)
+         )`;
+
 export async function alignOverriddenChannelPrograms(sourceId: string): Promise<void> {
   try {
     const dbInstance = await (db as any).dbPromise;
@@ -4023,12 +4228,14 @@ export async function alignOverriddenChannelPrograms(sourceId: string): Promise<
          SELECT eco.stream_id FROM epg_channel_overrides eco
          JOIN channels tc ON tc.stream_id = eco.stream_id
          JOIN channels sc ON sc.epg_channel_id = eco.epg_channel_id AND sc.stream_id != eco.stream_id
-         WHERE tc.source_id = $1 OR sc.source_id = $1
+         WHERE (tc.source_id = $1 OR sc.source_id = $1)
+           AND ${ALIGN_PIN_MATCHES}
          UNION
          SELECT eco.stream_id FROM epg_channel_overrides eco
          JOIN channels tc ON tc.stream_id = eco.stream_id
          JOIN channels sc ON sc.name = eco.epg_channel_id AND sc.stream_id != eco.stream_id
-         WHERE tc.source_id = $1 OR sc.source_id = $1
+         WHERE (tc.source_id = $1 OR sc.source_id = $1)
+           AND ${ALIGN_PIN_MATCHES}
        )`,
       [sourceId]
     );
@@ -4051,6 +4258,7 @@ export async function alignOverriddenChannelPrograms(sourceId: string): Promise<
                         AND sc.stream_id NOT IN (SELECT stream_id FROM epg_channel_overrides)
        JOIN programs p ON p.stream_id = sc.stream_id
        WHERE (tc.source_id = $1 OR sc.source_id = $1)
+         AND ${ALIGN_PIN_MATCHES}
          AND p.end >= datetime('now', '-1 hour')
        GROUP BY eco.stream_id, p.start`,
       [sourceId]
@@ -4071,6 +4279,7 @@ export async function alignOverriddenChannelPrograms(sourceId: string): Promise<
                         AND sc.stream_id NOT IN (SELECT stream_id FROM epg_channel_overrides)
        JOIN programs p ON p.stream_id = sc.stream_id
        WHERE (tc.source_id = $1 OR sc.source_id = $1)
+         AND ${ALIGN_PIN_MATCHES}
          AND p.end >= datetime('now', '-1 hour')
        GROUP BY eco.stream_id, p.start`,
       [sourceId]

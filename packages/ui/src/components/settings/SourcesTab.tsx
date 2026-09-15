@@ -1609,7 +1609,18 @@ export function SourcesTab({
 
     const linkId = editingEpgId || crypto.randomUUID();
     const existingLink = editingEpgId ? globalEpgLinks.find(e => e.id === editingEpgId) : null;
-    
+
+    // Changing the feed URL or its attached sources changes what this link can
+    // fill, so its per-source freshness stamps are dropped and the next sync
+    // reconsiders it instead of backing it off for the freshness window.
+    const feedChanged = Boolean(existingLink) && (
+      existingLink!.url !== epgFormData.url.trim() ||
+      existingLink!.sourceIds.slice().sort().join('|') !== epgFormData.sourceIds.slice().sort().join('|')
+    );
+    const carriedResult = feedChanged && existingLink?.lastSyncResult
+      ? { ...existingLink.lastSyncResult, perSourceSyncedAt: {} as Record<string, number> }
+      : existingLink?.lastSyncResult;
+
     const newLink: GlobalEpgLink = {
       id: linkId,
       name: epgFormData.name.trim(),
@@ -1617,7 +1628,7 @@ export function SourcesTab({
       sourceIds: epgFormData.sourceIds,
       saveEntireEpg: epgFormData.saveEntireEpg,
       lastSynced: existingLink?.lastSynced,
-      lastSyncResult: existingLink?.lastSyncResult,
+      lastSyncResult: carriedResult,
       display_order: existingLink?.display_order,
     };
 

@@ -536,6 +536,15 @@ export interface SettingsState {
   setEpgPreferEpgLogos: (enabled: boolean) => void;
   epgLogoDisplay: 'square' | 'rectangle';
   setEpgLogoDisplay: (display: 'square' | 'rectangle') => void;
+  // Opt-in cleaned-name matching for EPG Editor → Automatch Missing. Off by
+  // default: stripping `|DE|`/quality tags is what lets Xtream and Stalker
+  // channels match without a manual rename, but it can also merge channels that
+  // only differ by their decorations, so the user opts in per run.
+  epgAutomatchCleanNames: boolean;
+  setEpgAutomatchCleanNames: (enabled: boolean) => void;
+  /** Extra words to strip, in addition to the built-in quality/codec tags. */
+  epgAutomatchStripTags: string[];
+  setEpgAutomatchStripTags: (tags: string[]) => void;
 
   // Logo / EPG metadata
   channelLogoSize: number;
@@ -1368,6 +1377,16 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   setEpgLogoDisplay: (display) => {
     set({ epgLogoDisplay: display });
     persistSettings({ epgLogoDisplay: display });
+  },
+  epgAutomatchCleanNames: (cachedSettings?.epgAutomatchCleanNames as boolean) ?? false,
+  setEpgAutomatchCleanNames: (enabled) => {
+    set({ epgAutomatchCleanNames: enabled });
+    persistSettings({ epgAutomatchCleanNames: enabled });
+  },
+  epgAutomatchStripTags: (cachedSettings?.epgAutomatchStripTags as string[]) ?? [],
+  setEpgAutomatchStripTags: (tags) => {
+    set({ epgAutomatchStripTags: tags });
+    persistSettings({ epgAutomatchStripTags: tags }, true);
   },
 
   // Logo / EPG metadata

@@ -10,6 +10,13 @@ import { db } from '../db';
 import type { EpgChannelOverride, EpgProgramOverride, StoredEpgChannel } from '../db';
 import { getSearchVariants } from '../utils/searchNormalization';
 import { useSettingsStore } from '../stores/settingsStore';
+import {
+  matchByCleanName,
+  scoreChannelMatch,
+  type CleanNameIndex,
+  type CleanMatchVia,
+  type NameMatchCandidate,
+} from '../utils/epgChannelMatch';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -67,6 +74,8 @@ export async function batchUpsertLogoOverrides(
     const hasOtherOverrides = Boolean(
       existing?.epg_channel_id ||
       existing?.stream_icon ||
+      existing?.epg_source_id ||
+      existing?.match_by_alias ||
       (existing?.timeshift_hours && existing.timeshift_hours !== 0)
     );
 
@@ -82,6 +91,11 @@ export async function batchUpsertLogoOverrides(
         timeshift_hours: existing?.timeshift_hours ?? 0,
         logo_background: nextBg,
         logo_padding: nextPad,
+        // `put` is INSERT OR REPLACE, so the feed pin must be carried over
+        // explicitly or a logo edit would erase it. Same for the
+        // "match on my name" flag.
+        epg_source_id: existing?.epg_source_id,
+        match_by_alias: existing?.match_by_alias,
       });
     }
   }
@@ -374,6 +388,58 @@ export async function copyProgramsFromEpgChannel(
  * Deletes the channel override, custom programs, and restores tombstoned programs.
  * Also copies the original programs back so a sync isn't needed.
  */
+/**
+ * Release a channel's feed lock without touching the rest of its override
+ * (tvg-id, logo, timeshift all stay). `put` is INSERT OR REPLACE, so the row is
+ * rewritten from the existing values with only `epg_source_id` cleared.
+ */
+export async function releaseChannelFeedPin(streamId: string): Promise<boolean> {
+  const existing = await getChannelOverride(streamId);
+  if (!existing?.epg_source_id) return false;
+  await upsertChannelOverride({ ...existing, epg_source_id: undefined });
+  return true;
+}
+
+/** How many channels of a playlist are locked to an EPG source. */
+export async function countFeedPinsInSource(sourceId: string): Promise<number> {
+  try {
+    const dbInstance = await (db as any).dbPromise;
+    const rows = await dbInstance.select(
+      `SELECT COUNT(*) AS count FROM epg_channel_overrides eco
+       JOIN channels c ON c.stream_id = eco.stream_id
+       WHERE c.source_id = $1
+         AND eco.epg_source_id IS NOT NULL AND TRIM(eco.epg_source_id) != ''`,
+      [sourceId]
+    ) as { count: number }[];
+    return rows?.[0]?.count ?? 0;
+  } catch {
+    // Column may be missing on an old DB — treat as no pins.
+    return 0;
+  }
+}
+
+/**
+ * Release every feed lock in a playlist. Only `epg_source_id` is cleared — the
+ * TVG-IDs, logos and timeshifts the user set stay, so this is safe to undo by
+ * re-applying a match.
+ * @returns how many channels were released
+ */
+export async function releaseFeedPinsInSource(sourceId: string): Promise<number> {
+  const count = await countFeedPinsInSource(sourceId);
+  if (count === 0) return 0;
+  const dbInstance = await (db as any).dbPromise;
+  await dbInstance.execute(
+    `UPDATE epg_channel_overrides SET epg_source_id = NULL
+     WHERE epg_source_id IS NOT NULL
+       AND stream_id IN (SELECT stream_id FROM channels WHERE source_id = $1)`,
+    [sourceId]
+  );
+  const { dbEvents } = await import('../db/sqlite-adapter');
+  dbEvents.notify('epg_channel_overrides', 'update');
+  dbEvents.notify('channels', 'update');
+  return count;
+}
+
 export async function resetChannelToDefault(streamId: string): Promise<void> {
   const dbInstance = await (db as any).dbPromise;
 
@@ -472,46 +538,11 @@ export async function restoreProgramOverride(id: string): Promise<void> {
 
 // ─── EPG Channel Search & Scoring ────────────────────────────────────────────
 
-// Noise tokens stripped before comparison
-const NOISE_TOKENS = new Set([
-  'hd', 'fhd', 'uhd', '4k', 'sd', '1080p', '720p', '480p',
-  'us', 'uk', 'ca', 'au', 'east', 'west', 'channel', 'tv', 'the',
-]);
-
-function normalizeTokens(str: string): string[] {
-  return str
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')  // strip punctuation / special chars
-    .split(/\s+/)
-    .filter(t => t.length > 0 && !NOISE_TOKENS.has(t));
-}
-
 /**
- * Sørensen-Dice-style token overlap score.
- * Returns 0–1 based on shared tokens; +0.2 bonus for substring containment.
+ * Sørensen-Dice-style token overlap score — re-exported from the shared util so
+ * the sync, the editor and the opt-in cleaned tier all score identically.
  */
-export function scoreChannelMatch(channelName: string, epgDisplayName: string): number {
-  if (!channelName || !epgDisplayName) return 0;
-  const a = normalizeTokens(channelName);
-  const b = normalizeTokens(epgDisplayName);
-  if (a.length === 0 || b.length === 0) return 0;
-
-  const setA = new Set(a);
-  const setB = new Set(b);
-  let shared = 0;
-  for (const t of setA) {
-    if (setB.has(t)) shared++;
-  }
-
-  const score = (2 * shared) / (setA.size + setB.size);
-
-  // Substring bonus
-  const normA = a.join(' ');
-  const normB = b.join(' ');
-  const bonus = (normA.includes(normB) || normB.includes(normA)) ? 0.2 : 0;
-
-  return Math.min(1.2, score + bonus);
-}
+export { scoreChannelMatch } from '../utils/epgChannelMatch';
 
 export type EpgSearchMode = 'm3u' | 'epg';
 
@@ -648,17 +679,15 @@ export async function searchEpgChannels(
 }
 
 /**
- * Auto-match: runs scoring of channelName against ALL channels in scope.
- * Returns top matches above SCORE_THRESHOLD.
+ * Every EPG channel name a match can be made against, without any scoring.
+ * Loaded once per run so a 5,000-channel automatch doesn't re-query per channel.
  */
-const SCORE_THRESHOLD = 0.4;
+export type EpgMatchCandidate = NameMatchCandidate & { source_id: string };
 
-export async function autoMatchChannelName(
-  channelName: string,
+export async function loadEpgMatchCandidates(
   sourceId?: string,
-  limit = 10,
   searchMode: EpgSearchMode = 'm3u'
-): Promise<ScoredEpgChannel[]> {
+): Promise<EpgMatchCandidate[]> {
   const dbInstance = await (db as any).dbPromise;
 
   let rows: { id: string; display_name: string; icon_url: string | null; source_id: string }[];
@@ -680,7 +709,8 @@ export async function autoMatchChannelName(
         COALESCE(epg_channel_id, name)   AS id,
         name                             AS display_name,
         stream_icon                      AS icon_url,
-        source_id
+        source_id,
+        MIN(stream_id)                   AS stream_id
       FROM channels
       ${sourceId ? 'WHERE source_id = $1' : ''}
       GROUP BY COALESCE(epg_channel_id, name), source_id
@@ -688,54 +718,104 @@ export async function autoMatchChannelName(
     rows = await dbInstance.select(sql, sourceId ? [sourceId] : []);
   }
 
-  const extraResults: ScoredEpgChannel[] = [];
+  const candidates: EpgMatchCandidate[] = rows.map(r => ({
+    id: r.id,
+    display_name: r.display_name,
+    icon_url: r.icon_url ?? undefined,
+    source_id: r.source_id,
+    stream_id: (r as any).stream_id ?? undefined,
+  }));
+
+  // Cached global EPG links aren't in the DB — their channels live in their own
+  // cache database, so they have to be appended here.
   if (searchMode === 'epg' && window.storage) {
     try {
       const globalEpgLinks = useSettingsStore.getState().globalEpgLinks;
       const cacheLinks = globalEpgLinks.filter(link => link.saveEntireEpg);
-      
       const Database = (await import('@tauri-apps/plugin-sql')).default;
       for (const link of cacheLinks) {
-        if (sourceId && !link.sourceIds.includes(sourceId)) {
-          continue;
-        }
-        
+        if (sourceId && !link.sourceIds.includes(sourceId)) continue;
         try {
-          const cacheDbName = `epg_cache_${link.id}`;
-          const cacheDb = await Database.load(`sqlite:${cacheDbName}.db`);
-          
-          const sql = `SELECT id, display_name, icon_url FROM epg_channels`;
-          const cacheRows = await cacheDb.select(sql) as any[];
+          const cacheDb = await Database.load(`sqlite:epg_cache_${link.id}.db`);
+          const cacheRows = await cacheDb.select(
+            `SELECT id, display_name, icon_url FROM epg_channels`
+          ) as any[];
           for (const r of cacheRows) {
-            extraResults.push({
+            candidates.push({
               id: r.id,
               display_name: r.display_name,
               icon_url: r.icon_url || undefined,
               source_id: `global_epg_${link.id}`,
-              score: scoreChannelMatch(channelName, r.display_name),
             });
           }
-        } catch (dbErr) {
-          // Ignore
+        } catch {
+          // Cache DB not initialized yet
         }
       }
-    } catch (e) {
+    } catch {
       // Ignore
     }
   }
 
-  const scored: ScoredEpgChannel[] = (rows
-    .map(r => ({
-      id: r.id,
-      display_name: r.display_name,
-      icon_url: r.icon_url ?? undefined,
-      source_id: r.source_id,
-      score: scoreChannelMatch(channelName, r.display_name),
-    })) as ScoredEpgChannel[])
-    .concat(extraResults)
+  return candidates;
+}
+
+/**
+ * Auto-match: runs scoring of channelName against ALL channels in scope.
+ * Returns top matches above SCORE_THRESHOLD.
+ */
+const SCORE_THRESHOLD = 0.4;
+
+export async function autoMatchChannelName(
+  channelName: string,
+  sourceId?: string,
+  limit = 10,
+  searchMode: EpgSearchMode = 'm3u'
+): Promise<ScoredEpgChannel[]> {
+  const candidates = await loadEpgMatchCandidates(sourceId, searchMode);
+
+  const scored: ScoredEpgChannel[] = candidates
+    .map(c => ({ ...c, score: scoreChannelMatch(channelName, c.display_name) }))
     .filter(r => r.score >= SCORE_THRESHOLD);
 
   scored.sort((a, b) => b.score - a.score);
   return scored.slice(0, limit);
+}
+
+/**
+ * Opt-in matching tier: clean the decorations off both sides (`|DE| ARD-ALPHA
+ * HD` → `ARD-ALPHA`) and match on what is left, refusing whenever the cleaned
+ * name fits more than one EPG channel and the region markers can't split them.
+ *
+ * `threshold` is the same slider the plain scorer uses. Nothing here is ever
+ * assigned silently: the caller reports `ambiguous` channels in its results.
+ */
+export function matchChannelWithCleanNames(
+  channelName: string,
+  candidates: CleanNameIndex<EpgMatchCandidate> | EpgMatchCandidate[],
+  threshold: number,
+  extraTags?: string | string[],
+  /** Excluded from the candidates — a channel can't supply its own guide. */
+  selfStreamId?: string
+): {
+  match: ScoredEpgChannel | null;
+  ambiguous: boolean;
+  cleanedName: string;
+  /** The refusing candidates, so the caller can offer them as a choice. */
+  choices: EpgMatchCandidate[];
+  totalChoices: number;
+  via: CleanMatchVia;
+} {
+  const outcome = matchByCleanName(channelName, candidates, threshold, extraTags, selfStreamId);
+  return {
+    match: outcome.match
+      ? ({ ...outcome.match, score: outcome.match.score } as ScoredEpgChannel)
+      : null,
+    ambiguous: outcome.ambiguous,
+    cleanedName: outcome.cleanedName,
+    choices: outcome.choices,
+    totalChoices: outcome.totalChoices,
+    via: outcome.match?.via ?? 'none',
+  };
 }
 

@@ -376,6 +376,8 @@ export interface EpgChannelOverride {
   logo_background?: string;   // Manual logo tile background override: 'auto' | 'light' | 'dark' (NULL = keep auto)
   logo_padding?: string;      // Manual logo padding override: 'default' | 'none' (NULL = keep default)
   timeshift_hours?: number;   // Per-channel EPG time offset (NULL = use source default)
+  epg_source_id?: string;
+  match_by_alias?: boolean;
 }
 
 // EPG Program Override — overrides or tombstones for synced programs, plus user-created programs
@@ -639,7 +641,7 @@ class YnotvDatabase extends SqliteDatabase {
     // Each version block runs exactly ONCE. To add new columns in the future,
     // increment DB_VERSION and add a new case (do NOT modify existing cases).
     // ─────────────────────────────────────────────────────────────────────────
-    const DB_VERSION = 28;
+    const DB_VERSION = 30;
     const versionResult = await db.select('PRAGMA user_version') as Array<{ user_version: number }>;
     const currentVersion = versionResult[0]?.user_version ?? 0;
 
@@ -1074,6 +1076,12 @@ class YnotvDatabase extends SqliteDatabase {
       if (currentVersion < 28) {
         console.log('[DB] v28 migration: Adding M3U KODIPROP metadata to channels');
         try { await db.execute('ALTER TABLE channels ADD COLUMN kodi_props TEXT'); } catch { /* already exists */ }
+      }
+      if (currentVersion < 29) {
+        try { await db.execute('ALTER TABLE epg_channel_overrides ADD COLUMN epg_source_id TEXT'); } catch { /* already exists */ }
+      }
+      if (currentVersion < 30) {
+        try { await db.execute('ALTER TABLE epg_channel_overrides ADD COLUMN match_by_alias INTEGER'); } catch { /* already exists */ }
       }
 
       // Bump the stored version so these migrations never run again
@@ -1535,6 +1543,8 @@ class YnotvDatabase extends SqliteDatabase {
     // versioned migration ran on a stale schema (or the column is missing for any reason).
     try { await db.execute(`ALTER TABLE epg_channel_overrides ADD COLUMN logo_background TEXT`); } catch (e) {}
     try { await db.execute(`ALTER TABLE epg_channel_overrides ADD COLUMN logo_padding TEXT`); } catch (e) {}
+    try { await db.execute(`ALTER TABLE epg_channel_overrides ADD COLUMN epg_source_id TEXT`); } catch (e) {}
+    try { await db.execute(`ALTER TABLE epg_channel_overrides ADD COLUMN match_by_alias INTEGER`); } catch (e) {}
 
     // Self-healing migrations: Ensure critical columns from standard migrations exist
     try { await db.execute(`ALTER TABLE categories ADD COLUMN alias TEXT`); } catch (e) {}
@@ -1556,7 +1566,9 @@ class YnotvDatabase extends SqliteDatabase {
       stream_icon     TEXT,
       logo_background TEXT,
       logo_padding    TEXT,
-      timeshift_hours REAL
+      timeshift_hours REAL,
+      epg_source_id TEXT,
+      match_by_alias INTEGER
     )`);
 
     // Per-program overrides (edited fields) + custom programs + tombstones
