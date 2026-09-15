@@ -4297,6 +4297,98 @@ function alignPinMatches(unservableFeeds: string[]): { sql: string; params: stri
   };
 }
 
+/** A channel whose guide is pinned to a *different* feed than its own source. */
+type CrossFeedPinTarget = {
+  stream_id: string;
+  channel_name: string | null;
+  channel_source: string;
+  match_key: string | null;
+  pin: string;
+  rows_now: number;
+  end_now: string | null;
+};
+
+/**
+ * Cross-feed pin targets this alignment touches, in either direction: channels of
+ * this source pinned elsewhere, and other sources' channels pinned to this feed.
+ * Restricted to real pins, so a library with thousands of plain tvg-id overrides
+ * pays one small existence check and nothing more.
+ */
+async function readCrossFeedPinTargets(
+  dbInstance: any,
+  sourceId: string
+): Promise<CrossFeedPinTarget[]> {
+  try {
+    const anyPins = (await selectWithRetry(
+      dbInstance,
+      `SELECT EXISTS(SELECT 1 FROM epg_channel_overrides
+                      WHERE epg_source_id IS NOT NULL AND TRIM(epg_source_id) != '') AS has_pins`,
+      []
+    )) as { has_pins: number }[];
+    if (!anyPins[0]?.has_pins) return [];
+
+    return (await selectWithRetry(
+      dbInstance,
+      `SELECT eco.stream_id AS stream_id,
+              tc.name AS channel_name,
+              tc.source_id AS channel_source,
+              eco.epg_channel_id AS match_key,
+              eco.epg_source_id AS pin,
+              (SELECT COUNT(*) FROM programs p WHERE p.stream_id = eco.stream_id) AS rows_now,
+              (SELECT MAX(p.end) FROM programs p WHERE p.stream_id = eco.stream_id) AS end_now
+         FROM epg_channel_overrides eco
+         JOIN channels tc ON tc.stream_id = eco.stream_id
+        WHERE eco.epg_source_id IS NOT NULL AND TRIM(eco.epg_source_id) != ''
+          AND eco.epg_source_id != tc.source_id
+          AND (tc.source_id = $1 OR eco.epg_source_id = $1)`,
+      [sourceId]
+    )) as CrossFeedPinTarget[];
+  } catch (err) {
+    console.warn('[Sync] Could not read cross-feed EPG pins:', err);
+    return [];
+  }
+}
+
+/**
+ * Report what this alignment did to channels pinned to another feed. Those are
+ * the only targets the pin-aware wipe spares, so the log is where "did the
+ * pinned channel get replaced by the feed that owns it" can be answered without
+ * querying the database afterwards.
+ */
+function logCrossFeedPinAlignment(
+  sourceId: string,
+  before: CrossFeedPinTarget[],
+  after: CrossFeedPinTarget[],
+  unservableFeeds: string[],
+  affected: { deleted: number | null; insertedById: number | null; insertedByName: number | null }
+): void {
+  if (before.length === 0 && after.length === 0) return;
+
+  const toId = (ref: string) => (ref.length > 8 ? `${ref.slice(0, 8)}…` : ref);
+  const beforeByStream = new Map(before.map((t) => [t.stream_id, t]));
+
+  debugLog(
+    `[Sync] Feed-locked channels for source ${toId(sourceId)}: ${after.length} target(s); ` +
+      `deleted ${affected.deleted ?? '?'} row(s), inserted ${affected.insertedById ?? '?'} by tvg-id ` +
+      `+ ${affected.insertedByName ?? '?'} by name`,
+    'epg'
+  );
+  for (const t of after.slice(0, 20)) {
+    const was = beforeByStream.get(t.stream_id);
+    const pin = t.pin.startsWith('global_epg_') ? `global link ${toId(t.pin.slice(11))}` : toId(t.pin);
+    const unservable = unservableFeeds.includes(t.pin) ? ' [pin unservable — ignored]' : '';
+    debugLog(
+      `[Sync]   ${t.channel_name ?? t.stream_id} (${toId(t.channel_source)}) pinned to ${pin}${unservable}: ` +
+        `rows ${was?.rows_now ?? '?'} → ${t.rows_now}, guide ends ${was?.end_now ?? '?'} → ${t.end_now ?? 'nowhere'} ` +
+        `(match key ${t.match_key ?? 'name'})`,
+      'epg'
+    );
+  }
+  if (after.length > 20) {
+    debugLog(`[Sync]   …and ${after.length - 20} more feed-locked channel(s)`, 'epg');
+  }
+}
+
 export async function alignOverriddenChannelPrograms(sourceId: string): Promise<void> {
   try {
     const dbInstance = await (db as any).dbPromise;
@@ -4332,8 +4424,13 @@ export async function alignOverriddenChannelPrograms(sourceId: string): Promise<
     const start = performance.now();
     debugLog(`[Sync] Starting bulk EPG alignment for source: ${sourceId}...`, 'epg');
 
+    // Cross-feed pins this source can serve, read before and after so the log
+    // shows whether a feed-locked channel's guide was replaced, not just that
+    // rows moved somewhere. Empty (and cheap) for a library without pins.
+    const pinnedBefore = await readCrossFeedPinTargets(dbInstance, sourceId);
+
     // 1. Delete existing copied programs for target channels in this alignment to avoid stale overlaps (using index-friendly UNION subquery)
-    await executeWithRetry(
+    const deletedResult = await executeWithRetry(
       dbInstance,
       `DELETE FROM programs
        WHERE stream_id IN (
@@ -4356,7 +4453,7 @@ export async function alignOverriddenChannelPrograms(sourceId: string): Promise<
     // We execute two separate, ultra-fast index-friendly insert statements to prevent unindexed OR joins from blocking the DB.
     
     // Step 2a: Match by epg_channel_id (uses idx_channels_epg index)
-    await executeWithRetry(
+    const insertedByIdResult = await executeWithRetry(
       dbInstance,
       `INSERT OR REPLACE INTO programs (id, stream_id, title, subtitle, description, start, end, source_id)
        SELECT 
@@ -4377,7 +4474,7 @@ export async function alignOverriddenChannelPrograms(sourceId: string): Promise<
     );
 
     // Step 2b: Match by name fallback (uses idx_channels_name index)
-    await executeWithRetry(
+    const insertedByNameResult = await executeWithRetry(
       dbInstance,
       `INSERT OR REPLACE INTO programs (id, stream_id, title, subtitle, description, start, end, source_id)
        SELECT 
@@ -4397,6 +4494,15 @@ export async function alignOverriddenChannelPrograms(sourceId: string): Promise<
       [sourceId, ...pinMatch.params]
     );
     
+    // Report the feed-locked targets while the alignment's effect is still
+    // attributable to this source, before anything else writes rows.
+    const pinnedAfter = await readCrossFeedPinTargets(dbInstance, sourceId);
+    logCrossFeedPinAlignment(sourceId, pinnedBefore, pinnedAfter, unservableFeeds, {
+      deleted: deletedResult?.rowsAffected ?? null,
+      insertedById: insertedByIdResult?.rowsAffected ?? null,
+      insertedByName: insertedByNameResult?.rowsAffected ?? null,
+    });
+
     const alignmentMs = performance.now() - start;
     // Track the slowest alignment of the run for the per-run timing summary.
     lastRunAlignmentMaxMs = Math.max(lastRunAlignmentMaxMs, alignmentMs);

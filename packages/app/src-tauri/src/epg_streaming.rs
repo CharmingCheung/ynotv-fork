@@ -1265,6 +1265,7 @@ pub async fn stream_parse_epg_multi<R: tauri::Runtime>(
         if config.clear_existing {
             let deleted = delete_programs_for_source(db, &config.source_id)?;
             info!("[EPG] Deleted {} old programs for source {}", deleted, config.source_id);
+            log_pin_kept_programs(db, &config.source_id);
         }
     }
 
@@ -1758,6 +1759,7 @@ async fn parse_download_stream<R: tauri::Runtime>(
         info!("[EPG] Deleting old programs for source {}", src_ctx);
         let deleted_count = delete_programs_for_source(&db, &source_id)?;
         info!("[EPG] Deleted {} old programs for source {}", deleted_count, src_ctx);
+        log_pin_kept_programs(&db, &source_id);
     } else {
         info!("[EPG] Skipping deletion of old programs because clear_existing is false");
     }
@@ -2949,6 +2951,73 @@ fn delete_programs_for_source_conn(
     Ok(deleted)
 }
 
+/// Channels of `source_id` whose guide the wipe above deliberately keeps, with
+/// the feed each is pinned to and the rows left for it. Read *after* the wipe,
+/// so the row counts are what survived rather than what was there before it.
+///
+/// Counts programs per pinned channel through `idx_programs_stream` — the
+/// source index is dropped during a bulk EPG load, so counting by `source_id`
+/// here would add a full scan of `programs` to every wipe.
+pub(crate) fn pin_kept_programs_conn(
+    conn: &rusqlite::Connection,
+    source_id: &str,
+) -> Result<Vec<(String, String, i64, Option<String>)>> {
+    let mut stmt = conn.prepare(
+        "SELECT c.name,
+                eco.epg_source_id,
+                (SELECT COUNT(*) FROM programs p WHERE p.stream_id = eco.stream_id),
+                (SELECT MAX(p.end) FROM programs p WHERE p.stream_id = eco.stream_id)
+           FROM epg_channel_overrides eco
+           JOIN channels c ON c.stream_id = eco.stream_id
+          WHERE c.source_id = ?1
+            AND eco.epg_source_id IS NOT NULL
+            AND TRIM(eco.epg_source_id) != ''
+            AND eco.epg_source_id != ?1",
+    )?;
+    let rows = stmt
+        .query_map(rusqlite::params![source_id], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// Report what the pin-aware wipe spared, so a pinned channel's guide surviving
+/// a source's sync — and which feed it is waiting on — is visible in the log
+/// instead of having to be inferred from the program counts.
+fn log_pin_kept_programs(db: &DvrDatabase, source_id: &str) {
+    let rows = with_sync_db_retry(|| {
+        let conn = db.get_conn()?;
+        pin_kept_programs_conn(&conn, source_id)
+    });
+    match rows {
+        Ok(rows) if !rows.is_empty() => {
+            let total: i64 = rows.iter().map(|(_, _, count, _)| *count).sum();
+            info!(
+                "[EPG] Feed locks kept {} row(s) for {} channel(s) of source {} over the wipe",
+                total,
+                rows.len(),
+                source_id
+            );
+            for (name, feed, count, end) in &rows {
+                info!(
+                    "[EPG]   kept {} row(s) for {:?} (pinned to feed {}, guide ends {})",
+                    count,
+                    name,
+                    feed,
+                    end.as_deref().unwrap_or("nowhere")
+                );
+            }
+        }
+        Ok(_) => {}
+        Err(e) => warn!(
+            "[EPG] Could not count pin-kept programs for source {}: {}",
+            source_id,
+            e
+        ),
+    }
+}
+
 /// The secondary indexes on `programs` dropped during a bulk EPG load and
 /// rebuilt once after it. Kept in sync with the schema in
 /// packages/ui/src/db/index.ts.
@@ -3444,6 +3513,7 @@ pub async fn parse_epg_file<R: tauri::Runtime>(
     if clear_existing {
         let deleted_count = delete_programs_for_source(db, &source_id)?;
         info!("[EPG] Deleted {} old programs for source {}", deleted_count, source_id);
+        log_pin_kept_programs(db, &source_id);
     } else {
         info!("[EPG] Skipping deletion of old programs because clear_existing is false");
     }
@@ -4779,6 +4849,75 @@ mod tests {
             [("ch".to_string(), "playlist-x".to_string())].into_iter().collect();
         assert_eq!(drop_unservable_pins(&mut untouched, &[]), 0);
         assert_eq!(untouched.len(), 1);
+    }
+
+    #[test]
+    fn pin_kept_report_names_only_the_channels_pinned_elsewhere() {
+        let conn = rusqlite::Connection::open_in_memory().expect("in-memory db");
+        conn.execute_batch(
+            "CREATE TABLE programs (
+                 id TEXT PRIMARY KEY, stream_id TEXT, title TEXT, subtitle TEXT,
+                 description TEXT, start TEXT, end TEXT, source_id TEXT
+             );
+             CREATE TABLE channels (stream_id TEXT PRIMARY KEY, name TEXT, source_id TEXT);
+             CREATE TABLE epg_channel_overrides (
+                 stream_id TEXT PRIMARY KEY, epg_channel_id TEXT, epg_source_id TEXT
+             );",
+        )
+        .expect("schema");
+
+        for (stream_id, name, source_id) in [
+            ("ch_link_pinned", "A & E", "source_a"),
+            ("ch_self_pinned", "Self", "source_a"),
+            ("ch_unpinned", "Plain", "source_a"),
+            ("ch_foreign_pinned", "Foreign", "source_b"),
+        ] {
+            conn.execute(
+                "INSERT INTO channels (stream_id, name, source_id) VALUES (?1, ?2, ?3)",
+                rusqlite::params![stream_id, name, source_id],
+            )
+            .expect("insert channel");
+        }
+        for (id, stream_id, end) in [
+            ("k1", "ch_link_pinned", "2026-09-18T00:00:00.000Z"),
+            ("k2", "ch_link_pinned", "2026-09-18T03:00:00.000Z"),
+            ("k3", "ch_self_pinned", "2026-09-18T01:00:00.000Z"),
+            ("k4", "ch_unpinned", "2026-09-18T02:00:00.000Z"),
+            ("k5", "ch_foreign_pinned", "2026-09-18T04:00:00.000Z"),
+        ] {
+            conn.execute(
+                "INSERT INTO programs (id, stream_id, title, subtitle, description, start, end, source_id)
+                 VALUES (?1, ?2, 't', '', '', '2026-09-17T00:00:00.000Z', ?3, (SELECT source_id FROM channels WHERE stream_id = ?2))",
+                rusqlite::params![id, stream_id, end],
+            )
+            .expect("insert program");
+        }
+        for (stream_id, pin) in [
+            ("ch_link_pinned", "source_b"),
+            ("ch_self_pinned", "source_a"),
+            ("ch_foreign_pinned", "   "),
+        ] {
+            conn.execute(
+                "INSERT INTO epg_channel_overrides (stream_id, epg_channel_id, epg_source_id) VALUES (?1, NULL, ?2)",
+                rusqlite::params![stream_id, pin],
+            )
+            .expect("insert override");
+        }
+
+        let kept = pin_kept_programs_conn(&conn, "source_a").expect("report");
+        assert_eq!(
+            kept.len(),
+            1,
+            "only channels of this source pinned to a *different* feed are reported"
+        );
+        let (name, feed, rows, end) = &kept[0];
+        assert_eq!(name, "A & E");
+        assert_eq!(feed, "source_b");
+        assert_eq!(*rows, 2, "the rows left for the pinned channel, not other feeds'");
+        assert_eq!(end.as_deref(), Some("2026-09-18T03:00:00.000Z"));
+
+        // A source with no pin of its own reports nothing, even with pins around.
+        assert!(pin_kept_programs_conn(&conn, "source_b").expect("report").is_empty());
     }
 
     #[test]
