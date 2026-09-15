@@ -480,7 +480,17 @@ async function syncEpgForSource(source: Source, channels: Channel[], epgUrl?: st
       }));
 
     console.log(`[EPG] Channels with EPG mapping (tvg-id or name): ${channelMappings.length}/${channels.length}`);
-    debugLog(`${channelMappings.length}/${channels.length} channels have epg_channel_id`, 'epg');
+    // Report the real counts separately: `channelMappings` includes channels
+    // that only have a *name* for matching, so logging it as "have
+    // epg_channel_id" made it look like every channel carried a tvg-id.
+    const channelsWithTvgId = channels.filter(
+      ch => (epgOverrideMap.get(ch.stream_id) || ch.epg_channel_id || '').length > 0
+    ).length;
+    debugLog(
+      `${channelsWithTvgId}/${channels.length} channels have a tvg-id; ` +
+      `${channelMappings.length}/${channels.length} usable for matching (name fallback included)`,
+      'epg'
+    );
 
     // Use native Rust streaming parser for maximum performance with automatic fallback retry
     const result = await epgStreaming.streamParseEpg(

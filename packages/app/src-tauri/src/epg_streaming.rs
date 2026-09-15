@@ -392,6 +392,24 @@ fn normalize_channel_name(name: &str) -> String {
     result
 }
 
+/// Insert a `name -> id` entry plus its normalized form.
+///
+/// The normalized key is skipped only when it is byte-identical to the key that
+/// was just stored. That guard matters: the raw key keeps the original casing
+/// (it is also matched verbatim, so a casing-preserving key is load-bearing),
+/// and the comparison used to be against `name.to_lowercase()`. For any clean
+/// alphanumeric name — `TLC`, `Nickelodeon`, `ESPN2` — the normalized form
+/// *equals* the lowercased name, so the normalized key was never inserted and
+/// the only usable key was case-sensitive. A feed that lowercased (or
+/// uppercased) the same name could then never match it.
+fn insert_name_key(map: &mut HashMap<String, String>, name: &str, id: &str) {
+    map.insert(name.to_string(), id.to_string());
+    let normalized = normalize_channel_name(name);
+    if !normalized.is_empty() && normalized != name {
+        map.insert(normalized, id.to_string());
+    }
+}
+
 /// Build a channel lookup map that supports multiple stream_ids per epg_channel_id
 /// This allows primary + backup streams to all get the same EPG data
 fn build_channel_lookup(mappings: Vec<ChannelMapping>) -> HashMap<String, Vec<String>> {
@@ -401,10 +419,34 @@ fn build_channel_lookup(mappings: Vec<ChannelMapping>) -> HashMap<String, Vec<St
         let stream_id = mapping.stream_id;
 
         if !mapping.epg_channel_id.is_empty() {
+            let epg_id = mapping.epg_channel_id.trim().to_string();
             lookup
-                .entry(mapping.epg_channel_id.trim().to_string())
+                .entry(epg_id.clone())
                 .or_default()
                 .push(stream_id.clone());
+
+            // Case-insensitive alias for the same id.
+            //
+            // Feeds and playlists routinely disagree on the casing of the same
+            // channel id: IPTV playlists carry the canonical iptv-org form
+            // (`ESPN2.us`) while some XMLTV feeds declare it lowercased
+            // (`espn2.us`), because the generator bulk-lowercased the ids it
+            // took from iptv-org. The programme lookup compares the raw value
+            // first, so without this alias such a channel misses outright and
+            // falls through to name matching — which then fails too, because
+            // the feed's display names are undecorated while the provider's
+            // channel names are not.
+            //
+            // Lowercase only, deliberately NOT `normalize_channel_name`: that
+            // strips punctuation as well and would merge genuinely distinct ids
+            // such as `a-b.c` and `ab.c`.
+            let folded = epg_id.to_lowercase();
+            if folded != epg_id {
+                lookup
+                    .entry(folded)
+                    .or_default()
+                    .push(stream_id.clone());
+            }
         }
 
         // Also add name-based lookup for fallback
@@ -415,9 +457,12 @@ fn build_channel_lookup(mappings: Vec<ChannelMapping>) -> HashMap<String, Vec<St
                 .or_default()
                 .push(stream_id.clone());
 
-            // Also add normalized version for fuzzy matching
+            // Also add the normalized version for fuzzy matching. Compare
+            // against the raw key that was just stored, not its lowercase form:
+            // otherwise a clean alphanumeric name (`TLC`) gets no normalized key
+            // at all and can only ever match case-exactly.
             let normalized = normalize_channel_name(&name);
-            if normalized != name.to_lowercase() && !normalized.is_empty() {
+            if !normalized.is_empty() && normalized != name {
                 lookup
                     .entry(normalized)
                     .or_default()
@@ -1602,12 +1647,10 @@ fn build_display_name_mapping(xml_data: &[u8]) -> HashMap<String, String> {
                             let display_name = current_text.trim().to_string();
                             if !display_name.is_empty() {
                                 // Add mapping from display name to channel ID
-                                mapping.insert(display_name.clone(), channel_id.clone());
-                                // Also add normalized version
-                                let normalized = normalize_channel_name(&display_name);
-                                if !normalized.is_empty() && normalized != display_name.to_lowercase() {
-                                    mapping.insert(normalized, channel_id.clone());
-                                }
+                                // Raw key plus the normalized form (see
+                                // `insert_name_key` for why the guard compares
+                                // against the raw key, not the lowercased name).
+                                insert_name_key(&mut mapping, &display_name, channel_id);
                             }
                         }
                         current_element = None;
@@ -1740,6 +1783,10 @@ fn parse_and_stream_epg_once<R: std::io::BufRead>(
     let mut in_channel = false;
     let mut channel_id: Option<String> = None;
     let mut channel_display_name: Option<String> = None;
+    // Every <display-name> of the current channel. Feeds routinely carry several
+    // (a clean name plus tagged/regional aliases); all of them are matchable,
+    // and only the first is stored for display.
+    let mut channel_display_names: Vec<String> = Vec::new();
     let mut channel_icon: Option<String> = None;
     let mut channel_element: Option<&'static str> = None;
     let mut channel_text = String::new();
@@ -1800,6 +1847,7 @@ fn parse_and_stream_epg_once<R: std::io::BufRead>(
                             in_channel = true;
                             channel_id = None;
                             channel_display_name = None;
+                            channel_display_names.clear();
                             channel_icon = None;
                             for attr in e.attributes() {
                                 if let Ok(a) = attr {
@@ -1885,8 +1933,13 @@ fn parse_and_stream_epg_once<R: std::io::BufRead>(
                     match name {
                         b"display-name" => {
                             let text = channel_text.trim().to_string();
-                            if !text.is_empty() && channel_display_name.is_none() {
-                                channel_display_name = Some(text);
+                            if !text.is_empty() {
+                                // Keep the first name for display, but index
+                                // every alias for matching.
+                                if channel_display_name.is_none() {
+                                    channel_display_name = Some(text.clone());
+                                }
+                                channel_display_names.push(text);
                             }
                             channel_element = None;
                         }
@@ -1912,10 +1965,12 @@ fn parse_and_stream_epg_once<R: std::io::BufRead>(
                                 // have been seen, reusing the exact original
                                 // merge algorithm.
                                 if advanced_epg_matching {
-                                    display_map.insert(display_name.clone(), id.clone());
-                                    let norm = normalize_channel_name(&display_name);
-                                    if !norm.is_empty() && norm != display_name.to_lowercase() {
-                                        display_map.insert(norm, id.clone());
+                                    // Index every display name, not just the
+                                    // first: the tagged/regional aliases are how
+                                    // an id that a duplicate clean name would
+                                    // otherwise shadow stays reachable.
+                                    for display_name in &channel_display_names {
+                                        insert_name_key(&mut display_map, display_name, &id);
                                     }
                                 }
                             } else {
@@ -2119,6 +2174,10 @@ fn parse_and_stream_multi_once<R: std::io::BufRead>(
     let mut in_channel = false;
     let mut channel_id: Option<String> = None;
     let mut channel_display_name: Option<String> = None;
+    // Every <display-name> of the current channel. Feeds routinely carry several
+    // (a clean name plus tagged/regional aliases); all of them are matchable,
+    // and only the first is stored for display.
+    let mut channel_display_names: Vec<String> = Vec::new();
     let mut channel_icon: Option<String> = None;
     let mut channel_element: Option<&'static str> = None;
     let mut channel_text = String::new();
@@ -2189,6 +2248,7 @@ fn parse_and_stream_multi_once<R: std::io::BufRead>(
                             in_channel = true;
                             channel_id = None;
                             channel_display_name = None;
+                            channel_display_names.clear();
                             channel_icon = None;
                             for attr in e.attributes() {
                                 if let Ok(a) = attr {
@@ -2272,8 +2332,13 @@ fn parse_and_stream_multi_once<R: std::io::BufRead>(
                     match name {
                         b"display-name" => {
                             let text = channel_text.trim().to_string();
-                            if !text.is_empty() && channel_display_name.is_none() {
-                                channel_display_name = Some(text);
+                            if !text.is_empty() {
+                                // Keep the first name for display, but index
+                                // every alias for matching.
+                                if channel_display_name.is_none() {
+                                    channel_display_name = Some(text.clone());
+                                }
+                                channel_display_names.push(text);
                             }
                             channel_element = None;
                         }
@@ -2295,10 +2360,12 @@ fn parse_and_stream_multi_once<R: std::io::BufRead>(
                                 // advanced matching (same keys/conditions as
                                 // build_display_name_mapping).
                                 if any_advanced {
-                                    display_map.insert(display_name.clone(), id.clone());
-                                    let norm = normalize_channel_name(&display_name);
-                                    if !norm.is_empty() && norm != display_name.to_lowercase() {
-                                        display_map.insert(norm, id.clone());
+                                    // Index every display name, not just the
+                                    // first: the tagged/regional aliases are how
+                                    // an id that a duplicate clean name would
+                                    // otherwise shadow stays reachable.
+                                    for display_name in &channel_display_names {
+                                        insert_name_key(&mut display_map, display_name, &id);
                                     }
                                 }
                             } else {
@@ -3950,6 +4017,117 @@ mod tests {
         }
     }
 
+    /// A feed whose channel id is cased differently from the playlist's tvg-id.
+    /// The channel name is deliberately decorated so that name matching cannot
+    /// rescue it — the id is the only way this channel can match.
+    fn case_fold_fixture(epg_id: &str) -> (String, Vec<ChannelMapping>) {
+        let xml = String::from(
+            "<?xml version=\"1.0\"?><tv>\
+             <channel id=\"espn2.us\"><display-name>ESPN2</display-name></channel>\
+             <programme start=\"20260223010000 +0000\" stop=\"20260223100000 +0000\" channel=\"espn2.us\">\
+             <title>T</title><desc>D</desc></programme></tv>",
+        );
+        let mappings = vec![ChannelMapping {
+            epg_channel_id: epg_id.into(),
+            stream_id: "s1".into(),
+            channel_name: "US: ESPN2 HD".into(),
+        }];
+        (xml, mappings)
+    }
+
+    /// Parse the fixture with advanced matching OFF, so the epg-id path alone
+    /// decides whether the programme matches.
+    async fn id_path_result(epg_id: &str) -> (usize, Vec<String>) {
+        let (xml, mappings) = case_fold_fixture(epg_id);
+        let lookup = build_channel_lookup(mappings);
+
+        let mut flowed: Vec<EpgProgram> = Vec::new();
+        let mut sink = |batch: Vec<EpgProgram>| {
+            flowed.extend(batch);
+            true
+        };
+
+        let (_channels, _result) = parse_and_stream_epg_once(
+            xml.as_bytes(),
+            lookup,
+            false, // advanced matching off
+            0.0,
+            &mut sink,
+            &mut |_, _| {},
+        )
+        .expect("single-pass parse");
+
+        let ids = flowed.iter().map(|p| p.channel_id.clone()).collect();
+        (flowed.len(), ids)
+    }
+
+    #[tokio::test]
+    async fn exact_case_id_match_is_unchanged() {
+        // Parity guard: this resolved before the alias existed and must keep
+        // resolving identically.
+        let (count, ids) = id_path_result("espn2.us").await;
+        assert_eq!(count, 1, "an exact id match still resolves");
+        assert_eq!(ids, vec!["s1".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn id_differing_only_by_case_resolves() {
+        let (count, ids) = id_path_result("ESPN2.us").await;
+        assert_eq!(count, 1, "an id differing only by case now resolves");
+        assert_eq!(ids, vec!["s1".to_string()]);
+    }
+
+    #[test]
+    fn id_alias_is_lowercase_only() {
+        let lookup = build_channel_lookup(vec![ChannelMapping {
+            epg_channel_id: "ESPN2.us".into(),
+            stream_id: "s1".into(),
+            channel_name: String::new(),
+        }]);
+
+        assert_eq!(lookup.get("ESPN2.us").map(Vec::len), Some(1), "raw key kept");
+        assert_eq!(
+            lookup.get("espn2.us"),
+            Some(&vec!["s1".to_string()]),
+            "case-folded alias points at the same stream"
+        );
+
+        // Punctuation must survive untouched: `a-b.c` must not alias to `abc`,
+        // and a lowercase id must not gain an uppercase alias.
+        let lower = build_channel_lookup(vec![ChannelMapping {
+            epg_channel_id: "a-b.c".into(),
+            stream_id: "s2".into(),
+            channel_name: String::new(),
+        }]);
+        assert!(lower.contains_key("a-b.c"), "raw punctuation-only id kept");
+        assert!(!lower.contains_key("A-B.C"), "no uppercase alias");
+        assert!(!lower.contains_key("abc"), "punctuation is not stripped");
+    }
+
+    #[test]
+    fn id_alias_shares_streams_rather_than_replacing_them() {
+        // A channel already keyed on the lowercase id and another keyed on the
+        // canonical id must both end up on the folded key, so a feed declaring
+        // the lowercase form still reaches both.
+        let lookup = build_channel_lookup(vec![
+            ChannelMapping {
+                epg_channel_id: "ESPN2.us".into(),
+                stream_id: "s1".into(),
+                channel_name: String::new(),
+            },
+            ChannelMapping {
+                epg_channel_id: "espn2.us".into(),
+                stream_id: "s2".into(),
+                channel_name: String::new(),
+            },
+        ]);
+
+        let mut folded = lookup.get("espn2.us").cloned().unwrap_or_default();
+        folded.sort();
+        assert_eq!(folded, vec!["s1".to_string(), "s2".to_string()]);
+        assert_eq!(lookup.get("ESPN2.us"), Some(&vec!["s1".to_string()]));
+    }
+
     #[test]
     fn busy_contention_aborts_batch_instead_of_dropping_rows() {
         use tempfile::tempdir;
@@ -4129,5 +4307,107 @@ mod tests {
         assert_eq!(by_id["s4"], "Name Four", "name used when no epg_channel_id");
         assert_eq!(by_id["s5"], "ID5", "name empty but id present");
         assert_eq!(by_id["s7"], "OVERRIDE", "override beats epg_channel_id");
+    }
+
+    // ─── Matchable name keys and all display names ──────────────────────────
+
+    /// Run the real single-source streaming parse over an XML string and report
+    /// how many programs matched.
+    fn run_streaming(xml: &str, mappings: Vec<ChannelMapping>, advanced: bool) -> usize {
+        let lookup = build_channel_lookup(mappings);
+        let mut matched_programs = 0usize;
+        let mut sink = |batch: Vec<EpgProgram>| {
+            matched_programs += batch.len();
+            true
+        };
+        let mut progress = |_parsed: usize, _matched: usize| {};
+        let (_channels, result) = parse_and_stream_epg_once(
+            std::io::Cursor::new(xml.as_bytes().to_vec()),
+            lookup,
+            advanced,
+            0.0,
+            &mut sink,
+            &mut progress,
+        )
+        .expect("streaming parse");
+        assert_eq!(result.matched_programs, matched_programs);
+        result.matched_programs
+    }
+
+    /// One channel, one programme, plus a second display name for it.
+    fn xml_with_alias(first: &str, alias: &str) -> String {
+        format!(
+            "<?xml version=\"1.0\"?><tv>\
+             <channel id=\"CH1\"><display-name>{}</display-name><display-name>{}</display-name></channel>\
+             <programme start=\"20260223010000 +0000\" stop=\"20260223020000 +0000\" channel=\"CH1\"><title>T</title></programme>\
+             </tv>",
+            first, alias
+        )
+    }
+
+    fn one_mapping(name: &str) -> Vec<ChannelMapping> {
+        vec![ChannelMapping {
+            epg_channel_id: String::new(),
+            stream_id: "s1".into(),
+            channel_name: name.into(),
+        }]
+    }
+
+    #[test]
+    fn clean_names_get_a_normalized_key() {
+        // "TLC" normalizes to "tlc", which is *not* the raw key stored
+        // (casing is preserved for display/verbatim matching), so the key must
+        // be inserted. The old guard compared against the lowercased name and
+        // silently skipped it, leaving only a case-sensitive key.
+        let lookup = build_channel_lookup(one_mapping("TLC"));
+        assert!(lookup.contains_key("TLC"), "raw key preserved");
+        assert!(lookup.contains_key("tlc"), "normalized key inserted");
+
+        let lookup = build_channel_lookup(one_mapping("Nickelodeon"));
+        assert!(lookup.contains_key("Nickelodeon"));
+        assert!(lookup.contains_key("nickelodeon"));
+
+        // Already-normalized names must not gain a redundant key either way.
+        let lookup = build_channel_lookup(one_mapping("tlc"));
+        assert_eq!(lookup.get("tlc").map(|v| v.len()), Some(1));
+    }
+
+    #[test]
+    fn clean_display_name_matches_different_casing() {
+        // Playlist "TLC" vs feed "Tlc": neither the raw key nor the normalized
+        // query used to find the other, so these channels got no guide at all.
+        assert_eq!(
+            run_streaming(&xml_with_alias("Tlc", "Tlc"), one_mapping("TLC"), true),
+            1,
+            "a case-only difference must still match"
+        );
+    }
+
+    #[test]
+    fn every_display_name_is_matchable_not_just_the_first() {
+        // The playlist channel carries the *second* display name; the first
+        // ("1 KZN") is not equal to it after normalization, so matching can only
+        // come from the alias being indexed.
+        let xml = xml_with_alias("1 KZN", "SA One KZN");
+        assert_eq!(
+            run_streaming(&xml, one_mapping("SA One KZN"), true),
+            1,
+            "aliases must be matchable"
+        );
+        assert_ne!(
+            normalize_channel_name("SA One KZN"),
+            normalize_channel_name("1 KZN"),
+            "the alias is genuinely a different name"
+        );
+    }
+
+    #[test]
+    fn display_name_merge_is_skipped_without_advanced_matching() {
+        let xml = xml_with_alias("1 KZN", "SA One KZN");
+        assert_eq!(
+            run_streaming(&xml, one_mapping("SA One KZN"), false),
+            0,
+            "advanced matching off: no display-name merge, so no alias match"
+        );
     }
 }
