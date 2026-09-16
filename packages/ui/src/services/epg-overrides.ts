@@ -964,6 +964,11 @@ export async function loadEpgMatchCandidates(
 /**
  * Auto-match: runs scoring of channelName against ALL channels in scope.
  * Returns top matches above SCORE_THRESHOLD.
+ *
+ * Loads the candidates itself, so it suits a single channel (the editor's
+ * Auto-match button). A caller matching many channels back to back must load
+ * the list once and use {@link rankEpgMatchCandidates} /
+ * {@link bestEpgMatchCandidate} instead — see their doc comments.
  */
 const SCORE_THRESHOLD = 0.4;
 
@@ -974,13 +979,61 @@ export async function autoMatchChannelName(
   searchMode: EpgSearchMode = 'm3u'
 ): Promise<ScoredEpgChannel[]> {
   const candidates = await loadEpgMatchCandidates(sourceId, searchMode);
+  return rankEpgMatchCandidates(channelName, candidates, limit);
+}
 
+/**
+ * Score a name against an already-loaded candidate list.
+ *
+ * The candidates do not depend on the name being matched, so a bulk run (the
+ * Automatch Missing pass) loads them once and calls this per channel. Re-loading
+ * them per channel re-ran the same query and re-read every global-EPG cache for
+ * every channel, which is what made a run over a large scope take hours.
+ *
+ * Filtering (`>= SCORE_THRESHOLD`) and the score-descending order are exactly
+ * what `autoMatchChannelName` has always applied, so a preloaded list produces
+ * the same results as a fresh query would.
+ */
+export function rankEpgMatchCandidates(
+  channelName: string,
+  candidates: EpgMatchCandidate[],
+  limit = 10
+): ScoredEpgChannel[] {
   const scored: ScoredEpgChannel[] = candidates
     .map(c => ({ ...c, score: scoreChannelMatch(channelName, c.display_name) }))
     .filter(r => r.score >= SCORE_THRESHOLD);
 
   scored.sort((a, b) => b.score - a.score);
   return scored.slice(0, limit);
+}
+
+/**
+ * The winner for a name, in the shape a bulk run needs: one result, no scored
+ * array built and no sort.
+ *
+ * Allocating a scored copy of every candidate and sorting it (millions of
+ * objects across a run) is pure overhead when only the best match is used, and
+ * `null` is reported both when nothing clears the floor and when the candidate
+ * list is empty — the same "no match" the ranked list reports via `.length === 0`.
+ * Ties keep the first candidate, matching the stable sort in
+ * {@link rankEpgMatchCandidates}, so `bestEpgMatchCandidate(name, list)` is
+ * always `rankEpgMatchCandidates(name, list, 1)[0] ?? null`.
+ */
+export function bestEpgMatchCandidate(
+  channelName: string,
+  candidates: EpgMatchCandidate[]
+): ScoredEpgChannel | null {
+  let best: ScoredEpgChannel | null = null;
+  let bestScore = 0;
+  for (const c of candidates) {
+    const score = scoreChannelMatch(channelName, c.display_name);
+    if (score < SCORE_THRESHOLD) continue;
+    if (best === null || score > bestScore) {
+      best = { ...c, score };
+      bestScore = score;
+    }
+  }
+  return best;
 }
 
 /**

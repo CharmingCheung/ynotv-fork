@@ -20,6 +20,7 @@ import {
   restoreProgramOverride,
   searchEpgChannels,
   autoMatchChannelName,
+  bestEpgMatchCandidate,
   loadEpgMatchCandidates,
   matchChannelWithCleanNames,
   getPreviewProgramsForEpgId,
@@ -1002,14 +1003,18 @@ export function EpgEditorModal({
       const threshold = automatchThreshold / 100;
       const scopeId = automatchScope === 'source' ? (automatchSourceId || undefined) : undefined;
 
-      // The opt-in cleaned-name run resolves every channel against the whole
-      // candidate list, so it is loaded AND indexed once instead of re-read per
-      // channel (the index is what keeps a large feed's run from taking minutes).
+      // The candidate list is loaded ONCE for the whole run. It does not depend
+      // on the channel being matched, and the run only ever writes overrides and
+      // programmes (never `channels` / `epg_channels`), so a preloaded list is
+      // identical to what a per-channel query would return — while a query per
+      // channel is a full candidate load (plus every global-EPG cache read) for
+      // every channel in scope.
+      const candidates = await loadEpgMatchCandidates(scopeId, automatchMode);
+      // The opt-in cleaned-name run resolves every channel against the same
+      // list, indexed once — the index is what keeps a large feed's run from
+      // taking minutes.
       const cleanIndex = epgAutomatchCleanNames
-        ? prepareCleanNameIndex(
-            await loadEpgMatchCandidates(scopeId, automatchMode),
-            epgAutomatchStripTags,
-          )
+        ? prepareCleanNameIndex(candidates, epgAutomatchStripTags)
         : null;
 
       for (let i = 0; i < channels.length; i++) {
@@ -1057,10 +1062,12 @@ export function EpgEditorModal({
 
           // With cleaning on, the cleaned names ARE the comparison — falling back
           // to the raw scorer would re-introduce the tags we just removed.
-          const results = epgAutomatchCleanNames
-            ? []
-            : await autoMatchChannelName(matchName, scopeId, 1, automatchMode);
-          const topMatch = cleanedMatch?.match ?? (results.length > 0 && results[0].score >= threshold ? results[0] : null);
+          // Otherwise the channel is scored against the preloaded list, keeping
+          // only the winner (nothing here needs the full ranked list).
+          const bestMatch = epgAutomatchCleanNames
+            ? null
+            : bestEpgMatchCandidate(matchName, candidates);
+          const topMatch = cleanedMatch?.match ?? (bestMatch && bestMatch.score >= threshold ? bestMatch : null);
 
           if (topMatch) {
             if (cleanedMatch?.match) cleaned++;
@@ -1105,7 +1112,7 @@ export function EpgEditorModal({
                 threshold: automatchThreshold,
               })}` });
             } else {
-              const bestScore = results.length > 0 ? results[0].score : 0;
+              const bestScore = bestMatch?.score ?? 0;
               details.push({ text: `✗ ${ch.name} — best match ${(bestScore * 100).toFixed(0)}% (below ${automatchThreshold}%)` });
             }
           }

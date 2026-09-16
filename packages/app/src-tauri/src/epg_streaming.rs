@@ -3118,9 +3118,23 @@ fn replace_locked_guides<'a>(
     }
 }
 
+/// How many distinct feed refs the pin-kept summary names before collapsing
+/// the rest into "+N more".
+const MAX_LOGGED_PIN_FEEDS: usize = 3;
+
 /// Report what the pin-aware wipe spared, so a pinned channel's guide surviving
 /// a source's sync — and which feed it is waiting on — is visible in the log
 /// instead of having to be inferred from the program counts.
+///
+/// Totals on ONE line: a global EPG link locks every channel it fills, so a
+/// heavily pinned source would otherwise write a log line per channel on every
+/// sync (thousands of lines, and the I/O that goes with them). The per-channel
+/// detail, including each channel's guide horizon, is what the EPG editor's
+/// Programs tab lists on demand.
+///
+/// Three feeds named at most: which feeds hold the locks is the useful summary
+/// (a source waiting on a deleted feed looks different from one waiting on its
+/// own link), and the list stays short however many channels are pinned.
 fn log_pin_kept_programs(db: &DvrDatabase, source_id: &str) {
     let rows = with_sync_db_retry(|| {
         let conn = db.get_conn()?;
@@ -3129,21 +3143,28 @@ fn log_pin_kept_programs(db: &DvrDatabase, source_id: &str) {
     match rows {
         Ok(rows) if !rows.is_empty() => {
             let total: i64 = rows.iter().map(|(_, _, count, _)| *count).sum();
+            let mut feeds: Vec<&str> = rows.iter().map(|(_, feed, _, _)| feed.as_str()).collect();
+            feeds.sort_unstable();
+            feeds.dedup();
+            let listed = feeds
+                .iter()
+                .take(MAX_LOGGED_PIN_FEEDS)
+                .copied()
+                .collect::<Vec<_>>()
+                .join(", ");
+            let more = feeds.len().saturating_sub(MAX_LOGGED_PIN_FEEDS);
             info!(
-                "[EPG] Feed locks kept {} row(s) for {} channel(s) of source {} over the wipe",
+                "[EPG] Feed locks kept {} row(s) for {} channel(s) of source {} over the wipe (pinned to: {}{})",
                 total,
                 rows.len(),
-                source_id
+                source_id,
+                listed,
+                if more > 0 {
+                    format!(", +{} more", more)
+                } else {
+                    String::new()
+                }
             );
-            for (name, feed, count, end) in &rows {
-                info!(
-                    "[EPG]   kept {} row(s) for {:?} (pinned to feed {}, guide ends {})",
-                    count,
-                    name,
-                    feed,
-                    end.as_deref().unwrap_or("nowhere")
-                );
-            }
         }
         Ok(_) => {}
         Err(e) => warn!(
