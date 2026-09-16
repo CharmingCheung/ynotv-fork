@@ -645,11 +645,21 @@
 .epg-search-apply-btn:hover { background: rgba(0,212,255,0.2); }
 
 /* ── Source Channel List ── */
+/*
+ * The rows are virtualized, so this is the list's own scroll container: the
+ * virtualizer positions rows relative to the scroll element it is handed, and the
+ * tab body (which also holds the filter) is not it. Row spacing is padding inside
+ * the measured row, not a `gap` here — absolutely positioned rows ignore it.
+ */
 .epg-source-channel-list {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
+  max-height: min(60vh, 560px);
+  overflow-y: auto;
+  padding-right: 2px;
 }
+
+.epg-source-channel-list::-webkit-scrollbar { width: 6px; }
+.epg-source-channel-list::-webkit-scrollbar-track { background: transparent; }
+.epg-source-channel-list::-webkit-scrollbar-thumb { background: var(--border-color, #444); border-radius: 3px; }
 
 .epg-source-channel-row {
   display: flex;

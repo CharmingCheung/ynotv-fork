@@ -123,6 +123,17 @@ function servablePin(
   return feedSourceId;
 }
 
+/**
+ * The five fields the source list renders. The list loads exactly these columns:
+ * `channels.toArray()` marshals all 29 of every channel in the source, which is
+ * ~15 MB of objects on a 32k channel playlist. The full row is fetched when a row
+ * is clicked, since that is what the channel tab reads.
+ */
+type SourceListRow = Pick<
+  StoredChannel,
+  'stream_id' | 'name' | 'stream_icon' | 'epg_channel_id' | 'source_id'
+>;
+
 export interface EpgEditorModalProps {
   /** If set, opens directly on a specific channel */
   channel?: StoredChannel;
@@ -457,9 +468,11 @@ export function EpgEditorModal({
   }, []);
 
   // ── Source tab state ──
-  const [sourceChannels, setSourceChannels] = useState<StoredChannel[]>([]);
+  const [sourceChannels, setSourceChannels] = useState<SourceListRow[]>([]);
   const [sourceFilter, setSourceFilter] = useState('');
   const [sourceLoading, setSourceLoading] = useState(false);
+  /** The list's own scroll container — the virtualizer needs it as its scroll element. */
+  const sourceListRef = useRef<HTMLDivElement>(null);
   // Track which stream_ids have overrides (for the indicator dot)
   const [overriddenIds, setOverriddenIds] = useState<Set<string>>(new Set());
 
@@ -631,21 +644,42 @@ export function EpgEditorModal({
 
     if (!resolvedSourceId) return;
     setSourceLoading(true);
-    db.channels.where('source_id').equals(resolvedSourceId).toArray().then(async chans => {
-      const sorted = chans.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-      setSourceChannels(sorted);
-      // Load overridden stream ids for dot indicators — source-scoped indexed join
-      // instead of pulling the entire overrides table into memory.
-      const dbInstance = await (db as any).dbPromise;
-      const overrideRows = await dbInstance.select(
-        `SELECT o.stream_id FROM epg_channel_overrides o JOIN channels c ON c.stream_id = o.stream_id WHERE c.source_id = $1`,
+    // Only the columns the rows render, rather than every channel object Dexie
+    // would materialize (29 columns each) for a list that shows five fields.
+    (db as any).dbPromise
+      .then((dbInstance: any) => dbInstance.select(
+        `SELECT stream_id, name, stream_icon, epg_channel_id, source_id
+           FROM channels
+          WHERE source_id = $1`,
         [resolvedSourceId]
-      ) as { stream_id: string }[];
-      const ids = new Set(overrideRows.map(r => r.stream_id));
-      setOverriddenIds(ids);
-      setSourceLoading(false);
-    });
+      ))
+      .then(async (rows: SourceListRow[]) => {
+        const sorted = [...rows].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        setSourceChannels(sorted);
+        // Load overridden stream ids for dot indicators — source-scoped indexed join
+        // instead of pulling the entire overrides table into memory.
+        const dbInstance = await (db as any).dbPromise;
+        const overrideRows = await dbInstance.select(
+          `SELECT o.stream_id FROM epg_channel_overrides o JOIN channels c ON c.stream_id = o.stream_id WHERE c.source_id = $1`,
+          [resolvedSourceId]
+        ) as { stream_id: string }[];
+        const ids = new Set(overrideRows.map(r => r.stream_id));
+        setOverriddenIds(ids);
+        setSourceLoading(false);
+      })
+      .catch(() => {
+        // Previously an error here left the tab on "Loading channels…" for good.
+        setSourceChannels([]);
+        setSourceLoading(false);
+      });
   }, [activeTab, resolvedSourceId, channelList]);
+
+  // Virtual rows are positioned from the scroll offset, so a filter (or a new
+  // source) that shrinks the list under the current offset would otherwise leave a
+  // blank area until the next scroll event.
+  useEffect(() => {
+    if (sourceListRef.current) sourceListRef.current.scrollTop = 0;
+  }, [sourceFilter, resolvedSourceId]);
 
   // ── Load sources for Automatch tab ──
   useEffect(() => {
@@ -901,8 +935,12 @@ export function EpgEditorModal({
   }
 
   // ── Source tab: navigate to channel ──
-  function handleOpenSourceChannel(ch: StoredChannel) {
-    setChannel(ch);
+  async function handleOpenSourceChannel(row: SourceListRow) {
+    // The list carries only the columns it renders, so fetch the full channel the
+    // channel tab reads before switching to it.
+    const full = await db.channels.get(row.stream_id).catch(() => undefined);
+    if (!full) return;
+    setChannel(full);
     setActiveTab('channel');
   }
 
@@ -1967,33 +2005,48 @@ export function EpgEditorModal({
               ) : filteredSourceChannels.length === 0 ? (
                 <div className="epg-editor-empty">{t('noChannelsFound')}</div>
               ) : (
-                <div className="epg-source-channel-list">
-                  {filteredSourceChannels.map(ch => (
-                    <div
-                      key={ch.stream_id}
-                      className="epg-source-channel-row"
-                      onClick={() => handleOpenSourceChannel(ch)}
-                      title={t('clickToEdit')}
-                    >
-                      {ch.stream_icon ? (
-                        <img 
-                          key={ch.stream_icon}
-                          src={ch.stream_icon} 
-                          alt="" 
-                          className="epg-source-channel-icon"
-                          onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} 
-                        />
-                      ) : (
-                        <div style={{ width: 32, height: 32, borderRadius: 6, background: 'var(--bg-tertiary, rgba(255,255,255,0.05))', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>📡</div>
-                      )}
-                      <div className="epg-source-channel-name">{ch.name}</div>
-                      <div className="epg-source-channel-tvgid">{ch.epg_channel_id || '—'}</div>
-                      {overriddenIds.has(ch.stream_id) && (
-                        <div className="epg-override-dot" title={t('hasOverrides')} />
-                      )}
-                      <span style={{ color: 'var(--text-secondary,#666)', fontSize: '0.85rem' }}>›</span>
-                    </div>
-                  ))}
+                <div ref={sourceListRef} className="epg-source-channel-list">
+                  {/*
+                    A source can hold tens of thousands of channels and every row
+                    mounts an icon and a logo request, so only the visible window is
+                    rendered. Rows are wrapped so the 5px spacing sits inside the
+                    measured height: virtual rows are positioned absolutely, which
+                    the flex `gap` this list used to rely on does not survive.
+                  */}
+                  <VirtualList
+                    scrollRef={sourceListRef}
+                    items={filteredSourceChannels}
+                    estimateItemHeight={57}
+                    overscan={8}
+                    getKey={ch => ch.stream_id}
+                    renderItem={ch => (
+                      <div style={{ paddingBottom: 5 }}>
+                        <div
+                          className="epg-source-channel-row"
+                          onClick={() => handleOpenSourceChannel(ch)}
+                          title={t('clickToEdit')}
+                        >
+                          {ch.stream_icon ? (
+                            <img
+                              key={ch.stream_icon}
+                              src={ch.stream_icon}
+                              alt=""
+                              className="epg-source-channel-icon"
+                              onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                            />
+                          ) : (
+                            <div style={{ width: 32, height: 32, borderRadius: 6, background: 'var(--bg-tertiary, rgba(255,255,255,0.05))', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>📡</div>
+                          )}
+                          <div className="epg-source-channel-name">{ch.name}</div>
+                          <div className="epg-source-channel-tvgid">{ch.epg_channel_id || '—'}</div>
+                          {overriddenIds.has(ch.stream_id) && (
+                            <div className="epg-override-dot" title={t('hasOverrides')} />
+                          )}
+                          <span style={{ color: 'var(--text-secondary,#666)', fontSize: '0.85rem' }}>›</span>
+                        </div>
+                      </div>
+                    )}
+                  />
                 </div>
               )}
             </div>

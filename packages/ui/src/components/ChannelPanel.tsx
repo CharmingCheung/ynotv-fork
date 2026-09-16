@@ -7,6 +7,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { useLiveQuery } from '../hooks/useSqliteLiveQuery';
 import { useTimeGrid } from '../hooks/useTimeGrid';
 import { useVirtuosoListHeight } from '../hooks/useVirtuosoListHeight';
+import { useGuideRowHeight } from '../hooks/useGuideRowHeight';
 import { useActiveRecordings } from '../hooks/useActiveRecordings';
 import { ChannelRow } from './ChannelRow';
 import { ProgramContextMenu } from './ProgramContextMenu';
@@ -1511,6 +1512,34 @@ export function ChannelPanel({
   const isCustomPlaylistCat = !!categoryId && (categoryId.startsWith('__plindiv_') || categoryId.startsWith('__allsrc_pl_') || categoryId.startsWith('playlist:'));
   const isPlaylistSource = !!sourceId && sourceId.startsWith('playlist:');
   const isCustomCategory = isCustomGroup || Boolean(isPlaylistCatLink) || isCustomPlaylistCat || isPlaylistSource;
+
+  // Does the guide's channel strip render the source/playlist line on each row?
+  // Drives both the row markup and the strip's row-height estimate, so it is
+  // computed once here instead of inline in the row context.
+  const guideShowPlaylistName = categoryId === '__recent__'
+    ? showRecentPlaylistName
+    : categoryId === '__favorites__'
+      ? showFavPlaylistName
+      : isCustomCategory
+        ? showCustomPlaylistName
+        : categorySpansMultipleSources
+          ? showCategorySourceName
+          : false;
+
+  // Row heights for the two virtualized channel strips. The estimate the
+  // virtualizer uses for rows it has never measured comes from the live design
+  // tokens and is corrected by the height of a real row as soon as one renders
+  // (see useGuideRowHeight) - a jump to a channel far down the list has to land
+  // on the right row, not re-settle after the fact.
+  const showBitrateBadge = Boolean(epgMetadataBadgeBitrate || epgMetadataBadgeAudioBitrate);
+  const { rowHeight: guideRowHeight, onVirtualItemsChange: onGuideVirtualItemsChange } = useGuideRowHeight({
+    playlistName: guideShowPlaylistName,
+    bitrateBadge: showBitrateBadge,
+  });
+  const { rowHeight: searchChannelRowHeight, onVirtualItemsChange: onSearchChannelVirtualItemsChange } = useGuideRowHeight({
+    playlistName: includeSourceInSearch ?? false,
+    bitrateBadge: showBitrateBadge,
+  });
 
   // Format time (and optional date if epgShowDate is enabled)
   const formatEpgTime = useCallback((date: Date) => {
@@ -4158,7 +4187,8 @@ export function ChannelPanel({
                         <VirtualList
                           key="search-channels"
                           items={searchChannels}
-                          estimateItemHeight={52}
+                          estimateItemHeight={searchChannelRowHeight}
+                          onVirtualItemsChange={onSearchChannelVirtualItemsChange}
                           renderItem={(channel, index) => (
                             <ChannelRowVirtuoso
                               index={index}
@@ -4269,7 +4299,8 @@ export function ChannelPanel({
                   key={`channel-list-${categoryId ?? 'all'}-${favoritesVersion}-${channelSearchQuery}-${epgThreeColumn ? '3col' : 'grid'}`}
                   ref={virtuosoRef}
                   items={filteredChannels}
-                  estimateItemHeight={52}
+                  estimateItemHeight={guideRowHeight}
+                  onVirtualItemsChange={onGuideVirtualItemsChange}
                   overscan={CHANNEL_LIST_OVERS}
                   onRangeChange={(range) => {
                     visibleRangeRef.current = range;
@@ -4302,7 +4333,7 @@ export function ChannelPanel({
                         onPlayInExternal,
                         currentChannel,
                         highlightChannel,
-                        showPlaylistName: categoryId === '__recent__' ? showRecentPlaylistName : categoryId === '__favorites__' ? showFavPlaylistName : isCustomCategory ? showCustomPlaylistName : categorySpansMultipleSources ? showCategorySourceName : false,
+                        showPlaylistName: guideShowPlaylistName,
                         sourceNames,
                         epgMetadataBadgeResolution,
                         epgMetadataBadgeFps,
