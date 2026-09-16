@@ -713,6 +713,152 @@
   margin-bottom: 12px;
 }
 
+/* ── Matches / feed-lock report ── */
+/*
+ * One collapsible tree (sources → categories → channels) is walked as a flat
+ * row list, so rows are virtualized inside this bounded scroller (the tab body
+ * is not it) and every row is a fixed 52px: single-line, ellipsized content,
+ * which is what the virtualizer estimates from.
+ */
+.epg-matches-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.epg-matches-search { flex: 1 1 220px; min-width: 180px; }
+.epg-matches-toggles { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.epg-matches-toggle {
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
+  background: transparent;
+  color: var(--text-secondary, #aaa);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.epg-matches-toggle:hover { background: var(--bg-hover, rgba(255, 255, 255, 0.06)); }
+.epg-matches-toggle:disabled { opacity: 0.4; cursor: default; }
+.epg-matches-toggle:disabled:hover { background: transparent; }
+.epg-matches-toggle.active {
+  background: var(--accent-primary, #00d4ff);
+  border-color: var(--accent-primary, #00d4ff);
+  color: #04121a;
+  font-weight: 600;
+}
+.epg-matches-summary { font-size: 0.78rem; color: var(--text-secondary, #888); margin-bottom: 6px; }
+.epg-matches-summary strong { color: var(--text-primary, #e0e0e0); font-variant-numeric: tabular-nums; }
+.epg-matches-summary-sep { margin: 0 6px; opacity: 0.6; }
+
+
+.epg-matches-list {
+  max-height: min(62vh, 580px);
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.epg-matches-list::-webkit-scrollbar { width: 6px; }
+.epg-matches-list::-webkit-scrollbar-track { background: transparent; }
+.epg-matches-list::-webkit-scrollbar-thumb { background: var(--border-color, #444); border-radius: 3px; }
+
+.epg-matches-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 52px;
+}
+.epg-matches-row-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  height: 45px;
+  padding: 0 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: var(--bg-tertiary, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.07));
+  transition: background 0.12s, border-color 0.12s;
+}
+.epg-matches-row-main:hover { background: var(--bg-hover, rgba(255, 255, 255, 0.08)); border-color: rgba(255, 255, 255, 0.12); }
+.epg-matches-row-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.86rem;
+  color: var(--text-primary, #e0e0e0);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.epg-matches-row-id {
+  font-size: 0.72rem;
+  font-family: monospace;
+  color: var(--text-secondary, #888);
+  max-width: 190px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.epg-matches-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.7rem;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+  color: var(--text-secondary, #999);
+  max-width: 190px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+}
+.epg-matches-chip.locked {
+  color: var(--accent-primary, #00d4ff);
+  border-color: color-mix(in srgb, var(--accent-primary, #00d4ff) 40%, transparent);
+  background: color-mix(in srgb, var(--accent-primary, #00d4ff) 8%, transparent);
+}
+.epg-matches-chip.elsewhere {
+  color: var(--warning-color, #e5a00d);
+  border-color: color-mix(in srgb, var(--warning-color, #e5a00d) 40%, transparent);
+  background: color-mix(in srgb, var(--warning-color, #e5a00d) 8%, transparent);
+}
+.epg-matches-chip.unlocked { opacity: 0.7; }
+.epg-matches-row-count {
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary, #888);
+  background: var(--bg-tertiary, rgba(255, 255, 255, 0.06));
+  border-radius: 10px;
+  padding: 1px 8px;
+  flex-shrink: 0;
+}
+.epg-matches-chevron {
+  color: var(--text-secondary, #888);
+  font-size: 1rem;
+  line-height: 1;
+  flex-shrink: 0;
+  width: 12px;
+}
+/* An open node is the one the user is looking at, so its row leads the eye. */
+.epg-matches-row-main.is-node .epg-matches-row-name { font-weight: 600; }
+.epg-matches-row-main.is-node.open { border-color: rgba(255, 255, 255, 0.14); }
+.epg-matches-row-main.is-node.open .epg-matches-chevron { color: var(--accent-primary, #00d4ff); }
+/* Indentation is the tree: categories sit inside their source, channels inside
+ * their category. */
+.epg-matches-row-main.depth-1 { padding-left: 28px; }
+.epg-matches-row-main.depth-1 .epg-matches-row-name { font-weight: 500; }
+.epg-matches-row-main.depth-2 { padding-left: 46px; }
+.epg-matches-row-main.depth-2 .epg-matches-row-name { color: var(--text-secondary, #bbb); }
+.epg-matches-row-release { flex-shrink: 0; padding: 5px 10px; font-size: 0.74rem; }
+
 /* ── Saved indicator ── */
 .epg-editor-saved-notice {
   font-size: 0.8rem;

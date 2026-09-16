@@ -665,6 +665,152 @@ export async function releasePinsForFeed(feedRef: string, sourceIds?: string[]):
   }
 }
 
+// ─── Audit: every channel that carries an EPG match ──────────────────────────
+
+/**
+ * One channel's EPG match, as the audit report lists it.
+ *
+ * `feedRef` is the lock: `global_epg_<linkId>` when the channel is pinned to a
+ * global EPG link, a bare source id when pinned to a playlist's own feed, and
+ * null when nothing is pinned and the sync's waterfall decides which feed fills
+ * the channel — the state every match made before locks were stored is in.
+ */
+export interface EpgMatchRow {
+  streamId: string;
+  channelName: string;
+  sourceId: string | null;
+  epgChannelId: string | null;
+  feedRef: string | null;
+  /** Matching uses the channel's own (renamed) name, not the provider's. */
+  matchByAlias: boolean;
+}
+
+/**
+ * Every channel that has an EPG match, for the editor's Matches report.
+ *
+ * A read-only snapshot: the report is a browse/audit surface, so it is loaded
+ * whole (a few columns per override, ~15k rows in a heavily-matched library) and
+ * grouped in memory, which keeps the group-by switch immediate and lets the list
+ * be filtered without a query per keystroke.
+ */
+export async function listEpgMatches(): Promise<EpgMatchRow[]> {
+  const dbInstance = await (db as any).dbPromise;
+  const select = (extra: string) => `SELECT o.stream_id AS stream_id,
+            c.name AS channel_name,
+            c.source_id AS source_id,
+            o.epg_channel_id AS epg_channel_id,
+            o.epg_source_id AS feed_ref
+            ${extra}
+       FROM epg_channel_overrides o
+       JOIN channels c ON c.stream_id = o.stream_id`;
+
+  const toRows = (rows: any[]): EpgMatchRow[] => (rows || []).map(r => ({
+    streamId: r.stream_id as string,
+    channelName: (r.channel_name as string) ?? '',
+    sourceId: (r.source_id as string) ?? null,
+    epgChannelId: (r.epg_channel_id as string) ?? null,
+    feedRef: (r.feed_ref as string) ?? null,
+    matchByAlias: r.match_by_alias === 1 || r.match_by_alias === true,
+  }));
+
+  try {
+    return toRows(await dbInstance.select(select(', o.match_by_alias AS match_by_alias'), []));
+  } catch {
+    // match_by_alias is DB v29 — an older DB simply has no channel using it.
+    return toRows(await dbInstance.select(select(', 0 AS match_by_alias'), []));
+  }
+}
+
+/**
+ * Category names per matched channel, for the report's Category grouping.
+ *
+ * Loaded on demand: a channel can sit in several categories, so this is one row
+ * per membership, and it is only read when that grouping is picked. The
+ * category's own rename wins over its provider name, matching everywhere else
+ * the app shows one.
+ */
+export async function listEpgMatchCategories(): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  try {
+    const dbInstance = await (db as any).dbPromise;
+    const rows = await dbInstance.select(
+      `SELECT cc.stream_id AS stream_id,
+              cat.category_name AS category_name,
+              cat.alias AS category_alias
+         FROM channel_categories cc
+         JOIN epg_channel_overrides o ON o.stream_id = cc.stream_id
+         LEFT JOIN categories cat
+                ON cat.category_id = cc.category_id AND cat.source_id = cc.source_id`,
+      []
+    ) as { stream_id: string; category_name: string | null; category_alias: string | null }[];
+
+    for (const row of rows || []) {
+      const name = (row.category_alias || row.category_name || '').trim();
+      if (!name) continue;
+      const list = out.get(row.stream_id);
+      if (list) {
+        if (!list.includes(name)) list.push(name);
+      } else {
+        out.set(row.stream_id, [name]);
+      }
+    }
+    for (const list of out.values()) list.sort((a, b) => a.localeCompare(b));
+  } catch (e) {
+    console.warn('[EPG] Failed to list categories for the matches report:', e);
+  }
+  return out;
+}
+
+/**
+ * Release the feed lock on a set of channels, leaving the rest of each override
+ * (tvg-id, logo, timeshift) alone.
+ *
+ * The report's groups are heterogeneous — a feed group, a playlist group and a
+ * category group are all just sets of channels — so they share this one path
+ * instead of three feed/source-shaped ones. Chunked because a SQLite statement
+ * takes a bounded number of bound parameters and a group can hold thousands of
+ * channels.
+ *
+ * @returns how many channels were released
+ */
+export async function releaseFeedPinsForStreamIds(streamIds: string[]): Promise<number> {
+  const ids = [...new Set(streamIds.filter(id => !!id && id.trim().length > 0))];
+  if (ids.length === 0) return 0;
+
+  const CHUNK = 400;
+  let released = 0;
+  try {
+    const dbInstance = await (db as any).dbPromise;
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const chunk = ids.slice(i, i + CHUNK);
+      const placeholders = chunk.map((_, n) => `$${n + 1}`).join(', ');
+      const where = `epg_source_id IS NOT NULL AND TRIM(epg_source_id) != ''
+                       AND stream_id IN (${placeholders})`;
+      const countRows = await dbInstance.select(
+        `SELECT COUNT(*) AS count FROM epg_channel_overrides WHERE ${where}`,
+        chunk
+      ) as { count: number }[];
+      const count = countRows?.[0]?.count ?? 0;
+      if (count === 0) continue;
+      await dbInstance.execute(
+        `UPDATE epg_channel_overrides SET epg_source_id = NULL WHERE ${where}`,
+        chunk
+      );
+      released += count;
+    }
+    if (released > 0) {
+      const { dbEvents } = await import('../db/sqlite-adapter');
+      dbEvents.notify('epg_channel_overrides', 'update');
+      dbEvents.notify('channels', 'update');
+    }
+    return released;
+  } catch (e) {
+    // Column may be missing on an old DB — nothing to release in that case.
+    console.warn('[EPG] Failed to release feed locks:', e);
+    return released;
+  }
+}
+
 /**
  * Undo one Automatch Missing result: drop the id it wrote, the guide it copied,
  * and restore the channel's override row from the snapshot taken before the run.

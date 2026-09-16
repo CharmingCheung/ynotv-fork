@@ -127,6 +127,9 @@ const UNTRANSLATED_ALLOWLIST = new Set([
   'settings.dvr.extraInputArgsPlaceholder', 'settings.dvr.extraOutputArgsPlaceholder',
   // "HLS" is the name of the format, not a translatable word
   'dvr.streamTypeHls',
+  // French calls a playlist's EPG source "source" too ("Source : {{name}}"), so the
+  // Feed/Source grouping labels legitimately share one word there
+  'fr:epg.matchesGroupSource',
   // controller hardware labels (printed on the physical buttons) + universal terms
   'settings.controllers.mapping.buttons.select', 'settings.controllers.mapping.buttons.start',
   'settings.controllers.mapping.groups.dpad', 'settings.controllers.mapping.groups.menu',

@@ -641,7 +641,7 @@ html.modern-ui-v3[data-theme="light"] .category-source-content .category-item.ne
 html[data-theme="light"] .category-item.nested.is-pinned .category-name,
 html.modern-ui-v3[data-theme="light"] .category-item.nested.is-pinned .category-name,
 html.modern-ui-v3[data-theme="light"] .category-source-content .category-item.nested.is-pinned .category-name {
-  color: var(--lt-text-muted, #64748b) !important;
+  color: var(--lt-text-primary, #0f172a) !important;
   font-weight: 600 !important;
 }
 
@@ -6156,4 +6156,43 @@ html.modern-ui-v3[data-theme="light"] body.tv-nav-active .tv-focused {
 [data-theme="light"] body.tv-nav-active .series-card.tv-focused {
   background: rgba(2, 132, 199, 0.14) !important;
   box-shadow: 0 0 16px rgba(2, 132, 199, 0.45), inset 0 0 8px rgba(2, 132, 199, 0.18) !important;
+}
+
+/* ==================== EPG EDITOR: MATCHES / FEED LOCKS ==================== */
+/*
+ * The report's amber signal ("locked elsewhere") is #e5a00d, which is unreadable on
+ * the light surfaces. This chip is 0.7rem text sitting on the light theme's grey
+ * row surface, so it needs ~4.5:1 rather than the 3:1 an icon glyph gets:
+ * #92400e clears 5:1 there, where the theme's own --lt-text-warning (#d97706) and
+ * plain amber-700 are only 3.2-3.9:1.
+ */
+[data-theme="light"] .epg-matches-chip.elsewhere {
+  color: #92400e !important;
+  border-color: color-mix(in srgb, #92400e 45%, transparent) !important;
+  background: color-mix(in srgb, #92400e 10%, transparent) !important;
+}
+
+/*
+ * The active filter toggle paints #04121a on --accent-primary: that clears AA on the
+ * dark themes' cyan, but on the light theme's #0066cc it only reaches 3.4:1. Light
+ * follows the app's active-pill convention instead — a light info surface with accent
+ * text (4.9:1) — which is what .segmented-btn.active and the title-bar buttons do.
+ */
+[data-theme="light"] .epg-matches-toggle.active {
+  background: var(--lt-bg-info, #e0f2fe) !important;
+  border-color: var(--lt-bd-color-info, #7dd3fc) !important;
+  color: var(--accent-primary, #0066cc) !important;
+}
+
+/*
+ * Both row cues were white-alpha, so they are invisible on light surfaces: the hover
+ * border vanished, and an expanded node lost the border that marks it — leaving the
+ * tree's state to the chevron colour alone. The hover border takes the light theme's
+ * strong border; the open node takes the accent its chevron is already drawn in.
+ */
+[data-theme="light"] .epg-matches-row-main:hover {
+  border-color: var(--lt-bd-color-strong, #94a3b8) !important;
+}
+[data-theme="light"] .epg-matches-row-main.is-node.open {
+  border-color: var(--accent-primary, #0066cc) !important;
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import './EpgEditorModal.css';
 import { db, updateChannelsBatch } from '../db';
@@ -31,20 +31,31 @@ import {
   releaseChannelFeedPin,
   countFeedPinsInSource,
   releaseFeedPinsInSource,
+  listEpgMatches,
+  listEpgMatchCategories,
+  releaseFeedPinsForStreamIds,
   type EditorProgram,
   type ScoredEpgChannel,
   type EpgSearchMode,
   type EpgMatchCandidate,
+  type EpgMatchRow,
 } from '../services/epg-overrides';
 import { effectiveMatchName } from '../utils/epgMatchName';
 import { buildMissingEpgQuery, buildMissingEpgCountQuery } from '../utils/epgAutomatchFilter';
 import { parseStripTags, prepareCleanNameIndex } from '../utils/epgChannelMatch';
 import { priorOverrideSnapshot, type PriorOverrideSnapshot } from '../utils/epgAutomatchUndo';
+import {
+  buildMatchTree,
+  flattenMatchTree,
+  matchNodeKeys,
+  type MatchLockFilter,
+  type MatchTreeRow,
+} from '../utils/epgMatchReport';
 import { VirtualList } from './common/VirtualList';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type EditorTab = 'channel' | 'programs' | 'search' | 'source' | 'automatch';
+type EditorTab = 'channel' | 'programs' | 'search' | 'source' | 'automatch' | 'matches';
 type SearchScope = 'source' | 'all';
 
 /**
@@ -476,6 +487,37 @@ export function EpgEditorModal({
   // Track which stream_ids have overrides (for the indicator dot)
   const [overriddenIds, setOverriddenIds] = useState<Set<string>>(new Set());
 
+  // ── Matches report state ──
+  const [matchRows, setMatchRows] = useState<EpgMatchRow[]>([]);
+  // Starts true: the tab's first frame has no rows yet, so without this the empty
+  // state would flash for a frame before the load it is waiting on even starts.
+  const [matchLoading, setMatchLoading] = useState(true);
+  const [matchFilter, setMatchFilter] = useState('');
+  /** Which matches the tree keeps: every one, any lock, or only locks to a foreign feed. */
+  const [matchLockFilter, setMatchLockFilter] = useState<MatchLockFilter>('all');
+  const [matchCategories, setMatchCategories] = useState<Map<string, string[]>>(new Map());
+  /**
+   * Which tree nodes are open. Sources and categories share one Set of keys, so
+   * "collapse all" is an empty Set and nothing can be open twice. Collapsed by
+   * default: the report opens on the playlists that hold matches, not on every
+   * matched channel in the library.
+   */
+  const [matchExpanded, setMatchExpanded] = useState<Set<string>>(() => new Set());
+  /** Node whose bulk release is waiting for its second click (null = none). */
+  const [matchConfirmKey, setMatchConfirmKey] = useState<string | null>(null);
+  /**
+   * Whether a load has ever landed. A later load then keeps what is already on
+   * screen, so re-entering the tab never blanks the tree behind a spinner.
+   */
+  const matchLoadedRef = useRef(false);
+  /**
+   * Where the list is scrolled to, kept outside React because the report unmounts
+   * when another tab is opened — which takes the container's own offset with it.
+   */
+  const matchScrollTopRef = useRef(0);
+  /** The report's own scroll container — the virtualizer needs it as its scroll element. */
+  const matchListRef = useRef<HTMLDivElement>(null);
+
   // ── Automatch tab state ──
   const [automatchSources, setAutomatchSources] = useState<{ id: string; name: string }[]>([]);
   const [automatchSourceId, setAutomatchSourceId] = useState('');
@@ -680,6 +722,58 @@ export function EpgEditorModal({
   useEffect(() => {
     if (sourceListRef.current) sourceListRef.current.scrollTop = 0;
   }, [sourceFilter, resolvedSourceId]);
+
+  // ── Load the Matches report ──
+  //
+  // A read-only snapshot of every EPG match in the library, taken when the tab
+  // opens. It is loaded whole rather than paged: the report is a browse surface,
+  // the payload is a few columns per override, and grouping and filtering then
+  // happen in memory, so narrowing the tree never waits on a query. A release is
+  // applied to the rows in place, so it needs no reload of its own.
+  useEffect(() => {
+    if (activeTab !== 'matches') return;
+    let cancelled = false;
+    // Only a load that has nothing to show raises the loading state: a reload —
+    // re-entering the tab — keeps the tree, the open nodes and the scroll offset
+    // the user left, instead of blanking them for the length of the query.
+    if (!matchLoadedRef.current) setMatchLoading(true);
+    listEpgMatches()
+      .then(rows => {
+        if (cancelled) return;
+        matchLoadedRef.current = true;
+        setMatchRows(rows);
+        setMatchLoading(false);
+      })
+      .catch(err => {
+        if (cancelled) return;
+        console.warn('[EPG] Failed to load the matches report:', err);
+        // Keep whatever is on screen — the empty state covers the first load.
+        setMatchLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [activeTab]);
+
+  // Category names come from a second join over every channel→category
+  // membership, so they load once, in parallel with the matches themselves, and
+  // the category level shows "No category" until they arrive.
+  useEffect(() => {
+    if (activeTab !== 'matches' || matchCategories.size > 0) return;
+    let cancelled = false;
+    listEpgMatchCategories()
+      .then(map => { if (!cancelled) setMatchCategories(map); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [activeTab, matchCategories.size]);
+
+  // A narrowed tree starts at the top: virtual rows are positioned from the
+  // scroll offset, so a filter that shortens the list under the current offset
+  // would otherwise leave a blank area until the next scroll event. Deliberately
+  // not keyed to the tab: returning to the tab restores the offset instead.
+  useEffect(() => {
+    if (activeTab !== 'matches') return;
+    matchScrollTopRef.current = 0;
+    if (matchListRef.current) matchListRef.current.scrollTop = 0;
+  }, [matchFilter, matchLockFilter]);
 
   // ── Load sources for Automatch tab ──
   useEffect(() => {
@@ -934,14 +1028,22 @@ export function EpgEditorModal({
     }
   }
 
-  // ── Source tab: navigate to channel ──
-  async function handleOpenSourceChannel(row: SourceListRow) {
-    // The list carries only the columns it renders, so fetch the full channel the
-    // channel tab reads before switching to it.
-    const full = await db.channels.get(row.stream_id).catch(() => undefined);
+  // ── Navigate to a channel ──
+  /**
+   * Open a channel in the channel tab from an id alone. Both the source list and
+   * the Matches report carry a column subset, so the full row the channel tab
+   * reads (alias, logo, timeshift, catch-up flags) is fetched here by primary key.
+   */
+  async function openChannelById(streamId: string) {
+    const full = await db.channels.get(streamId).catch(() => undefined);
     if (!full) return;
     setChannel(full);
     setActiveTab('channel');
+  }
+
+  // ── Source tab: navigate to channel ──
+  async function handleOpenSourceChannel(row: SourceListRow) {
+    await openChannelById(row.stream_id);
   }
 
   // ── Channel tab: reset to default ──
@@ -1364,6 +1466,133 @@ export function EpgEditorModal({
    */
   const showListTab = Boolean(channelList) || !channel;
 
+  /** Friendly name of the feed a lock names (a global EPG link's cache, or a playlist's feed). */
+  const matchFeedLabel = useCallback(
+    (feedRef: string | null): string | null =>
+      feedRef ? (sourceNameMap.get(feedRef) || feedRef) : null,
+    [sourceNameMap]
+  );
+
+  const matchSourceLabel = useCallback(
+    (sourceId: string | null) => (sourceId ? (sourceNameMap.get(sourceId) || sourceId) : '—'),
+    [sourceNameMap]
+  );
+
+  /**
+   * The filtered source → category tree — see buildMatchTree for the filtering,
+   * counting and ordering rules.
+   */
+  const matchTree = useMemo(
+    () => buildMatchTree(matchRows, {
+      filter: matchFilter,
+      lockFilter: matchLockFilter,
+      sourceLabel: matchSourceLabel,
+      feedLabel: matchFeedLabel,
+      categories: matchCategories,
+      labels: { noCategory: t('matchesNoCategory') },
+    }),
+    [matchRows, matchFilter, matchLockFilter, matchCategories, matchSourceLabel, matchFeedLabel, t]
+  );
+
+  /**
+   * The rows to render. Anything the search matched is shown straight away — a
+   * hit behind a collapsed parent reads as "nothing found" — while an unfiltered
+   * tree stays exactly as the user left it.
+   */
+  const matchSearchActive = matchFilter.trim().length > 0;
+  const matchFlatRows = useMemo(
+    () => flattenMatchTree(matchTree, { expanded: matchExpanded, expandAll: matchSearchActive }),
+    [matchTree, matchExpanded, matchSearchActive]
+  );
+  const matchOpenNodeCount = useMemo(
+    () => (matchSearchActive ? 0 : matchNodeKeys(matchTree).filter(key => matchExpanded.has(key)).length),
+    [matchTree, matchExpanded, matchSearchActive]
+  );
+  /** How many nodes the tree holds — what "Expand all" would open. */
+  const matchNodeCount = useMemo(() => matchNodeKeys(matchTree).length, [matchTree]);
+
+  /**
+   * What the tree currently holds. A source's channels are unique, so summing
+   * over sources cannot double count a channel that sits in two categories.
+   */
+  const matchTotals = useMemo(() => matchTree.reduce(
+    (acc, source) => ({
+      total: acc.total + source.channels.length,
+      locked: acc.locked + source.locked,
+      elsewhere: acc.elsewhere + source.elsewhere,
+    }),
+    { total: 0, locked: 0, elsewhere: 0 }
+  ), [matchTree]);
+  const matchVisibleCount = matchTotals.total;
+  const matchVisibleLocked = matchTotals.locked;
+  const matchVisibleElsewhere = matchTotals.elsewhere;
+
+  /** Open or close one tree node. */
+  function toggleMatchNode(key: string) {
+    setMatchConfirmKey(null);
+    setMatchExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  /**
+   * Two-click bulk release for one node's channels. The scope is the locked
+   * channels the node owns, so releasing a source covers its categories whether
+   * or not any of them are open.
+   */
+  async function handleReleaseMatchNode(key: string, releaseIds: string[]) {
+    if (releaseIds.length === 0) return;
+    if (matchConfirmKey !== key) {
+      setMatchConfirmKey(key);
+      return;
+    }
+    setMatchConfirmKey(null);
+    const released = await releaseFeedPinsForStreamIds(releaseIds);
+    if (released === 0) return;
+    // The cleared ids are exactly the ones this node named, so the rows are
+    // patched in place: a reload would blank the tree and drop the user back at
+    // the top of a list they were reading.
+    const cleared = new Set(releaseIds);
+    setMatchRows(prev => prev.map(r => (cleared.has(r.streamId) ? { ...r, feedRef: null } : r)));
+  }
+
+  /** Remember where the list is scrolled to — see matchScrollTopRef. */
+  const handleMatchScroll = useCallback(() => {
+    const el = matchListRef.current;
+    if (el) matchScrollTopRef.current = el.scrollTop;
+  }, []);
+
+  /**
+   * The list container's ref. Two jobs, because the container is created and
+   * destroyed with the tab rather than kept alive:
+   *
+   *  - A native listener is re-attached to every new element. React's onScroll is
+   *    not enough here: the list is both scrolled and restored by script, and the
+   *    attached listener is the one thing that sees every offset.
+   *  - The saved offset is re-applied the moment an element exists, which is later
+   *    than the tab's own effects — those run before the list has rows to show.
+   */
+  const setMatchListEl = useCallback((el: HTMLDivElement | null) => {
+    const previous = matchListRef.current;
+    if (previous === el) return;
+    if (previous) previous.removeEventListener('scroll', handleMatchScroll);
+    matchListRef.current = el;
+    if (!el) return;
+    el.addEventListener('scroll', handleMatchScroll, { passive: true });
+    const target = matchScrollTopRef.current;
+    if (target > 0 && Math.abs(el.scrollTop - target) > 1) el.scrollTop = target;
+  }, [handleMatchScroll]);
+
+  /** Release one channel's lock, without leaving the report. */
+  async function handleReleaseMatchRow(streamId: string) {
+    const released = await releaseChannelFeedPin(streamId);
+    if (!released) return;
+    setMatchRows(prev => prev.map(r => (r.streamId === streamId ? { ...r, feedRef: null } : r)));
+  }
+
   const filteredSourceChannels = sourceChannels.filter(ch =>
     !sourceFilter || ch.name.toLowerCase().includes(sourceFilter.toLowerCase())
   );
@@ -1380,11 +1609,13 @@ export function EpgEditorModal({
         { key: 'search',   label: `🔍 ${t('epgSearchTab')}` },
         ...(showListTab ? [{ key: 'source' as const, label: `📺 ${listTabLabel}` }] : []),
         { key: 'automatch', label: `🤖 ${t('automatchTab')}` },
+        { key: 'matches', label: `🔒 ${t('matchesTab')}` },
       ]
     : [
         { key: 'source',   label: `📺 ${listTabLabel}` },
         { key: 'search',   label: `🔍 ${t('epgSearchTab')}` },
         { key: 'automatch', label: `🤖 ${t('automatchTab')}` },
+        { key: 'matches', label: `🔒 ${t('matchesTab')}` },
       ];
 
   const title = channel
@@ -2465,6 +2696,173 @@ export function EpgEditorModal({
                     })}
                   </div>
                 </div>
+              )}
+            </div>
+          )}
+
+          {/* ═══ MATCHES / FEED LOCKS TAB ═══ */}
+          {activeTab === 'matches' && (
+            <div className="epg-matches">
+              <div className="epg-matches-toolbar">
+                <input
+                  className="epg-editor-input epg-matches-search"
+                  value={matchFilter}
+                  onChange={e => setMatchFilter(e.target.value)}
+                  placeholder={t('searchPlaceholder')}
+                />
+                <div className="epg-matches-toggles" role="group" aria-label={t('matchesFilterLabel')}>
+                  <button
+                    className={`epg-matches-toggle${matchLockFilter === 'all' ? ' active' : ''}`}
+                    onClick={() => setMatchLockFilter('all')}
+                  >
+                    {i18n.t('common:all')}
+                  </button>
+                  <button
+                    className={`epg-matches-toggle${matchLockFilter === 'locked' ? ' active' : ''}`}
+                    onClick={() => setMatchLockFilter('locked')}
+                  >
+                    🔒 {t('matchesAnyLock')}
+                  </button>
+                  <button
+                    className={`epg-matches-toggle${matchLockFilter === 'elsewhere' ? ' active' : ''}`}
+                    onClick={() => setMatchLockFilter('elsewhere')}
+                  >
+                    ↔ {t('matchesLockedElsewhere')}
+                  </button>
+                </div>
+                {/* A search already opens every node, so the by-hand controls would
+                    be dead weight while one is active. */}
+                {!matchSearchActive && (
+                  <div className="epg-matches-toggles">
+                    <button
+                      className="epg-matches-toggle"
+                      disabled={matchOpenNodeCount >= matchNodeCount}
+                      onClick={() => setMatchExpanded(new Set(matchNodeKeys(matchTree)))}
+                    >
+                      {t('matchesExpandAll')}
+                    </button>
+                    <button
+                      className="epg-matches-toggle"
+                      disabled={matchOpenNodeCount === 0}
+                      onClick={() => {
+                        setMatchConfirmKey(null);
+                        setMatchExpanded(new Set());
+                      }}
+                    >
+                      {t('matchesCollapseAll')}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* The totals the tree holds rather than the library's, so the line
+                  always agrees with the rows under it while a filter is on. */}
+              <div className="epg-matches-summary">
+                {t('matchesSummary')} <strong>{matchVisibleCount}</strong>
+                <span className="epg-matches-summary-sep">·</span>
+                <strong>{matchVisibleLocked}</strong> {t('matchesLocked')}
+                <span className="epg-matches-summary-sep">·</span>
+                <strong>{matchVisibleElsewhere}</strong> {t('matchesLockedElsewhere')}
+              </div>
+
+              {matchLoading && (
+                <div className="epg-editor-empty">{i18n.t('common:loading')}</div>
+              )}
+              {!matchLoading && matchRows.length === 0 && (
+                <div className="epg-editor-empty">{t('matchesEmpty')}</div>
+              )}
+
+              {/* One collapsible tree, walked as a flat list so only the rows on
+                  screen are mounted: sources, then a source's categories, then a
+                  category's channels. */}
+              {!matchLoading && matchRows.length > 0 && (
+                matchFlatRows.length === 0 ? (
+                  <div className="epg-editor-empty">{t('noChannelsFound')}</div>
+                ) : (
+                  <div ref={setMatchListEl} className="epg-matches-list">
+                    <VirtualList
+                      key="matches-tree"
+                      scrollRef={matchListRef}
+                      items={matchFlatRows}
+                      estimateItemHeight={52}
+                      overscan={8}
+                      getKey={row => row.key}
+                      renderItem={row => {
+                        if (row.kind === 'channel') {
+                          const match = row.channel;
+                          return (
+                            <div className="epg-matches-row">
+                              <button
+                                className="epg-matches-row-main depth-2"
+                                onClick={() => openChannelById(match.streamId)}
+                                title={t('clickToEdit')}
+                              >
+                                <span className="epg-matches-row-name">{match.channelName || match.streamId}</span>
+                                <span className="epg-matches-row-id">{match.epgChannelId || '—'}</span>
+                                {match.matchByAlias && (
+                                  <span className="epg-matches-chip">{t('matchNameAlias')}</span>
+                                )}
+                                {match.feedRef ? (
+                                  <span
+                                    className="epg-matches-chip locked"
+                                    title={t('matchesLockedTo', { name: matchFeedLabel(match.feedRef) })}
+                                  >
+                                    🔒 {matchFeedLabel(match.feedRef)}
+                                  </span>
+                                ) : (
+                                  <span className="epg-matches-chip unlocked">{t('matchesNoLock')}</span>
+                                )}
+                              </button>
+                              {match.feedRef && (
+                                <button
+                                  className="epg-editor-btn epg-matches-row-release"
+                                  onClick={() => handleReleaseMatchRow(match.streamId)}
+                                >
+                                  {t('releaseFeedPin')}
+                                </button>
+                              )}
+                            </div>
+                          );
+                        }
+
+                        // A source or a category: the row opens it, and its own
+                        // locked channels are one bulk release away.
+                        const confirming = matchConfirmKey === row.key;
+                        return (
+                          <div className="epg-matches-row">
+                            <button
+                              className={`epg-matches-row-main is-node depth-${row.depth}${row.expanded ? ' open' : ''}`}
+                              aria-expanded={row.expanded}
+                              onClick={() => toggleMatchNode(row.key)}
+                            >
+                              <span className="epg-matches-chevron">{row.expanded ? '▾' : '▸'}</span>
+                              <span className="epg-matches-row-name">{row.label}</span>
+                              <span className="epg-matches-row-count">{row.count}</span>
+                              {row.locked > 0 && (
+                                <span className="epg-matches-chip locked" title={t('matchesLocked')}>
+                                  🔒 {row.locked}
+                                </span>
+                              )}
+                              {row.elsewhere > 0 && (
+                                <span className="epg-matches-chip elsewhere" title={t('matchesLockedElsewhere')}>
+                                  ↔ {row.elsewhere}
+                                </span>
+                              )}
+                            </button>
+                            {row.releaseIds.length > 0 && (
+                              <button
+                                className={`epg-editor-btn epg-matches-row-release${confirming ? ' epg-editor-btn-primary' : ''}`}
+                                onClick={() => handleReleaseMatchNode(row.key, row.releaseIds)}
+                              >
+                                {confirming ? t('confirmReleaseAllFeedPins') : t('releaseAllFeedPins')}
+                              </button>
+                            )}
+                          </div>
+                        );
+                      }}
+                    />
+                  </div>
+                )
               )}
             </div>
           )}
