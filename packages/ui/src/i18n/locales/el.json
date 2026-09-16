@@ -3822,7 +3822,11 @@
     "noEnabledSources": "Δεν βρέθηκαν ενεργοποιημένες πηγές",
     "useForRegularSearch": "Χρήση αυτών των ρυθμίσεων για τακτικές αναζητήσεις γραμμής τίτλου",
     "search": "Αναζήτηση",
-    "clickPlayCatchup": "Κλικ για αναπαραγωγή αρχείου Catchup"
+    "clickPlayCatchup": "Κλικ για αναπαραγωγή αρχείου Catchup",
+    "channelsToMatch": "Κανάλια προς αντιστοίχιση",
+    "epgSourcesToSearch": "Πηγές EPG για αναζήτηση",
+    "thisSourceEpg": "EPG αυτής της πηγής",
+    "allEpgSources": "Όλες οι πηγές EPG"
   },
   "live": {
     "active": "Ενεργό",

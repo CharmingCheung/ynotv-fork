@@ -6193,6 +6193,187 @@ html.modern-ui-v3[data-theme="light"] body.tv-nav-active .tv-focused {
 [data-theme="light"] .epg-matches-row-main:hover {
   border-color: var(--lt-bd-color-strong, #94a3b8) !important;
 }
+/* ==================== EPG EDITOR MODAL (LIGHT THEME) ==================== */
+/*
+ * The redesigned editor is dressed in the manager tokens and white-alpha
+ * surfaces, and those tokens are dark-only: --mg-btn-color is
+ * rgba(255,255,255,0.8) on every theme (ModernV3.css:679), so on the light
+ * modal's white surface the header Close, the footer Close and the reset
+ * dialog's Cancel all rendered white-on-white. Thirteen hover rules paint a
+ * bare #fff for the same reason, and the select's caret is a white SVG inside
+ * a data URI. Light gets the treatment the playlist editor already has
+ * (.ple-close-btn), and the active pills follow .epg-matches-toggle.active
+ * above — a light info surface with accent text, where #04121a on the light
+ * accent (#0066cc) is only 3.4:1.
+ */
+
+/* Neutral buttons — the dark-only --mg-btn-* tokens */
+[data-theme="light"] .epg-close-btn,
+[data-theme="light"] .epg-editor-btn-secondary {
+  background: var(--lt-bg-hover, #f1f5f9) !important;
+  border: var(--lt-bd, 1px solid #cbd5e1) !important;
+  color: var(--lt-text-primary, #0f172a) !important;
+}
+
+[data-theme="light"] .epg-close-btn:hover,
+[data-theme="light"] .epg-editor-btn-secondary:hover:not(:disabled) {
+  background: var(--lt-bg-active, #e2e8f0) !important;
+  border-color: var(--lt-bd-color-strong, #94a3b8) !important;
+  color: var(--lt-text-strong, #000000) !important;
+}
+
+/* Primary: --mg-export-* resolves to a grey pill in light, so the CTA lost the
+   accent. White on #0066cc is 5.9:1. */
+[data-theme="light"] .epg-editor-btn-primary {
+  background: var(--accent-primary, #0066cc) !important;
+  border-color: var(--accent-primary, #0066cc) !important;
+  color: var(--lt-text-inverse, #ffffff) !important;
+}
+
+[data-theme="light"] .epg-editor-btn-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent-primary, #0066cc) 85%, #000000) !important;
+  border-color: color-mix(in srgb, var(--accent-primary, #0066cc) 85%, #000000) !important;
+}
+
+[data-theme="light"] .epg-search-apply-btn:hover:not(:disabled) {
+  color: var(--lt-text-inverse, #ffffff) !important;
+}
+
+/* Destructive */
+[data-theme="light"] .epg-editor-btn-danger,
+[data-theme="light"] .epg-automatch-undo-all-confirm {
+  background: var(--lt-bg-danger-10, rgba(239, 68, 68, 0.1)) !important;
+  border-color: var(--lt-bd-color-danger, #fca5a5) !important;
+  color: var(--lt-text-danger-dark, #b91c1c) !important;
+}
+
+[data-theme="light"] .epg-editor-btn-danger:hover:not(:disabled),
+[data-theme="light"] .epg-automatch-undo-all-confirm:hover:not(:disabled) {
+  background: var(--lt-text-danger, #dc2626) !important;
+  border-color: var(--lt-text-danger, #dc2626) !important;
+  color: var(--lt-text-inverse, #ffffff) !important;
+}
+
+/* Tabs — the base border and fill are white-alpha, so the bar flattened out */
+[data-theme="light"] .epg-editor-tab {
+  background: var(--lt-bg-subtle, #f8fafc) !important;
+  border-color: var(--lt-bd-color, #cbd5e1) !important;
+  color: var(--lt-text-secondary, #475569) !important;
+}
+
+[data-theme="light"] .epg-editor-tab:hover {
+  background: var(--lt-bg-hover, #f1f5f9) !important;
+  border-color: var(--lt-bd-color-strong, #94a3b8) !important;
+  color: var(--lt-text-primary, #0f172a) !important;
+}
+
+[data-theme="light"] .epg-editor-tab.active,
+[data-theme="light"] .epg-search-scope-btn.active {
+  background: var(--lt-bg-info, #e0f2fe) !important;
+  border-color: var(--lt-bd-color-info, #7dd3fc) !important;
+  color: var(--accent-primary, #0066cc) !important;
+  box-shadow: none !important;
+}
+
+/* White-alpha chrome that leaves a control looking borderless in light */
+[data-theme="light"] .epg-automatch-unmatch,
+[data-theme="light"] .epg-editor-match-name-reset,
+[data-theme="light"] .epg-refusal-dismiss-all {
+  background: var(--lt-bg-subtle, #f8fafc) !important;
+  border-color: var(--lt-bd-color, #cbd5e1) !important;
+}
+
+/* Hovers that painted a bare #fff on a white surface */
+[data-theme="light"] .epg-search-scope-btn:hover,
+[data-theme="light"] .epg-matches-toggle:hover:not(:disabled):not(.active),
+[data-theme="light"] .epg-editor-field .segmented-btn:hover:not(.active),
+[data-theme="light"] .epg-refusal-dismiss-all:hover:not(:disabled) {
+  background: var(--lt-bg-hover, #f1f5f9) !important;
+  border-color: var(--lt-bd-color-strong, #94a3b8) !important;
+  color: var(--lt-text-primary, #0f172a) !important;
+}
+
+/* These two hover states are accent-tinted in the dark theme, so light keeps
+   the tint instead of going grey */
+[data-theme="light"] .epg-editor-match-name-reset:hover:not(:disabled),
+[data-theme="light"] .epg-automatch-unmatch:hover:not(:disabled) {
+  background: var(--lt-bg-accent-tint, rgba(0, 102, 204, 0.08)) !important;
+  border-color: var(--accent-primary, #0066cc) !important;
+  color: var(--accent-primary, #0066cc) !important;
+}
+
+/* Program rows: Edit / Delete / Undo */
+[data-theme="light"] .epg-program-action-btn:hover {
+  background: var(--lt-bg-hover, #f1f5f9) !important;
+  border-color: var(--lt-bd-color-strong, #94a3b8) !important;
+  color: var(--lt-text-primary, #0f172a) !important;
+}
+
+[data-theme="light"] .epg-program-action-btn.danger:hover {
+  background: var(--lt-bg-danger-10, rgba(239, 68, 68, 0.1)) !important;
+  border-color: var(--lt-bd-color-danger, #fca5a5) !important;
+  color: var(--lt-text-danger-dark, #b91c1c) !important;
+}
+
+[data-theme="light"] .epg-program-action-btn.restore:hover {
+  background: var(--lt-bg-green-15, rgba(34, 197, 94, 0.15)) !important;
+  border-color: var(--lt-bd-color-green, #22c55e) !important;
+  color: #15803d !important;
+}
+
+/* The ambiguity worklist: the panel's amber came in bare (#ffaa44 at ~2:1 on
+   the light surface) where it used to take --text-primary */
+[data-theme="light"] .epg-refusal-panel {
+  border-color: var(--lt-bd-color-amber-25, rgba(217, 119, 6, 0.25)) !important;
+  background: var(--lt-bg-amber-10, rgba(217, 119, 6, 0.1)) !important;
+}
+
+[data-theme="light"] .epg-refusal-title {
+  color: #92400e !important;
+}
+
+[data-theme="light"] .epg-refusal-dismiss {
+  background: var(--lt-bg-hover, #f1f5f9) !important;
+  color: var(--lt-text-secondary, #475569) !important;
+}
+
+[data-theme="light"] .epg-refusal-dismiss:hover:not(:disabled) {
+  background: var(--lt-text-danger, #dc2626) !important;
+  color: var(--lt-text-inverse, #ffffff) !important;
+}
+
+/* Status text that sits on the light surface at ~2:1 */
+[data-theme="light"] .epg-danger-zone-title,
+[data-theme="light"] .epg-automatch-undo-error,
+[data-theme="light"] .epg-program-action-btn.danger {
+  color: var(--lt-text-danger-dark, #b91c1c) !important;
+}
+
+[data-theme="light"] .epg-editor-saved-notice,
+[data-theme="light"] .epg-program-action-btn.restore {
+  color: #15803d !important;
+}
+
+[data-theme="light"] .epg-badge-modified,
+[data-theme="light"] .epg-automatch-notice {
+  color: #92400e !important;
+}
+
+[data-theme="light"] .epg-badge-deleted {
+  color: var(--lt-text-danger-dark, #b91c1c) !important;
+}
+
+/* Dropdown: the caret is a white data-URI SVG and the options were white on
+   the light theme's own --bg-secondary (rgba(255,255,255,0.95)) */
+[data-theme="light"] select.epg-editor-input {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23475569' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E") !important;
+}
+
+[data-theme="light"] select.epg-editor-input option {
+  background: var(--lt-bg-surface, #ffffff) !important;
+  color: var(--lt-text-primary, #0f172a) !important;
+}
+
 [data-theme="light"] .epg-matches-row-main.is-node.open {
   border-color: var(--accent-primary, #0066cc) !important;
 }

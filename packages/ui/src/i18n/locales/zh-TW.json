@@ -3822,7 +3822,11 @@
     "noEnabledSources": "未找到已啟用的源",
     "useForRegularSearch": "在常規標題欄搜尋中使用這些設定",
     "search": "搜尋",
-    "clickPlayCatchup": "點擊播放回看存檔"
+    "clickPlayCatchup": "點擊播放回看存檔",
+    "channelsToMatch": "要匹配的頻道",
+    "epgSourcesToSearch": "要搜尋的 EPG 源",
+    "thisSourceEpg": "此源的 EPG",
+    "allEpgSources": "所有 EPG 源"
   },
   "live": {
     "active": "活躍",

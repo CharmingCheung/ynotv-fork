@@ -17,7 +17,10 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use crate::dvr::database::DvrDatabase;
-use crate::dvr::ffmpeg_args::{hls_from_url, parse_extra_ffmpeg_args, ReconnectStrategy};
+use crate::dvr::ffmpeg_args::{
+    parse_extra_ffmpeg_args, redact_url, stream_type_from_url, ReconnectStrategy, StreamType,
+    StreamTypeSource,
+};
 use crate::dvr::models::{RecordingEvent, RecordingStatus, Schedule, ScheduleStatus, StopReason};
 use crate::dvr::stream_resolver::resolve_stream_url;
 use crate::dvr::thumbnail::generate_thumbnail;
@@ -259,27 +262,62 @@ impl RecordingManager {
         // Detect the stream type from the *resolved* URL. Playlists are routinely
         // served from extensionless or tokenised endpoints, so fall back to the
         // response itself instead of trusting the URL.
-        let is_hls = match hls_from_url(&stream_url) {
-            Some(verdict) => verdict,
-            None => probe_is_hls(&stream_url, &user_agent).await,
+        let stream_type = match stream_type_from_url(&stream_url) {
+            Some(kind) => kind,
+            None => probe_stream_type(&stream_url, &user_agent).await,
         };
+        let is_hls = stream_type.is_hls;
+
+        // One line per recording saying what it was classified as, what that
+        // decision rested on, the flags it produced, and the URL being captured
+        // with any credentials stripped. A recording that fails to start, or that
+        // stops early, is then attributable from the log alone: the verdict, its
+        // evidence, and — when the evidence is `probe-failed` — the fact that it
+        // was a guess rather than something the stream said.
+        let strategy = ReconnectStrategy::from_setting(&dvr_settings.reconnect_strategy);
+        let is_http = stream_url.starts_with("http://") || stream_url.starts_with("https://");
+        let http_args = if is_http {
+            strategy.http_args(is_hls, is_catchup_stream)
+        } else {
+            Vec::new()
+        };
+        info!(
+            "[DVR Recorder] #{} (schedule #{}, '{}') stream: {} | catchup: {} | reconnect: {} [{}] | url: {}",
+            recording_id,
+            schedule.id,
+            channel_name,
+            stream_type.describe(),
+            is_catchup_stream,
+            strategy.as_setting(),
+            http_args.join(" "),
+            redact_url(&stream_url)
+        );
+        if stream_type.source.is_guess() {
+            warn!(
+                "[DVR Recorder] #{} could not be classified ({}); recording it as a continuous non-HLS \
+                 stream. If it is empty, stops early, or fails with HTTP errors, this guess is why: the \
+                 reconnect and HLS flags for it were chosen for a direct stream.",
+                recording_id, stream_type.detail
+            );
+        }
         println!(
-            "[DVR Recorder] Stream type: {}",
-            if is_hls { "HLS (playlist)" } else { "Direct" }
+            "[DVR Recorder] Stream type: {} ({})",
+            if is_hls { "HLS (playlist)" } else { "Direct" },
+            stream_type.describe()
+        );
+        println!(
+            "[DVR Recorder] Reconnect strategy: {} (hls={}, catchup={}, flags: {})",
+            strategy.as_setting(),
+            is_hls,
+            is_catchup_stream,
+            http_args.join(" ")
         );
 
         // Remember what is being captured and how, so the recordings list can show
         // it instead of leaving the answer in the log.
-        let strategy = ReconnectStrategy::from_setting(&dvr_settings.reconnect_strategy);
-        println!(
-            "[DVR Recorder] Reconnect strategy: {} (hls={}, catchup={})",
-            strategy.as_setting(),
-            is_hls,
-            is_catchup_stream
-        );
         if let Err(e) = self.db.update_recording_stream_info(
             recording_id,
-            if is_hls { "hls" } else { "direct" },
+            stream_type.kind(),
             strategy.as_setting(),
         ) {
             error!(
@@ -289,10 +327,10 @@ impl RecordingManager {
         }
 
         // HTTP reconnection & User-Agent flags (must be specified before the input -i)
-        if stream_url.starts_with("http://") || stream_url.starts_with("https://") {
+        if is_http {
             cmd.arg("-user_agent").arg(&user_agent);
-            for arg in strategy.http_args(is_hls, is_catchup_stream) {
-                cmd.arg(arg);
+            for arg in &http_args {
+                cmd.arg(*arg);
             }
         }
 
@@ -350,9 +388,21 @@ impl RecordingManager {
         cmd.creation_flags(0x08000000);
 
         // Spawn FFmpeg process
+        let started_at = Instant::now();
         let child = match cmd.spawn().context("Failed to spawn FFmpeg") {
             Ok(child) => child,
             Err(e) => {
+                // Say which stream and which flags the start failed on: that is
+                // the difference between "FFmpeg would not start" and "FFmpeg
+                // would not start on this stream with these flags".
+                error!(
+                    "[DVR Recorder] #{} failed to start FFmpeg (stream: {}; reconnect: {}; url: {}): {}",
+                    recording_id,
+                    stream_type.describe(),
+                    strategy.as_setting(),
+                    redact_url(&stream_url),
+                    e
+                );
                 // The recording row already exists, so close it out rather than
                 // leaving it in the list as an in-progress recording forever.
                 let _ = self.db.update_recording_status(
@@ -402,6 +452,33 @@ impl RecordingManager {
 
         // Remove from active recordings
         self.active_recordings.lock().remove(&schedule.id);
+
+        // The other half of the per-recording pair started before the spawn: what
+        // it was classified as, how long it ran, why it stopped, and FFmpeg's own
+        // last word when there was one. Together the two lines answer "was this a
+        // classification problem or a stream problem?" without a repro.
+        //
+        // The reason is normalised the same way the stored row is (a catch-up
+        // download reaching the end of its playlist is a completion, not a stream
+        // that ended early), so the log and the recordings list can't disagree.
+        let logged_reason = match stop_reason {
+            StopReason::StreamEnded if is_catchup_stream => StopReason::Completed,
+            other => other,
+        };
+        info!(
+            "[DVR Recorder] #{} finished after {}s: {} (stream: {}; reconnect: {}; catchup: {}){}",
+            recording_id,
+            started_at.elapsed().as_secs(),
+            logged_reason.as_code(),
+            stream_type.describe(),
+            strategy.as_setting(),
+            is_catchup_stream,
+            result
+                .as_ref()
+                .err()
+                .map(|e| format!(" — {}", e))
+                .unwrap_or_default()
+        );
 
         // Handle result
         match result {
@@ -698,7 +775,14 @@ impl RecordingManager {
                     Ok(s) if s.success() => Ok(()),
                     Ok(s) => {
                         let code = s.code().unwrap_or(-1);
-                        eprintln!("[DVR Recorder] FFmpeg stderr for recording #{}:\n{}", recording_id, stderr_output);
+                        // error!, not eprintln!: in a release build there is no
+                        // console attached to the process, so the one piece of
+                        // output that explains a failed recording has to go to the
+                        // log file like everything else.
+                        error!(
+                            "[DVR Recorder] FFmpeg exited with code {} for recording #{}; full stderr:\n{}",
+                            code, recording_id, stderr_output
+                        );
                         Err(anyhow::anyhow!("FFmpeg exited with code {}: {}", code, stderr_output.lines().last().unwrap_or("unknown error")))
                     }
                     Err(e) => Err(anyhow::anyhow!("FFmpeg wait error: {}", e))
@@ -1081,9 +1165,23 @@ fn validated_extra_args(key: &str, raw: &str) -> Vec<String> {
 /// Live IPTV playlists are commonly served from extensionless or tokenised
 /// endpoints, so the response is the only signal available. Best effort: any
 /// failure returns false, which keeps the behaviour of a plain URL check.
-async fn probe_is_hls(stream_url: &str, user_agent: &str) -> bool {
+/// Ask the response itself what the stream is, for a URL that said nothing.
+///
+/// Every branch reports its evidence: this verdict decides the reconnect and HLS
+/// flags for the whole recording, so a probe that fails is a *guess* that the
+/// stream is continuous, and the log has to say so rather than leave a broken
+/// recording to be explained by inference.
+async fn probe_stream_type(stream_url: &str, user_agent: &str) -> StreamType {
+    let started = Instant::now();
+    let probe_ms = |started: &Instant| started.elapsed().as_millis() as u64;
+
     if !(stream_url.starts_with("http://") || stream_url.starts_with("https://")) {
-        return false;
+        return StreamType {
+            is_hls: false,
+            source: StreamTypeSource::NotHttp,
+            detail: "not an http(s) URL".to_string(),
+            probe_ms: 0,
+        };
     }
 
     println!("[DVR Recorder] URL gives no stream type hint, probing the stream...");
@@ -1093,7 +1191,14 @@ async fn probe_is_hls(stream_url: &str, user_agent: &str) -> bool {
         .build()
     {
         Ok(client) => client,
-        Err(_) => return false,
+        Err(e) => {
+            return StreamType {
+                is_hls: false,
+                source: StreamTypeSource::ProbeFailed,
+                detail: format!("http client unavailable: {e}"),
+                probe_ms: probe_ms(&started),
+            }
+        }
     };
 
     let response = match client
@@ -1106,11 +1211,21 @@ async fn probe_is_hls(stream_url: &str, user_agent: &str) -> bool {
     {
         Ok(response) => response,
         Err(e) => {
+            let detail = if e.is_timeout() {
+                "probe timed out after 4s".to_string()
+            } else {
+                format!("probe request failed: {e}")
+            };
             println!(
                 "[DVR Recorder] Stream probe failed ({}), assuming a direct stream",
-                e
+                detail
             );
-            return false;
+            return StreamType {
+                is_hls: false,
+                source: StreamTypeSource::ProbeFailed,
+                detail,
+                probe_ms: probe_ms(&started),
+            };
         }
     };
 
@@ -1121,7 +1236,12 @@ async fn probe_is_hls(stream_url: &str, user_agent: &str) -> bool {
         .unwrap_or("")
         .to_ascii_lowercase();
     if content_type.contains("mpegurl") {
-        return true;
+        return StreamType {
+            is_hls: true,
+            source: StreamTypeSource::ContentType,
+            detail: format!("content-type '{content_type}'"),
+            probe_ms: probe_ms(&started),
+        };
     }
 
     // Some portals serve playlists with no useful Content-Type, where the
@@ -1139,11 +1259,26 @@ async fn probe_is_hls(stream_url: &str, user_agent: &str) -> bool {
     let is_hls = String::from_utf8_lossy(&body)
         .trim_start()
         .starts_with("#EXTM3U");
+    let detail = if is_hls {
+        format!("content-type '{content_type}', body starts with #EXTM3U")
+    } else {
+        format!("content-type '{content_type}', no #EXTM3U in the first 2KB")
+    };
     println!(
-        "[DVR Recorder] Stream probe: content-type='{}', playlist={}",
-        content_type, is_hls
+        "[DVR Recorder] Stream probe: {}",
+        if is_hls {
+            "playlist".to_string()
+        } else {
+            format!("not a playlist ({detail})")
+        }
     );
-    is_hls
+
+    StreamType {
+        is_hls,
+        source: StreamTypeSource::PlaylistHeader,
+        detail,
+        probe_ms: probe_ms(&started),
+    }
 }
 
 /// Generate a unique filename and output path to prevent UNIQUE constraint collisions in SQLite or on disk

@@ -1,18 +1,19 @@
 /* ═══════════════════════════════════════════════════════════
-   EPG Editor Modal
+   EPG Editor Modal - Modernized Glassmorphic Theme
    ═══════════════════════════════════════════════════════════ */
 
 .epg-editor-overlay {
   position: fixed;
   inset: 0;
+  width: 100vw;
+  height: 100vh;
   z-index: 10500;
-  background: rgba(0, 0, 0, 0.75);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: var(--glass-overlay-bg, rgba(0, 0, 0, 0.82));
+  backdrop-filter: var(--glass-overlay-filter, blur(10px));
+  -webkit-backdrop-filter: var(--glass-overlay-filter, blur(10px));
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 16px;
   animation: epgEditorFadeIn 0.18s ease-out;
 }
 
@@ -22,101 +23,189 @@
 }
 
 .epg-editor-modal {
-  background: var(--surface-color, rgba(28, 28, 35, 0.97));
-  border: 1px solid var(--border-color, rgba(255,255,255,0.1));
-  box-shadow: 0 24px 64px rgba(0,0,0,0.6);
-  border-radius: 16px;
-  width: min(900px, 96vw);
-  max-height: 86vh;
+  width: 92vw;
+  max-width: 980px;
+  height: 85vh;
+  max-height: 88vh;
+  background: var(--glass-settings-bg, var(--bg-secondary, #121225));
+  border: var(--glass-settings-border, 1px solid rgba(255, 255, 255, 0.08));
+  box-shadow: var(--glass-settings-shadow, 0 24px 70px rgba(0, 0, 0, 0.7));
+  border-radius: var(--glass-modal-radius, 14px);
+  backdrop-filter: var(--glass-settings-filter, none);
+  -webkit-backdrop-filter: var(--glass-settings-filter, none);
   display: flex;
   flex-direction: column;
-  animation: epgEditorSlide 0.22s cubic-bezier(0.34,1.56,0.64,1);
+  color: var(--glass-modal-color, var(--text-primary, #fff));
   overflow: hidden;
+  font-family: inherit;
+  animation: epgEditorSlide 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 @keyframes epgEditorSlide {
-  from { opacity: 0; transform: translateY(20px) scale(0.97); }
-  to   { opacity: 1; transform: translateY(0)    scale(1);    }
+  from { opacity: 0; transform: translateY(16px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 /* ── Header ── */
 .epg-editor-header {
+  padding: var(--mg-hdr-padding, 16px 24px);
+  border-bottom: var(--mg-hdr-border-bottom, 1px solid rgba(255, 255, 255, 0.08));
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--mg-hdr-bg, rgba(255, 255, 255, 0.02));
+  flex-shrink: 0;
+}
+
+.epg-header-left {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 18px 20px 14px;
-  border-bottom: 1px solid var(--border-color, rgba(255,255,255,0.1));
-  flex-shrink: 0;
+  min-width: 0;
 }
 
-.epg-editor-title {
-  flex: 1;
-  font-size: 1rem;
-  font-weight: 700;
-  color: var(--text-primary, #fff);
+.epg-header-icon {
+  color: var(--accent-primary, #00d4ff);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+}
+
+.epg-header-title {
+  margin: 0;
+  font-size: var(--mg-hdr-title-font-size, 1.15rem);
+  font-weight: var(--mg-hdr-title-weight, 600);
+  color: var(--mg-hdr-title-color, var(--text-primary, #fff));
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.epg-header-badge {
+  background: rgba(0, 212, 255, 0.15);
+  color: var(--accent-primary, #00d4ff);
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(0, 212, 255, 0.25);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 320px;
 }
 
-.epg-editor-title span {
-  color: var(--accent-primary, #00d4ff);
+.epg-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
-.epg-editor-close-btn {
-  background: none;
-  border: none;
-  color: var(--text-secondary, #888);
+.epg-close-btn {
+  padding: 8px 16px;
+  border-radius: var(--mg-btn-radius, 7px);
+  border: var(--mg-btn-border, 1px solid rgba(255, 255, 255, 0.05));
+  font-size: 0.85rem;
+  font-weight: 600;
   cursor: pointer;
-  padding: 6px;
-  border-radius: 8px;
-  font-size: 1.1rem;
-  line-height: 1;
-  transition: color 0.15s, background 0.15s;
-  flex-shrink: 0;
+  font-family: inherit;
+  background: var(--mg-btn-bg, rgba(255, 255, 255, 0.08));
+  color: var(--mg-btn-color, #fff);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: var(--mg-btn-transition, all 0.2s ease);
 }
-.epg-editor-close-btn:hover { color: var(--text-primary,#fff); background: var(--bg-hover, rgba(255,255,255,0.07)); }
+
+.epg-close-btn:hover {
+  background: var(--mg-btn-hover-bg, rgba(255, 255, 255, 0.15));
+  border-color: var(--mg-btn-hover-border, rgba(255, 255, 255, 0.1));
+  color: var(--mg-btn-hover-color, #fff);
+}
 
 /* ── Tabs ── */
 .epg-editor-tabs {
   display: flex;
-  gap: 2px;
-  padding: 10px 16px 0;
-  border-bottom: 1px solid var(--border-color, rgba(255,255,255,0.1));
+  align-items: center;
+  gap: 8px;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
+  background: var(--mg-pane-bg, rgba(0, 0, 0, 0.15));
   flex-shrink: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.epg-editor-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .epg-editor-tab {
-  padding: 8px 16px;
-  font-size: 0.85rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 14px;
+  font-size: 0.82rem;
   font-weight: 500;
-  color: var(--text-secondary, #888);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-secondary, rgba(255, 255, 255, 0.7));
   cursor: pointer;
-  border: none;
-  background: none;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-  transition: color 0.15s, border-color 0.15s;
+  transition: all 0.18s ease;
   white-space: nowrap;
+  font-family: inherit;
 }
 
-.epg-editor-tab:hover { color: var(--text-primary, #e0e0e0); }
+.epg-editor-tab:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.15);
+}
 
 .epg-editor-tab.active {
-  color: var(--accent-primary, #00d4ff);
-  border-bottom-color: var(--accent-primary, #00d4ff);
+  background: var(--accent-primary, #00d4ff);
+  border-color: var(--accent-primary, #00d4ff);
+  color: #04121a;
+  font-weight: 600;
+  box-shadow: 0 0 14px rgba(0, 212, 255, 0.25);
 }
 
 /* ── Body ── */
 .epg-editor-body {
   flex: 1;
   overflow-y: auto;
-  padding: 20px;
+  padding: 24px;
+  background: transparent;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
+  transition: scrollbar-color 0.2s ease;
 }
 
-.epg-editor-body::-webkit-scrollbar { width: 6px; }
-.epg-editor-body::-webkit-scrollbar-track { background: transparent; }
-.epg-editor-body::-webkit-scrollbar-thumb { background: var(--border-color, #444); border-radius: 3px; }
+.epg-editor-body:hover {
+  scrollbar-color: var(--scrollbar-hover-color, var(--accent-primary, rgba(0, 212, 255, 0.5))) transparent;
+}
+
+.epg-editor-body::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.epg-editor-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.epg-editor-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  transition: background 0.2s ease;
+}
+
+.epg-editor-body:hover::-webkit-scrollbar-thumb {
+  background: var(--surface-hover, rgba(255, 255, 255, 0.25));
+}
 
 /* ── Form Fields ── */
 .epg-editor-field {
@@ -127,7 +216,7 @@
   display: block;
   font-size: 0.75rem;
   font-weight: 600;
-  color: var(--text-secondary, #888);
+  color: var(--text-secondary, rgba(255, 255, 255, 0.7));
   text-transform: uppercase;
   letter-spacing: 0.6px;
   margin-bottom: 6px;
@@ -136,33 +225,49 @@
 .epg-editor-input,
 .epg-editor-textarea {
   width: 100%;
-  padding: 10px 12px;
-  background: var(--bg-tertiary, rgba(255,255,255,0.05));
-  border: 1px solid var(--border-color, rgba(255,255,255,0.12));
-  border-radius: 8px;
-  color: var(--text-primary, #fff);
-  font-size: 0.9rem;
+  padding: 9px 12px;
+  background: var(--modal-input-bg, rgba(0, 0, 0, 0.35));
+  border: 1px solid var(--modal-input-border-color, rgba(255, 255, 255, 0.12));
+  border-radius: var(--modal-input-radius, 8px);
+  color: var(--modal-input-color, #fff);
+  font-size: 0.88rem;
   font-family: inherit;
   box-sizing: border-box;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
 }
 
 .epg-editor-input:focus,
 .epg-editor-textarea:focus {
   outline: none;
   border-color: var(--accent-primary, #00d4ff);
-  box-shadow: 0 0 0 2px var(--accent-glow, rgba(0,212,255,0.15));
+  background: var(--modal-input-focus-bg, rgba(0, 0, 0, 0.5));
+  box-shadow: 0 0 0 2px var(--accent-glow, rgba(0, 212, 255, 0.2));
+}
+
+select.epg-editor-input {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.6)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 36px;
+  cursor: pointer;
+}
+
+select.epg-editor-input option {
+  background: var(--bg-secondary, #141724);
+  color: #fff;
 }
 
 .epg-editor-textarea {
   resize: vertical;
-  min-height: 60px;
+  min-height: 64px;
 }
 
 .epg-editor-hint {
   font-size: 0.75rem;
-  color: var(--text-secondary, #666);
-  margin-top: 4px;
+  color: var(--text-secondary, rgba(255, 255, 255, 0.6));
+  margin-top: 5px;
+  line-height: 1.4;
 }
 
 /* Feed pin: the channel's guide is locked to one EPG source — worth standing out
@@ -170,14 +275,16 @@
 .epg-editor-pinned-feed {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-top: 6px;
-  padding: 6px 8px;
-  border-radius: 6px;
-  border-left: 3px solid var(--accent-color, var(--accent, #35d0a5));
-  background: var(--surface-2, rgba(127, 127, 127, 0.12));
-  color: var(--text-primary, inherit);
-  line-height: 1.35;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 212, 255, 0.25);
+  border-left: 3px solid var(--accent-primary, #00d4ff);
+  background: rgba(0, 212, 255, 0.05);
+  color: var(--text-primary, #fff);
+  font-size: 0.82rem;
+  line-height: 1.4;
 }
 
 /* ── Logo Preview ── */
@@ -200,26 +307,26 @@
 }
 
 .epg-editor-logo-preview {
-  width: 48px;
-  height: 48px;
+  width: 46px;
+  height: 46px;
   border-radius: 8px;
   object-fit: contain;
-  background: var(--bg-tertiary, rgba(255,255,255,0.05));
-  border: 1px solid var(--border-color, rgba(255,255,255,0.12));
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   flex-shrink: 0;
 }
 
 .epg-editor-logo-placeholder {
-  width: 48px;
-  height: 48px;
+  width: 46px;
+  height: 46px;
   border-radius: 8px;
-  background: var(--bg-tertiary, rgba(255,255,255,0.05));
-  border: 1px dashed var(--border-color, rgba(255,255,255,0.2));
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px dashed rgba(255, 255, 255, 0.2);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--text-secondary, #555);
-  font-size: 1.3rem;
+  color: var(--text-secondary, rgba(255, 255, 255, 0.4));
+  font-size: 1.2rem;
   flex-shrink: 0;
 }
 
@@ -227,72 +334,129 @@
 .epg-editor-timeshift-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .epg-editor-timeshift-input {
   width: 100px;
-  padding: 10px 12px;
-  background: var(--bg-tertiary, rgba(255,255,255,0.05));
-  border: 1px solid var(--border-color, rgba(255,255,255,0.12));
+  padding: 8px 12px;
+  background: var(--modal-input-bg, rgba(0, 0, 0, 0.35));
+  border: 1px solid var(--modal-input-border-color, rgba(255, 255, 255, 0.12));
   border-radius: 8px;
   color: var(--text-primary, #fff);
   font-size: 0.9rem;
   text-align: center;
   box-sizing: border-box;
 }
+
 .epg-editor-timeshift-input:focus {
   outline: none;
   border-color: var(--accent-primary, #00d4ff);
+  box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.2);
 }
 
-/* ── Save Button ── */
-.epg-editor-footer {
-  padding: 14px 20px;
-  border-top: 1px solid var(--border-color, rgba(255,255,255,0.1));
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  flex-shrink: 0;
-}
-
+/* ── Buttons ── */
 .epg-editor-btn {
-  padding: 10px 22px;
-  border: none;
-  border-radius: 8px;
-  font-size: 0.9rem;
+  padding: 8px 18px;
+  border-radius: var(--mg-btn-radius, 7px);
+  border: 1px solid transparent;
+  font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.15s;
+  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.18s ease;
+  white-space: nowrap;
 }
 
-.epg-editor-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.epg-editor-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 
 .epg-editor-btn-primary {
-  background: var(--accent-primary, #00d4ff);
-  color: var(--bg-primary, #111);
+  background: var(--mg-export-bg, var(--accent-primary, #00d4ff));
+  color: var(--mg-export-color, #04121a);
+  border: var(--mg-export-border, 1px solid transparent);
 }
+
 .epg-editor-btn-primary:hover:not(:disabled) {
-  box-shadow: 0 0 18px var(--accent-glow, rgba(0,212,255,0.35));
+  background: var(--mg-export-hover-bg, #00bada);
+  box-shadow: 0 0 16px rgba(0, 212, 255, 0.35);
   transform: translateY(-1px);
 }
 
 .epg-editor-btn-secondary {
-  background: var(--bg-tertiary, rgba(255,255,255,0.08));
-  color: var(--text-secondary, #aaa);
+  background: var(--mg-btn-bg, rgba(255, 255, 255, 0.08));
+  color: var(--mg-btn-color, #fff);
+  border: var(--mg-btn-border, 1px solid rgba(255, 255, 255, 0.05));
 }
+
 .epg-editor-btn-secondary:hover:not(:disabled) {
-  background: var(--bg-hover, rgba(255,255,255,0.12));
-  color: var(--text-primary, #fff);
+  background: var(--mg-btn-hover-bg, rgba(255, 255, 255, 0.15));
+  border-color: var(--mg-btn-hover-border, rgba(255, 255, 255, 0.1));
+  color: var(--mg-btn-hover-color, #fff);
 }
 
 .epg-editor-btn-danger {
-  background: rgba(220,50,50,0.15);
+  background: rgba(220, 50, 50, 0.15);
   color: #ff6b6b;
-  border: 1px solid rgba(220,50,50,0.3);
+  border: 1px solid rgba(220, 50, 50, 0.3);
 }
+
 .epg-editor-btn-danger:hover:not(:disabled) {
-  background: rgba(220,50,50,0.25);
+  background: rgba(220, 50, 50, 0.25);
+  border-color: rgba(220, 50, 50, 0.5);
+  color: #fff;
+}
+
+/* ── Danger Zone (Reset Channel) ── */
+.epg-danger-zone {
+  margin-top: 24px;
+  padding: 16px 18px;
+  background: rgba(220, 50, 50, 0.05);
+  border: 1px solid rgba(220, 50, 50, 0.2);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.epg-danger-zone-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.epg-danger-zone-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: #ff6b6b;
+  margin-bottom: 4px;
+}
+
+.epg-danger-zone-desc {
+  font-size: 0.8rem;
+  color: var(--text-secondary, rgba(255, 255, 255, 0.65));
+  line-height: 1.4;
+}
+
+/* ── Footer ── */
+.epg-editor-footer {
+  padding: 16px 24px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  flex-shrink: 0;
 }
 
 /* ── Programs Tab ── */
@@ -312,11 +476,11 @@
   flex-direction: column;
   gap: 8px;
   margin-bottom: 14px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--border-color, rgba(127, 127, 127, 0.3));
-  border-left: 3px solid var(--accent-color, var(--accent, #35d0a5));
-  background: var(--surface-2, rgba(127, 127, 127, 0.1));
+  padding: 10px 14px;
+  border-radius: 9px;
+  border: 1px solid rgba(0, 212, 255, 0.2);
+  border-left: 3px solid var(--accent-primary, #00d4ff);
+  background: rgba(0, 212, 255, 0.04);
 }
 
 .epg-editor-feed-pin-chip,
@@ -325,17 +489,17 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-  font-size: 0.8rem;
-  color: var(--text-primary, inherit);
-  line-height: 1.35;
+  font-size: 0.82rem;
+  color: var(--text-primary, #fff);
+  line-height: 1.4;
 }
 
 .epg-editor-feed-pin-playlist {
-  color: var(--text-secondary, #888);
+  color: var(--text-secondary, rgba(255, 255, 255, 0.7));
 }
 
 .epg-editor-feed-pin-playlist strong {
-  color: var(--text-primary, inherit);
+  color: var(--text-primary, #fff);
   font-variant-numeric: tabular-nums;
 }
 
@@ -344,52 +508,59 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--accent-color, var(--accent, #35d0a5));
+  background: var(--accent-primary, #00d4ff);
+  box-shadow: 0 0 8px rgba(0, 212, 255, 0.4);
 }
 
 .epg-programs-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
 .epg-program-row {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: var(--bg-tertiary, rgba(255,255,255,0.04));
-  border: 1px solid var(--border-color, rgba(255,255,255,0.07));
-  transition: background 0.12s;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  transition: all 0.15s ease;
 }
 
-.epg-program-row:hover { background: var(--bg-hover, rgba(255,255,255,0.07)); }
+.epg-program-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.14);
+}
 
 .epg-program-row.is-deleted {
-  opacity: 0.5;
+  opacity: 0.45;
 }
 
 .epg-program-row.is-deleted .epg-program-title {
   text-decoration: line-through;
-  color: var(--text-secondary, #888);
+  color: var(--text-secondary, rgba(255, 255, 255, 0.6));
 }
 
 .epg-program-row.is-custom {
-  border-color: rgba(0, 212, 255, 0.2);
+  border-color: rgba(0, 212, 255, 0.25);
+  background: rgba(0, 212, 255, 0.025);
 }
 
 .epg-program-row.editing {
   border-color: var(--accent-primary, #00d4ff);
-  background: rgba(0,212,255,0.05);
+  background: rgba(0, 212, 255, 0.06);
+  box-shadow: 0 0 12px rgba(0, 212, 255, 0.15);
 }
 
 .epg-program-time {
-  font-size: 0.75rem;
-  color: var(--text-secondary, #888);
+  font-size: 0.78rem;
+  color: var(--text-secondary, rgba(255, 255, 255, 0.65));
   white-space: nowrap;
   min-width: 130px;
   padding-top: 2px;
+  font-variant-numeric: tabular-nums;
 }
 
 .epg-program-info {
@@ -400,7 +571,7 @@
 .epg-program-title {
   font-size: 0.9rem;
   font-weight: 500;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary, #fff);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -408,21 +579,36 @@
 
 .epg-program-badges {
   display: flex;
-  gap: 5px;
-  margin-top: 3px;
+  gap: 6px;
+  margin-top: 4px;
 }
 
 .epg-badge {
-  font-size: 0.65rem;
+  font-size: 0.68rem;
   font-weight: 600;
-  padding: 1px 6px;
-  border-radius: 4px;
+  padding: 2px 7px;
+  border-radius: 10px;
   text-transform: uppercase;
   letter-spacing: 0.4px;
 }
-.epg-badge-modified { background: rgba(255,165,0,0.15); color: #ffaa44; }
-.epg-badge-custom   { background: rgba(0,212,255,0.15); color: #00d4ff; }
-.epg-badge-deleted  { background: rgba(220,50,50,0.15); color: #ff6666; }
+
+.epg-badge-modified {
+  background: rgba(255, 170, 68, 0.15);
+  color: #ffaa44;
+  border: 1px solid rgba(255, 170, 68, 0.3);
+}
+
+.epg-badge-custom {
+  background: rgba(0, 212, 255, 0.15);
+  color: var(--accent-primary, #00d4ff);
+  border: 1px solid rgba(0, 212, 255, 0.3);
+}
+
+.epg-badge-deleted {
+  background: rgba(220, 50, 50, 0.15);
+  color: #ff6666;
+  border: 1px solid rgba(220, 50, 50, 0.3);
+}
 
 .epg-program-actions {
   display: flex;
@@ -431,49 +617,85 @@
 }
 
 .epg-program-action-btn {
-  padding: 4px 10px;
-  border: 1px solid var(--border-color, rgba(255,255,255,0.12));
+  padding: 5px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 6px;
   font-size: 0.75rem;
   font-weight: 500;
   cursor: pointer;
-  background: none;
-  color: var(--text-secondary, #888);
-  transition: all 0.12s;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary, rgba(255, 255, 255, 0.7));
+  transition: all 0.15s ease;
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
-.epg-program-action-btn:hover { color: var(--text-primary,#fff); border-color: var(--text-primary,#fff); }
-.epg-program-action-btn.danger { color: #ff6b6b; border-color: rgba(220,50,50,0.3); }
-.epg-program-action-btn.danger:hover { background: rgba(220,50,50,0.12); }
-.epg-program-action-btn.restore { color: #4caf50; border-color: rgba(76,175,80,0.3); }
-.epg-program-action-btn.restore:hover { background: rgba(76,175,80,0.12); }
+
+.epg-program-action-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.epg-program-action-btn.danger {
+  color: #ff6b6b;
+  border-color: rgba(220, 50, 50, 0.25);
+  background: rgba(220, 50, 50, 0.06);
+}
+
+.epg-program-action-btn.danger:hover {
+  background: rgba(220, 50, 50, 0.18);
+  border-color: rgba(220, 50, 50, 0.45);
+  color: #fff;
+}
+
+.epg-program-action-btn.restore {
+  color: #4caf50;
+  border-color: rgba(76, 175, 80, 0.25);
+  background: rgba(76, 175, 80, 0.06);
+}
+
+.epg-program-action-btn.restore:hover {
+  background: rgba(76, 175, 80, 0.18);
+  border-color: rgba(76, 175, 80, 0.45);
+  color: #fff;
+}
 
 /* ── Inline Edit Form ── */
 .epg-program-edit-form {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  padding: 10px;
-  margin-top: 8px;
-  border-top: 1px solid var(--border-color, rgba(255,255,255,0.1));
+  gap: 10px;
+  padding: 12px;
+  margin-top: 10px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
+
 .epg-program-edit-form .full-width { grid-column: 1 / -1; }
 .epg-program-edit-form .epg-editor-input,
-.epg-program-edit-form .epg-editor-textarea { font-size: 0.82rem; padding: 7px 10px; }
+.epg-program-edit-form .epg-editor-textarea {
+  font-size: 0.84rem;
+  padding: 7px 10px;
+}
 
-/* ── Empty states ── */
+/* ── Empty states & Loading ── */
 .epg-editor-empty {
   text-align: center;
-  padding: 40px 20px;
-  color: var(--text-secondary, #666);
+  padding: 48px 24px;
+  color: var(--text-secondary, rgba(255, 255, 255, 0.5));
   font-size: 0.9rem;
+  line-height: 1.5;
 }
 
 .epg-editor-loading {
   text-align: center;
-  padding: 32px;
-  color: var(--text-secondary, #888);
-  font-size: 0.85rem;
+  padding: 36px;
+  color: var(--accent-primary, #00d4ff);
+  font-size: 0.88rem;
+  font-weight: 500;
 }
 
 /* ── Search Tab ── */
@@ -481,11 +703,13 @@
   display: flex;
   gap: 10px;
   align-items: center;
-  margin-bottom: 14px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
 }
 
 .epg-search-input-wrap {
   flex: 1;
+  min-width: 220px;
   position: relative;
 }
 
@@ -498,104 +722,141 @@
   left: 11px;
   top: 50%;
   transform: translateY(-50%);
-  color: var(--text-secondary, #666);
+  color: var(--text-secondary, rgba(255, 255, 255, 0.5));
   pointer-events: none;
-  font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .epg-search-scope-toggle {
   display: flex;
-  border: 1px solid var(--border-color, rgba(255,255,255,0.12));
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 8px;
-  overflow: hidden;
+  background: rgba(0, 0, 0, 0.25);
+  padding: 2px;
+  gap: 2px;
   flex-shrink: 0;
 }
 
 .epg-search-scope-btn {
-  padding: 8px 14px;
+  padding: 6px 12px;
   font-size: 0.8rem;
   font-weight: 500;
-  background: none;
+  background: transparent;
   border: none;
-  color: var(--text-secondary, #888);
+  border-radius: 6px;
+  color: var(--text-secondary, rgba(255, 255, 255, 0.65));
   cursor: pointer;
-  transition: background 0.12s, color 0.12s;
+  transition: all 0.15s ease;
   white-space: nowrap;
 }
+
+.epg-search-scope-btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
+}
+
 .epg-search-scope-btn.active {
   background: var(--accent-primary, #00d4ff);
-  color: var(--bg-primary, #111);
+  color: #04121a;
+  font-weight: 600;
 }
 
 .epg-search-auto-btn {
-  padding: 8px 14px;
-  font-size: 0.8rem;
+  padding: 7px 14px;
+  font-size: 0.82rem;
   font-weight: 600;
-  background: rgba(0,212,255,0.1);
-  border: 1px solid rgba(0,212,255,0.25);
+  background: rgba(0, 212, 255, 0.12);
+  border: 1px solid rgba(0, 212, 255, 0.28);
   border-radius: 8px;
   color: var(--accent-primary, #00d4ff);
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.12s;
+  transition: all 0.15s ease;
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
-.epg-search-auto-btn:hover { background: rgba(0,212,255,0.2); }
-.epg-search-auto-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.epg-search-auto-btn:hover:not(:disabled) {
+  background: rgba(0, 212, 255, 0.22);
+  border-color: rgba(0, 212, 255, 0.45);
+  box-shadow: 0 0 12px rgba(0, 212, 255, 0.2);
+}
+
+.epg-search-auto-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 
 .epg-search-results {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
 }
 
 .epg-search-result-row {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: var(--bg-tertiary, rgba(255,255,255,0.04));
-  border: 1px solid var(--border-color, rgba(255,255,255,0.07));
+  padding: 10px 14px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.07);
   cursor: pointer;
-  transition: background 0.12s, border-color 0.12s;
+  transition: all 0.15s ease;
 }
 
-.epg-search-result-row:hover { background: var(--bg-hover, rgba(255,255,255,0.08)); border-color: rgba(255,255,255,0.12); }
+.epg-search-result-row:hover {
+  background: rgba(255, 255, 255, 0.045);
+  border-color: rgba(255, 255, 255, 0.14);
+}
 
 .epg-search-result-row.best-match {
-  border-color: rgba(0,212,255,0.3);
-  background: rgba(0,212,255,0.05);
+  border-color: rgba(0, 212, 255, 0.35);
+  background: rgba(0, 212, 255, 0.05);
+}
+
+.epg-search-result-row.selected-preview {
+  border-color: rgba(0, 212, 255, 0.45);
+  background: rgba(0, 212, 255, 0.08);
 }
 
 .epg-search-result-icon {
   width: 36px;
   height: 36px;
-  border-radius: 6px;
+  border-radius: 7px;
   object-fit: contain;
-  background: var(--bg-tertiary, rgba(255,255,255,0.05));
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   flex-shrink: 0;
 }
 
 .epg-search-result-placeholder {
   width: 36px;
   height: 36px;
-  border-radius: 6px;
-  background: var(--bg-tertiary, rgba(255,255,255,0.05));
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--text-secondary, #555);
+  color: var(--text-secondary, rgba(255, 255, 255, 0.4));
   flex-shrink: 0;
   font-size: 1rem;
 }
 
-.epg-search-result-info { flex: 1; min-width: 0; }
+.epg-search-result-info {
+  flex: 1;
+  min-width: 0;
+}
 
 .epg-search-result-name {
   font-size: 0.9rem;
   font-weight: 500;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary, #fff);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -603,7 +864,7 @@
 
 .epg-search-result-id {
   font-size: 0.75rem;
-  color: var(--text-secondary, #666);
+  color: var(--text-secondary, rgba(255, 255, 255, 0.5));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -614,86 +875,120 @@
 .epg-search-result-source {
   font-size: 0.72rem;
   color: var(--accent-primary, #00d4ff);
-  opacity: 0.75;
-  margin-top: 1px;
+  opacity: 0.85;
+  margin-top: 2px;
 }
 
 .epg-score-bar {
   width: 40px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
   flex-shrink: 0;
 }
 
 .epg-score-pip {
-  height: 3px;
+  height: 100%;
   background: var(--accent-primary, #00d4ff);
   border-radius: 2px;
-  opacity: 0.6;
 }
 
 .epg-search-apply-btn {
   padding: 6px 14px;
-  border: 1px solid var(--accent-primary, #00d4ff);
+  border: 1px solid rgba(0, 212, 255, 0.35);
   border-radius: 6px;
-  background: rgba(0,212,255,0.1);
+  background: rgba(0, 212, 255, 0.12);
   color: var(--accent-primary, #00d4ff);
   font-size: 0.8rem;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.12s;
+  transition: all 0.15s ease;
   flex-shrink: 0;
 }
-.epg-search-apply-btn:hover { background: rgba(0,212,255,0.2); }
+
+.epg-search-apply-btn:hover:not(:disabled) {
+  background: var(--accent-primary, #00d4ff);
+  color: #04121a;
+  box-shadow: 0 0 10px rgba(0, 212, 255, 0.3);
+}
 
 /* ── Source Channel List ── */
-/*
- * The rows are virtualized, so this is the list's own scroll container: the
- * virtualizer positions rows relative to the scroll element it is handed, and the
- * tab body (which also holds the filter) is not it. Row spacing is padding inside
- * the measured row, not a `gap` here — absolutely positioned rows ignore it.
- */
+.epg-source-filter {
+  margin-bottom: 14px;
+}
+
 .epg-source-channel-list {
   max-height: min(60vh, 560px);
   overflow-y: auto;
-  padding-right: 2px;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
 }
 
 .epg-source-channel-list::-webkit-scrollbar { width: 6px; }
 .epg-source-channel-list::-webkit-scrollbar-track { background: transparent; }
-.epg-source-channel-list::-webkit-scrollbar-thumb { background: var(--border-color, #444); border-radius: 3px; }
+.epg-source-channel-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+}
+.epg-source-channel-list:hover::-webkit-scrollbar-thumb {
+  background: var(--surface-hover, rgba(255, 255, 255, 0.25));
+}
 
 .epg-source-channel-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 9px 12px;
-  border-radius: 8px;
-  background: var(--bg-tertiary, rgba(255,255,255,0.04));
-  border: 1px solid var(--border-color, rgba(255,255,255,0.07));
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.07);
   cursor: pointer;
-  transition: background 0.12s, border-color 0.12s;
+  transition: all 0.15s ease;
 }
-.epg-source-channel-row:hover { background: var(--bg-hover, rgba(255,255,255,0.08)); border-color: rgba(255,255,255,0.12); }
+
+.epg-source-channel-row:hover {
+  background: rgba(255, 255, 255, 0.045);
+  border-color: rgba(255, 255, 255, 0.15);
+}
 
 .epg-source-channel-icon {
   width: 32px;
   height: 32px;
   border-radius: 6px;
   object-fit: contain;
-  background: var(--bg-tertiary, rgba(255,255,255,0.05));
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+
+.epg-source-channel-placeholder {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary, rgba(255, 255, 255, 0.4));
+  flex-shrink: 0;
 }
 
 .epg-source-channel-name {
   flex: 1;
   font-size: 0.88rem;
-  color: var(--text-primary, #e0e0e0);
+  font-weight: 500;
+  color: var(--text-primary, #fff);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .epg-source-channel-tvgid {
-  font-size: 0.72rem;
-  color: var(--text-secondary, #666);
+  font-size: 0.74rem;
+  color: var(--text-secondary, rgba(255, 255, 255, 0.5));
   font-family: monospace;
   white-space: nowrap;
   overflow: hidden;
@@ -706,61 +1001,102 @@
   height: 7px;
   border-radius: 50%;
   background: var(--accent-primary, #00d4ff);
+  box-shadow: 0 0 6px rgba(0, 212, 255, 0.4);
   flex-shrink: 0;
 }
 
-.epg-source-filter {
-  margin-bottom: 12px;
-}
-
 /* ── Matches / feed-lock report ── */
-/*
- * One collapsible tree (sources → categories → channels) is walked as a flat
- * row list, so rows are virtualized inside this bounded scroller (the tab body
- * is not it) and every row is a fixed 52px: single-line, ellipsized content,
- * which is what the virtualizer estimates from.
- */
 .epg-matches-toolbar {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
-  margin-bottom: 8px;
+  margin-bottom: 12px;
 }
-.epg-matches-search { flex: 1 1 220px; min-width: 180px; }
-.epg-matches-toggles { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+
+.epg-matches-search {
+  flex: 1 1 220px;
+  min-width: 180px;
+}
+
+.epg-matches-toggles {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  background: rgba(0, 0, 0, 0.25);
+  padding: 3px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
 .epg-matches-toggle {
-  padding: 4px 10px;
+  padding: 5px 12px;
   font-size: 0.78rem;
+  font-weight: 500;
   border-radius: 6px;
-  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
+  border: 1px solid transparent;
   background: transparent;
-  color: var(--text-secondary, #aaa);
+  color: var(--text-secondary, rgba(255, 255, 255, 0.7));
   cursor: pointer;
-  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  transition: all 0.15s ease;
+  white-space: nowrap;
 }
-.epg-matches-toggle:hover { background: var(--bg-hover, rgba(255, 255, 255, 0.06)); }
-.epg-matches-toggle:disabled { opacity: 0.4; cursor: default; }
-.epg-matches-toggle:disabled:hover { background: transparent; }
+
+.epg-matches-toggle:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: #fff;
+}
+
+.epg-matches-toggle:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.epg-matches-toggle:disabled:hover {
+  background: transparent;
+}
+
 .epg-matches-toggle.active {
   background: var(--accent-primary, #00d4ff);
-  border-color: var(--accent-primary, #00d4ff);
+  border-color: transparent;
   color: #04121a;
   font-weight: 600;
 }
-.epg-matches-summary { font-size: 0.78rem; color: var(--text-secondary, #888); margin-bottom: 6px; }
-.epg-matches-summary strong { color: var(--text-primary, #e0e0e0); font-variant-numeric: tabular-nums; }
-.epg-matches-summary-sep { margin: 0 6px; opacity: 0.6; }
 
+.epg-matches-summary {
+  font-size: 0.8rem;
+  color: var(--text-secondary, rgba(255, 255, 255, 0.7));
+  margin-bottom: 10px;
+}
+
+.epg-matches-summary strong {
+  color: var(--text-primary, #fff);
+  font-variant-numeric: tabular-nums;
+}
+
+.epg-matches-summary-sep {
+  margin: 0 6px;
+  opacity: 0.4;
+}
 
 .epg-matches-list {
   max-height: min(62vh, 580px);
   overflow-y: auto;
-  padding-right: 2px;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
 }
+
 .epg-matches-list::-webkit-scrollbar { width: 6px; }
 .epg-matches-list::-webkit-scrollbar-track { background: transparent; }
-.epg-matches-list::-webkit-scrollbar-thumb { background: var(--border-color, #444); border-radius: 3px; }
+.epg-matches-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+}
+.epg-matches-list:hover::-webkit-scrollbar-thumb {
+  background: var(--surface-hover, rgba(255, 255, 255, 0.25));
+}
 
 .epg-matches-row {
   display: flex;
@@ -768,105 +1104,132 @@
   gap: 8px;
   height: 52px;
 }
+
 .epg-matches-row-main {
   display: flex;
   align-items: center;
   gap: 10px;
   flex: 1;
   min-width: 0;
-  height: 45px;
-  padding: 0 12px;
-  border-radius: 8px;
+  height: 44px;
+  padding: 0 14px;
+  border-radius: 9px;
   cursor: pointer;
   text-align: left;
   font: inherit;
   color: inherit;
-  background: var(--bg-tertiary, rgba(255, 255, 255, 0.04));
-  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.07));
-  transition: background 0.12s, border-color 0.12s;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  transition: all 0.15s ease;
 }
-.epg-matches-row-main:hover { background: var(--bg-hover, rgba(255, 255, 255, 0.08)); border-color: rgba(255, 255, 255, 0.12); }
+
+.epg-matches-row-main:hover {
+  background: rgba(255, 255, 255, 0.045);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
 .epg-matches-row-name {
   flex: 1;
   min-width: 0;
   font-size: 0.86rem;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary, #fff);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
 .epg-matches-row-id {
-  font-size: 0.72rem;
+  font-size: 0.74rem;
   font-family: monospace;
-  color: var(--text-secondary, #888);
+  color: var(--text-secondary, rgba(255, 255, 255, 0.5));
   max-width: 190px;
   flex-shrink: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
 .epg-matches-chip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 0.7rem;
+  font-size: 0.72rem;
   padding: 2px 8px;
   border-radius: 10px;
-  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
-  color: var(--text-secondary, #999);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-secondary, rgba(255, 255, 255, 0.7));
   max-width: 190px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   flex-shrink: 0;
 }
+
 .epg-matches-chip.locked {
   color: var(--accent-primary, #00d4ff);
-  border-color: color-mix(in srgb, var(--accent-primary, #00d4ff) 40%, transparent);
-  background: color-mix(in srgb, var(--accent-primary, #00d4ff) 8%, transparent);
+  border-color: rgba(0, 212, 255, 0.35);
+  background: rgba(0, 212, 255, 0.1);
 }
+
 .epg-matches-chip.elsewhere {
-  color: var(--warning-color, #e5a00d);
-  border-color: color-mix(in srgb, var(--warning-color, #e5a00d) 40%, transparent);
-  background: color-mix(in srgb, var(--warning-color, #e5a00d) 8%, transparent);
+  color: #ffaa44;
+  border-color: rgba(255, 170, 68, 0.35);
+  background: rgba(255, 170, 68, 0.1);
 }
-.epg-matches-chip.unlocked { opacity: 0.7; }
+
+.epg-matches-chip.unlocked {
+  opacity: 0.65;
+}
+
 .epg-matches-row-count {
-  font-size: 0.72rem;
+  font-size: 0.74rem;
   font-variant-numeric: tabular-nums;
-  color: var(--text-secondary, #888);
-  background: var(--bg-tertiary, rgba(255, 255, 255, 0.06));
+  color: var(--text-secondary, rgba(255, 255, 255, 0.7));
+  background: rgba(255, 255, 255, 0.06);
   border-radius: 10px;
-  padding: 1px 8px;
+  padding: 2px 8px;
   flex-shrink: 0;
 }
+
 .epg-matches-chevron {
-  color: var(--text-secondary, #888);
-  font-size: 1rem;
-  line-height: 1;
+  color: var(--text-secondary, rgba(255, 255, 255, 0.5));
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
-  width: 12px;
+  width: 14px;
+  transition: transform 0.15s ease, color 0.15s ease;
 }
-/* An open node is the one the user is looking at, so its row leads the eye. */
+
 .epg-matches-row-main.is-node .epg-matches-row-name { font-weight: 600; }
-.epg-matches-row-main.is-node.open { border-color: rgba(255, 255, 255, 0.14); }
-.epg-matches-row-main.is-node.open .epg-matches-chevron { color: var(--accent-primary, #00d4ff); }
-/* Indentation is the tree: categories sit inside their source, channels inside
- * their category. */
+.epg-matches-row-main.is-node.open {
+  border-color: rgba(0, 212, 255, 0.3);
+  background: rgba(0, 212, 255, 0.03);
+}
+.epg-matches-row-main.is-node.open .epg-matches-chevron {
+  color: var(--accent-primary, #00d4ff);
+}
+
 .epg-matches-row-main.depth-1 { padding-left: 28px; }
 .epg-matches-row-main.depth-1 .epg-matches-row-name { font-weight: 500; }
 .epg-matches-row-main.depth-2 { padding-left: 46px; }
-.epg-matches-row-main.depth-2 .epg-matches-row-name { color: var(--text-secondary, #bbb); }
-.epg-matches-row-release { flex-shrink: 0; padding: 5px 10px; font-size: 0.74rem; }
+.epg-matches-row-main.depth-2 .epg-matches-row-name { color: var(--text-secondary, rgba(255, 255, 255, 0.85)); }
+
+.epg-matches-row-release {
+  flex-shrink: 0;
+  padding: 5px 12px;
+  font-size: 0.75rem;
+}
 
 /* ── Saved indicator ── */
 .epg-editor-saved-notice {
-  font-size: 0.8rem;
+  font-size: 0.82rem;
+  font-weight: 500;
   color: #4caf50;
   margin-right: auto;
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
 }
 
 /* ── Automatch Tab ── */
@@ -876,33 +1239,41 @@
   gap: 6px;
   max-height: 200px;
   overflow-y: auto;
-  padding: 8px;
-  border: 1px solid var(--border-color, rgba(255,255,255,0.1));
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 8px;
-  background: var(--bg-tertiary, rgba(255,255,255,0.03));
+  background: rgba(0, 0, 0, 0.25);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
 }
 
 .epg-automatch-category-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 8px;
+  padding: 6px 10px;
   border-radius: 6px;
   cursor: pointer;
   font-size: 0.82rem;
   color: var(--text-primary, #e0e0e0);
-  transition: background 0.12s;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid transparent;
+  transition: all 0.15s ease;
 }
+
 .epg-automatch-category-item:hover {
-  background: var(--bg-hover, rgba(255,255,255,0.06));
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.08);
 }
+
 .epg-automatch-category-item input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
+  width: 15px;
+  height: 15px;
   accent-color: var(--accent-primary, #00d4ff);
   cursor: pointer;
   flex-shrink: 0;
 }
+
 .epg-automatch-category-item span {
   white-space: nowrap;
   overflow: hidden;
@@ -914,11 +1285,12 @@
   -webkit-appearance: none;
   appearance: none;
   height: 6px;
-  background: var(--bg-tertiary, rgba(255,255,255,0.1));
+  background: rgba(255, 255, 255, 0.1);
   border-radius: 3px;
   outline: none;
   cursor: pointer;
 }
+
 .epg-automatch-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
@@ -927,83 +1299,80 @@
   border-radius: 50%;
   background: var(--accent-primary, #00d4ff);
   cursor: pointer;
-  border: 2px solid var(--bg-primary, #111);
-  box-shadow: 0 0 8px rgba(0,212,255,0.3);
+  border: 2px solid var(--bg-primary, #121225);
+  box-shadow: 0 0 10px rgba(0, 212, 255, 0.4);
 }
+
 .epg-automatch-slider::-moz-range-thumb {
   width: 18px;
   height: 18px;
   border-radius: 50%;
   background: var(--accent-primary, #00d4ff);
   cursor: pointer;
-  border: 2px solid var(--bg-primary, #111);
-  box-shadow: 0 0 8px rgba(0,212,255,0.3);
+  border: 2px solid var(--bg-primary, #121225);
+  box-shadow: 0 0 10px rgba(0, 212, 255, 0.4);
 }
+
 .epg-automatch-slider:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
 
-/* ── Scrollbar ── */
-.epg-editor-body { scrollbar-width: thin; scrollbar-color: var(--border-color, #444) transparent; }
-
 /* Segmented Controls for EPG Editor Logo Background & Padding */
 .epg-editor-field .card-segmented-control {
   display: flex;
   gap: 4px;
-  background: rgba(0, 0, 0, 0.4);
-  padding: 4px;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 3px;
   border-radius: 8px;
-  border: 1px solid var(--surface-border, rgba(255, 255, 255, 0.08));
+  border: 1px solid rgba(255, 255, 255, 0.08);
   max-width: 320px;
 }
 
 .epg-editor-field .segmented-btn {
   flex: 1;
-  padding: 7px 12px;
-  font-size: 0.82rem;
+  padding: 6px 12px;
+  font-size: 0.8rem;
   font-weight: 500;
   border: none;
   background: transparent;
-  color: var(--text-secondary, #888);
+  color: var(--text-secondary, rgba(255, 255, 255, 0.7));
   cursor: pointer;
   border-radius: 6px;
   text-align: center;
-  transition: background 0.15s, color 0.15s;
+  transition: all 0.15s ease;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 5px;
 }
 
 .epg-editor-field .segmented-btn:hover {
-  color: var(--text-primary, #fff);
-  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  background: rgba(255, 255, 255, 0.07);
 }
 
 .epg-editor-field .segmented-btn.active {
-  background: var(--accent-color, #3b82f6);
-  color: #fff;
-  font-weight: 700;
+  background: var(--accent-primary, #00d4ff);
+  color: #04121a;
+  font-weight: 600;
+  box-shadow: 0 0 10px rgba(0, 212, 255, 0.25);
 }
 
 .epg-editor-field .card-padding-control .segmented-btn.active {
-  background: #ffc107;
-  color: #000;
-  font-weight: 700;
+  background: var(--accent-primary, #00d4ff);
+  color: #04121a;
+  font-weight: 600;
 }
 
-/* ── Ambiguity worklist (Automatch tab) ──
-   Channels the opt-in cleaned-name tier refused to guess at, each with the feed
-   channels it couldn't choose between. A refusal is a decision waiting to be
-   made, so it gets standing-out treatment rather than a muted log line. */
+/* ── Ambiguity worklist (Automatch tab) ── */
 .epg-refusal-panel {
   margin-top: 18px;
-  padding: 10px 12px 4px;
-  border-radius: 8px;
-  border: 1px solid var(--border-color, rgba(127, 127, 127, 0.3));
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 170, 68, 0.3);
   border-left: 3px solid #ffaa44;
-  background: var(--surface-2, rgba(127, 127, 127, 0.1));
+  background: rgba(255, 170, 68, 0.05);
 }
 
 .epg-refusal-header {
@@ -1011,13 +1380,13 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
 }
 
 .epg-refusal-title {
-  font-size: 0.85rem;
+  font-size: 0.88rem;
   font-weight: 600;
-  color: var(--text-primary, inherit);
+  color: #ffaa44;
 }
 
 .epg-refusal-dismiss-all {
@@ -1025,15 +1394,17 @@
   padding: 4px 10px;
   font-size: 0.75rem;
   border-radius: 6px;
-  border: 1px solid var(--border-color, rgba(127, 127, 127, 0.3));
-  background: transparent;
-  color: var(--text-secondary, #888);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary, rgba(255, 255, 255, 0.7));
   cursor: pointer;
+  transition: all 0.15s ease;
 }
 
 .epg-refusal-dismiss-all:hover:not(:disabled) {
-  color: var(--text-primary, inherit);
-  background: var(--surface-3, rgba(127, 127, 127, 0.16));
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
 }
 
 .epg-refusal-dismiss-all:disabled {
@@ -1046,18 +1417,19 @@
   flex-direction: column;
   max-height: 320px;
   overflow-y: auto;
+  scrollbar-width: thin;
 }
 
 .epg-refusal-row {
-  padding: 8px 0;
-  border-top: 1px solid var(--border-color, rgba(127, 127, 127, 0.18));
+  padding: 10px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .epg-refusal-row-head {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 
 .epg-refusal-channel {
@@ -1066,14 +1438,15 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.82rem;
-  color: var(--text-primary, inherit);
+  font-size: 0.84rem;
+  font-weight: 500;
+  color: var(--text-primary, #fff);
 }
 
 .epg-refusal-cleaned {
   flex: 0 1 auto;
   font-size: 0.75rem;
-  color: var(--text-secondary, #888);
+  color: var(--text-secondary, rgba(255, 255, 255, 0.5));
 }
 
 .epg-refusal-dismiss {
@@ -1083,41 +1456,41 @@
   padding: 0;
   border: none;
   border-radius: 50%;
-  background: transparent;
-  color: var(--text-secondary, #888);
-  font-size: 0.75rem;
-  line-height: 1;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-secondary, rgba(255, 255, 255, 0.6));
   cursor: pointer;
+  transition: all 0.15s ease;
 }
 
 .epg-refusal-dismiss:hover:not(:disabled) {
-  color: var(--text-primary, inherit);
-  background: var(--surface-3, rgba(127, 127, 127, 0.16));
+  color: #fff;
+  background: rgba(220, 50, 50, 0.25);
 }
 
 .epg-refusal-choices {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
 }
 
 .epg-refusal-choice {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   max-width: 100%;
-  padding: 5px 10px;
-  border-radius: 6px;
-  border: 1px solid var(--border-color, rgba(127, 127, 127, 0.35));
-  background: var(--surface-1, rgba(127, 127, 127, 0.06));
-  color: var(--text-primary, inherit);
+  padding: 6px 12px;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-primary, #fff);
   text-align: left;
   cursor: pointer;
+  transition: all 0.15s ease;
 }
 
 .epg-refusal-choice:hover:not(:disabled) {
-  border-color: var(--accent-color, var(--accent, #35d0a5));
-  background: var(--surface-3, rgba(127, 127, 127, 0.16));
+  border-color: var(--accent-primary, #00d4ff);
+  background: rgba(0, 212, 255, 0.08);
 }
 
 .epg-refusal-choice:disabled {
@@ -1129,29 +1502,28 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.8rem;
+  font-size: 0.82rem;
+  font-weight: 500;
 }
 
 .epg-refusal-choice-feed {
-  font-size: 0.68rem;
-  color: var(--text-secondary, #888);
+  font-size: 0.7rem;
+  color: var(--accent-primary, #00d4ff);
+  opacity: 0.8;
 }
 
-/* ── EPG matching name: the provider's name and the channel's own name, side by
-   side, with the second one editable in place. ── */
-/* The tag column takes the width of the longest label rather than a fixed one,
-   so it fits "Provider name" / "Anbietername" / "Nom du fournisseur" alike. */
+/* ── EPG matching name ── */
 .epg-editor-match-names {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
   align-items: center;
-  gap: 6px 10px;
-  margin-top: 4px;
+  gap: 8px 12px;
+  margin-top: 6px;
 }
 
 .epg-editor-match-name-tag {
-  font-size: 0.78rem;
-  color: var(--text-secondary, #888);
+  font-size: 0.8rem;
+  color: var(--text-secondary, rgba(255, 255, 255, 0.65));
 }
 
 .epg-editor-match-name-value {
@@ -1159,8 +1531,8 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.85rem;
-  color: var(--text-primary, inherit);
+  font-size: 0.88rem;
+  color: var(--text-primary, #fff);
 }
 
 .epg-editor-match-name-control {
@@ -1173,24 +1545,29 @@
 .epg-editor-match-name-control .epg-editor-match-name-input {
   flex: 1 1 auto;
   min-width: 0;
-  padding: 8px 10px;
-  font-size: 0.85rem;
+  padding: 8px 12px;
+  font-size: 0.88rem;
 }
 
 .epg-editor-match-name-reset {
   flex: 0 0 auto;
-  padding: 7px 10px;
-  border-radius: 6px;
-  border: 1px solid var(--border-color, rgba(127, 127, 127, 0.35));
-  background: transparent;
-  color: var(--text-secondary, #888);
-  font-size: 0.75rem;
+  padding: 7px 12px;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary, rgba(255, 255, 255, 0.7));
+  font-size: 0.78rem;
   cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .epg-editor-match-name-reset:hover:not(:disabled) {
-  color: var(--text-primary, inherit);
-  border-color: var(--accent-primary, var(--accent, #00d4ff));
+  color: #fff;
+  border-color: var(--accent-primary, #00d4ff);
+  background: rgba(0, 212, 255, 0.1);
 }
 
 .epg-editor-match-name-reset:disabled {
@@ -1198,39 +1575,44 @@
   cursor: default;
 }
 
-/* Automatch results rows: the run's log, with an Unmatch control on the rows
-   that actually applied a match so a wrong one can be taken back in a click. */
+/* ── Automatch results rows ── */
 .epg-automatch-detail {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 4px 14px;
+  gap: 8px;
+  padding: 5px 14px;
   font-size: 0.8rem;
   border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  transition: background 0.12s ease;
 }
 
-/* Wraps like the plain log line it replaces; the control stays on the right. */
+.epg-automatch-detail:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
 .epg-automatch-detail-text {
   flex: 1 1 auto;
   min-width: 0;
   overflow-wrap: anywhere;
+  line-height: 1.4;
 }
 
 .epg-automatch-unmatch {
   flex: 0 0 auto;
-  padding: 2px 8px;
+  padding: 3px 9px;
   border-radius: 6px;
-  border: 1px solid var(--border-color, rgba(127, 127, 127, 0.35));
-  background: transparent;
-  color: var(--text-secondary, #888);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary, rgba(255, 255, 255, 0.7));
   font-size: 0.72rem;
   cursor: pointer;
+  transition: all 0.15s ease;
 }
 
 .epg-automatch-unmatch:hover:not(:disabled) {
-  color: var(--text-primary, inherit);
-  border-color: var(--accent-color, var(--accent, #35d0a5));
-  background: var(--surface-3, rgba(127, 127, 127, 0.16));
+  color: #fff;
+  border-color: var(--accent-primary, #00d4ff);
+  background: rgba(0, 212, 255, 0.1);
 }
 
 .epg-automatch-unmatch:disabled {
@@ -1238,36 +1620,36 @@
   cursor: default;
 }
 
-/* Whole-run undo, in the results header — a step up from the 0.72rem row buttons. */
 .epg-automatch-undo-all {
-  padding: 3px 10px;
-  font-size: 0.75rem;
+  padding: 4px 12px;
+  font-size: 0.78rem;
+  font-weight: 500;
 }
 
-/* Armed state: unmistakable, and only a second click on this does the work. */
 .epg-automatch-undo-all-confirm {
-  color: var(--error-color, #ef4444);
-  border-color: rgba(255, 90, 90, 0.55);
-  background: rgba(255, 90, 90, 0.12);
+  color: #ff6b6b;
+  border-color: rgba(220, 50, 50, 0.5);
+  background: rgba(220, 50, 50, 0.12);
 }
 
 .epg-automatch-undo-all-confirm:hover:not(:disabled) {
-  color: var(--text-primary, #fff);
-  border-color: rgba(255, 90, 90, 0.8);
-  background: rgba(255, 90, 90, 0.22);
+  color: #fff;
+  border-color: rgba(220, 50, 50, 0.8);
+  background: rgba(220, 50, 50, 0.25);
 }
 
 .epg-automatch-undo-error {
   padding: 8px 14px;
-  font-size: 0.75rem;
-  color: var(--error-color, #ef4444);
-  border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.07));
+  font-size: 0.78rem;
+  color: #ff6b6b;
+  border-bottom: 1px solid rgba(220, 50, 50, 0.2);
+  background: rgba(220, 50, 50, 0.05);
 }
 
 .epg-automatch-unmatched {
   flex: 0 0 auto;
   font-size: 0.72rem;
-  color: var(--text-secondary, #888);
+  color: var(--text-secondary, rgba(255, 255, 255, 0.5));
   font-style: italic;
 }
 
@@ -1275,4 +1657,62 @@
   flex: 0 0 auto;
   font-size: 0.72rem;
   color: #ffaa44;
+}
+
+/* ── Reset Confirmation Dialog ── */
+.epg-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 10600;
+  background: var(--glass-overlay-bg, rgba(0, 0, 0, 0.75));
+  backdrop-filter: var(--glass-overlay-filter, blur(6px));
+  -webkit-backdrop-filter: var(--glass-overlay-filter, blur(6px));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: epgEditorFadeIn 0.15s ease-out;
+}
+
+.epg-confirm-modal {
+  width: 90vw;
+  max-width: 440px;
+  background: var(--glass-settings-bg, var(--bg-secondary, #141724));
+  border: var(--glass-settings-border, 1px solid rgba(255, 255, 255, 0.12));
+  border-radius: 12px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.75);
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  animation: epgEditorSlide 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.epg-confirm-title {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-primary, #fff);
+}
+
+.epg-confirm-desc {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--text-secondary, rgba(255, 255, 255, 0.75));
+}
+
+.epg-confirm-desc strong {
+  color: var(--text-primary, #fff);
+}
+
+.epg-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 6px;
 }

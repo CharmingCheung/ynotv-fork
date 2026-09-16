@@ -3822,7 +3822,11 @@
     "noEnabledSources": "Nie znaleziono włączonych źródeł",
     "useForRegularSearch": "Użyj tych ustawień do zwykłego wyszukiwania na pasku tytułu",
     "search": "Szukaj",
-    "clickPlayCatchup": "Kliknij, aby odtworzyć archiwum catch-up"
+    "clickPlayCatchup": "Kliknij, aby odtworzyć archiwum catch-up",
+    "channelsToMatch": "Kanały do dopasowania",
+    "epgSourcesToSearch": "Źródła EPG do przeszukania",
+    "thisSourceEpg": "EPG tego źródła",
+    "allEpgSources": "Wszystkie źródła EPG"
   },
   "live": {
     "active": "Aktywny",

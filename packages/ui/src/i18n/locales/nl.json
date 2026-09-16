@@ -3822,7 +3822,11 @@
     "noEnabledSources": "Geen ingeschakelde bronnen gevonden",
     "useForRegularSearch": "Deze instellingen gebruiken voor normale zoekopdrachten in de titelbalk",
     "search": "Zoeken",
-    "clickPlayCatchup": "Klik om inhaalarchief af te spelen"
+    "clickPlayCatchup": "Klik om inhaalarchief af te spelen",
+    "channelsToMatch": "Koppelen kanalen",
+    "epgSourcesToSearch": "Te doorzoeken EPG-bronnen",
+    "thisSourceEpg": "EPG van deze bron",
+    "allEpgSources": "Alle EPG-bronnen"
   },
   "live": {
     "active": "Actief",

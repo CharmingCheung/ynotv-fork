@@ -79,33 +79,171 @@ impl ReconnectStrategy {
     }
 }
 
+/// Where a stream-type verdict came from.
+///
+/// This matters beyond bookkeeping: the verdict picks the reconnect and HLS
+/// flags for the whole recording, so when a recording fails to start or stops
+/// early, the log has to say whether the verdict was something the stream said
+/// or an assumption. [`StreamTypeSource::is_guess`] is that distinction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamTypeSource {
+    /// The URL's path named the kind of stream.
+    UrlExtension,
+    /// The response declared a playlist Content-Type.
+    ContentType,
+    /// No usable Content-Type: the body itself started with `#EXTM3U`.
+    PlaylistHeader,
+    /// Not an http(s) URL, so there was nothing to ask.
+    NotHttp,
+    /// The probe could not answer and the stream was assumed to be continuous.
+    ProbeFailed,
+}
+
+impl StreamTypeSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::UrlExtension => "url-extension",
+            Self::ContentType => "content-type",
+            Self::PlaylistHeader => "playlist-header",
+            Self::NotHttp => "not-http",
+            Self::ProbeFailed => "probe-failed",
+        }
+    }
+
+    /// True when the verdict is an assumption rather than something the stream
+    /// said — i.e. when a misbehaving recording should blame the classification.
+    pub fn is_guess(self) -> bool {
+        matches!(self, Self::ProbeFailed)
+    }
+}
+
+/// A stream-type decision with the evidence behind it, for the per-recording log.
+#[derive(Debug, Clone)]
+pub struct StreamType {
+    pub is_hls: bool,
+    pub source: StreamTypeSource,
+    /// The evidence: the extension, the Content-Type, `#EXTM3U`, or the error.
+    pub detail: String,
+    /// How long the probe took in milliseconds; 0 when the URL answered alone.
+    pub probe_ms: u64,
+}
+
+impl StreamType {
+    /// `"hls"` / `"direct"` — the same words the recordings list stores.
+    pub fn kind(&self) -> &'static str {
+        if self.is_hls {
+            "hls"
+        } else {
+            "direct"
+        }
+    }
+
+    /// One-line evidence for the log, e.g.
+    /// `hls via content-type (content-type 'application/vnd.apple.mpegurl', 138ms)`.
+    pub fn describe(&self) -> String {
+        let mut evidence = self.detail.clone();
+        if self.probe_ms > 0 {
+            if !evidence.is_empty() {
+                evidence.push_str(", ");
+            }
+            evidence.push_str(&format!("{}ms", self.probe_ms));
+        }
+        if evidence.is_empty() {
+            format!("{} via {}", self.kind(), self.source.as_str())
+        } else {
+            format!("{} via {} ({})", self.kind(), self.source.as_str(), evidence)
+        }
+    }
+}
+
+/// Extensions that are unambiguously a single continuous media file. A playlist
+/// served from one of these would be a first, and treating it as segmented is
+/// what caused the reconnect loop this module exists to prevent.
+const MEDIA_EXTENSIONS: [&str; 15] = [
+    ".ts", ".mp4", ".mkv", ".avi", ".mov", ".flv", ".mpg", ".mpeg", ".webm", ".m4v", ".m4s",
+    ".aac", ".mp3", ".ogg", ".wav",
+];
+
 /// URL-only stream classification.
 ///
-/// `Some(true)` is a playlist, `Some(false)` a plain media URL, and `None` when
-/// the URL says nothing useful — extensionless and tokenised endpoints, which
-/// IPTV portals use constantly. The caller should probe the response for `None`.
-pub fn hls_from_url(url: &str) -> Option<bool> {
+/// `Some(..)` means the path said what the stream is; `None` means it said
+/// nothing useful — extensionless and tokenised endpoints, which IPTV portals
+/// use constantly — and the caller should ask the response instead.
+pub fn stream_type_from_url(url: &str) -> Option<StreamType> {
     let lower = url.to_ascii_lowercase();
     // Ignore the query/fragment so a token such as `?format=.ts` cannot be read
     // as the path's extension.
     let path = lower.split(['?', '#']).next().unwrap_or("");
 
     if path.contains(".m3u8") {
-        return Some(true);
+        return Some(StreamType {
+            is_hls: true,
+            source: StreamTypeSource::UrlExtension,
+            detail: "path contains .m3u8".to_string(),
+            probe_ms: 0,
+        });
     }
 
-    // Extensions that are unambiguously a single continuous media file. A
-    // playlist served from one of these would be a first, and treating it as
-    // segmented is what caused the reconnect loop.
-    const MEDIA_EXTENSIONS: [&str; 15] = [
-        ".ts", ".mp4", ".mkv", ".avi", ".mov", ".flv", ".mpg", ".mpeg", ".webm", ".m4v", ".m4s",
-        ".aac", ".mp3", ".ogg", ".wav",
-    ];
-    if MEDIA_EXTENSIONS.iter().any(|ext| path.ends_with(ext)) {
-        return Some(false);
+    if let Some(ext) = MEDIA_EXTENSIONS.iter().find(|ext| path.ends_with(**ext)) {
+        return Some(StreamType {
+            is_hls: false,
+            source: StreamTypeSource::UrlExtension,
+            detail: format!("path ends with {ext}"),
+            probe_ms: 0,
+        });
     }
 
     None
+}
+
+/// A stream URL with the parts that can carry an account removed.
+///
+/// Xtream puts the credentials in the path (`/live/<user>/<password>/<id>.ts`)
+/// and other panels put them in the query, so neither belongs in a log line
+/// that a user may paste into a bug report. The host, the last path segment (a
+/// stream id or file name) and the extension survive, which is what makes a log
+/// line identifiable; everything between them becomes an ellipsis.
+///
+/// Anything that is not an http(s) URL is returned unchanged: a local path has
+/// no credentials to hide, and rewriting it would only make the log confusing.
+pub fn redact_url(raw: &str) -> String {
+    let without_query = raw.split(['?', '#']).next().unwrap_or(raw);
+    let (scheme, rest) = match without_query.split_once("://") {
+        Some((scheme, rest)) if scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https") => {
+            (scheme, rest)
+        }
+        // Not a URL we know how to reduce (a file path, `stalker_<hash>`, a pipe).
+        _ => return raw.to_string(),
+    };
+
+    let mut segments = rest.split('/');
+    let raw_authority = segments.next().unwrap_or("");
+    // Split at the *last* '@': a password may carry one unencoded ("p@ss"),
+    // and splitting at the first would leave "ss@host" behind as the host —
+    // half the secret, still in the log. A host can never contain '@'.
+    let authority = match raw_authority.rsplit_once('@') {
+        Some((_, host)) => host,
+        None => raw_authority,
+    };
+    let path: Vec<&str> = segments.filter(|segment| !segment.is_empty()).collect();
+    if authority.is_empty() {
+        return format!("{scheme}://…");
+    }
+
+    // Keep the final segment only when it looks like an id or a file name — a
+    // long or punctuated segment is more likely to be a token than a stream id.
+    let tail = path.last().copied().filter(|last| {
+        !last.is_empty()
+            && last.len() <= 48
+            && last
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+    });
+
+    match tail {
+        Some(last) => format!("{scheme}://{authority}/…/{last}"),
+        None => format!("{scheme}://{authority}/…"),
+    }
 }
 
 /// Options the recorder sets itself. A user-supplied value must not override
@@ -214,6 +352,11 @@ fn looks_like_path_or_url(token: &str) -> bool {
 mod tests {
     use super::*;
 
+    /// The verdict alone, for the URL-classification cases below.
+    fn hls_from_url(url: &str) -> Option<bool> {
+        stream_type_from_url(url).map(|stream| stream.is_hls)
+    }
+
     // --- Reconnect strategy -------------------------------------------------
 
     #[test]
@@ -292,6 +435,120 @@ mod tests {
         assert_eq!(hls_from_url("http://host:8080/live/user/pass/1234"), None);
         assert_eq!(hls_from_url("http://host/stream?token=abc"), None);
         assert_eq!(hls_from_url("http://host/play/a1b2c3"), None);
+    }
+
+    #[test]
+    fn classification_reports_the_evidence_the_log_needs() {
+        let playlist = stream_type_from_url("https://host/x/PLAYLIST.M3U8?token=abc").unwrap();
+        assert!(playlist.is_hls);
+        assert_eq!(playlist.source, StreamTypeSource::UrlExtension);
+        assert_eq!(playlist.source.as_str(), "url-extension");
+        assert!(!playlist.source.is_guess());
+        assert_eq!(playlist.kind(), "hls");
+        assert_eq!(playlist.describe(), "hls via url-extension (path contains .m3u8)");
+
+        let direct = stream_type_from_url("http://host:8080/live/u/p/1234.ts").unwrap();
+        assert!(!direct.is_hls);
+        assert_eq!(direct.kind(), "direct");
+        assert_eq!(direct.describe(), "direct via url-extension (path ends with .ts)");
+
+        assert!(stream_type_from_url("http://host/play/a1b2c3").is_none());
+    }
+
+    #[test]
+    fn a_probe_verdict_records_what_it_saw() {
+        let playlist = StreamType {
+            is_hls: true,
+            source: StreamTypeSource::ContentType,
+            detail: "content-type 'application/vnd.apple.mpegurl'".to_string(),
+            probe_ms: 138,
+        };
+        assert_eq!(
+            playlist.describe(),
+            "hls via content-type (content-type 'application/vnd.apple.mpegurl', 138ms)"
+        );
+        assert!(!playlist.source.is_guess());
+    }
+
+    #[test]
+    fn a_probe_failure_is_marked_as_a_guess() {
+        let failed = StreamType {
+            is_hls: false,
+            source: StreamTypeSource::ProbeFailed,
+            detail: "probe timed out after 4s".to_string(),
+            probe_ms: 4001,
+        };
+        assert!(
+            failed.source.is_guess(),
+            "a failed probe must be flagged, not silently treated as a direct stream"
+        );
+        assert_eq!(
+            failed.describe(),
+            "direct via probe-failed (probe timed out after 4s, 4001ms)"
+        );
+        assert!(!StreamTypeSource::PlaylistHeader.is_guess());
+        assert!(!StreamTypeSource::NotHttp.is_guess());
+    }
+
+    // --- URL redaction ------------------------------------------------------
+
+    #[test]
+    fn redaction_drops_credentials_from_the_path() {
+        // Xtream: /live/<user>/<password>/<id>.ts
+        assert_eq!(
+            // example.com is reserved for documentation, so this is visibly a fixture.
+            redact_url("http://example.com:8080/live/testuser/hunter2/1234.ts"),
+            "http://example.com:8080/…/1234.ts"
+        );
+        assert!(!redact_url("http://host/live/testuser/hunter2/1234.ts").contains("hunter2"));
+    }
+
+    #[test]
+    fn redaction_drops_the_query_entirely() {
+        let redacted = redact_url("http://host/player_api.php?username=testuser&password=hunter2&stream=9");
+        assert_eq!(redacted, "http://host/…/player_api.php");
+        assert!(!redacted.contains("hunter2"));
+        assert!(!redacted.contains("username"));
+    }
+
+    #[test]
+    fn redaction_handles_edges_without_losing_the_host() {
+        // No path at all.
+        assert_eq!(redact_url("https://host:443"), "https://host:443/…");
+        // A tokenish last segment is dropped rather than logged.
+        assert_eq!(
+            redact_url("http://host/play/eyJhbGciOiJIUzI1NiIsInR="),
+            "http://host/…"
+        );
+        // Fragments and UPPERCASE schemes.
+        assert_eq!(redact_url("HTTP://host/a/b.ts#frag"), "HTTP://host/…/b.ts");
+        // Not an http(s) URL: left exactly as given.
+        assert_eq!(redact_url("file:///C:/recordings/a.ts"), "file:///C:/recordings/a.ts");
+        assert_eq!(redact_url("stalker_9f2b"), "stalker_9f2b");
+    }
+
+    #[test]
+    fn redaction_drops_basic_auth_credentials() {
+        assert_eq!(
+            redact_url("http://admin:secret123@myiptv.com:8080/live/1234.ts"),
+            "http://myiptv.com:8080/…/1234.ts"
+        );
+        assert!(!redact_url("http://admin:secret123@myiptv.com:8080/live/1234.ts").contains("secret123"));
+        assert!(!redact_url("http://admin:secret123@myiptv.com:8080/live/1234.ts").contains("admin"));
+    }
+
+    #[test]
+    fn redaction_survives_an_at_sign_inside_the_password() {
+        // An unencoded '@' in the password must not be mistaken for the host
+        // separator: splitting at the first one would log "ss@host" as the host.
+        assert_eq!(
+            redact_url("http://user:p@ss@myiptv.com:8080/live/1234.ts"),
+            "http://myiptv.com:8080/…/1234.ts"
+        );
+        assert_eq!(
+            redact_url("rtsp://user:p@ss@host/path"),
+            "rtsp://user:p@ss@host/path"
+        );
     }
 
     // --- Extra argument parsing --------------------------------------------

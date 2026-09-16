@@ -77,7 +77,7 @@ function buildScope(scope: MissingEpgScope): { sql: string; params: unknown[] } 
     clauses.push(`c.source_id = $${params.length}`);
   }
 
-  if (scope.categoryIds.length > 0) {
+  if (scope.scope === 'source' && scope.categoryIds.length > 0) {
     const likeClauses = scope.categoryIds.map(id => {
       params.push(`%"${id}"%`);
       return `c.category_ids LIKE $${params.length}`;

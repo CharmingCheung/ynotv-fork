@@ -3822,7 +3822,11 @@
     "noEnabledSources": "کوئی فعال ماخذ نہیں ملا",
     "useForRegularSearch": "ان سیٹنگز کو باقاعدہ ٹائٹل بار تلاش کے لیے استعمال کریں",
     "search": "تلاش",
-    "clickPlayCatchup": "کیچ اپ آرکائیو چلانے کے لیے کلک کریں"
+    "clickPlayCatchup": "کیچ اپ آرکائیو چلانے کے لیے کلک کریں",
+    "channelsToMatch": "مطابقت کے لیے چینلز",
+    "epgSourcesToSearch": "تلاش کے لیے EPG ذرائع",
+    "thisSourceEpg": "اس ماخذ کی EPG",
+    "allEpgSources": "تمام EPG ذرائع"
   },
   "live": {
     "active": "فعال",

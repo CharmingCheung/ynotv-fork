@@ -3822,7 +3822,11 @@
     "noEnabledSources": "منبع فعالی یافت نشد",
     "useForRegularSearch": "استفاده از این تنظیمات برای جستجوهای معمولی نوار عنوان",
     "search": "جستجو",
-    "clickPlayCatchup": "برای پخش آرشیو درحال‌پیگیری کلیک کنید"
+    "clickPlayCatchup": "برای پخش آرشیو درحال‌پیگیری کلیک کنید",
+    "channelsToMatch": "کانال‌ها برای تطبیق",
+    "epgSourcesToSearch": "منابع EPG برای جستجو",
+    "thisSourceEpg": "EPG این منبع",
+    "allEpgSources": "همه منابع EPG"
   },
   "live": {
     "active": "فعال",

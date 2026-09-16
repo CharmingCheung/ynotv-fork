@@ -91,6 +91,7 @@ interface AutomatchMatch {
 /** A line of the run's results. Only matched lines carry an `AutomatchMatch`. */
 interface AutomatchDetail {
   text: string;
+  type?: 'success' | 'warning' | 'error' | 'skipped';
   match?: AutomatchMatch;
 }
 
@@ -219,6 +220,245 @@ function generateId(): string {
   return `custom_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 }
 
+/* ── SVG Icons ── */
+function EpgHeaderSvg({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+      <line x1="16" y1="2" x2="16" y2="6" />
+      <line x1="8" y1="2" x2="8" y2="6" />
+      <line x1="3" y1="10" x2="21" y2="10" />
+      <path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01M16 18h.01" />
+    </svg>
+  );
+}
+
+function AntennaSvg({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+      <path d="M4.93 4.93a10 10 0 0 1 14.14 0" />
+      <path d="M7.76 7.76a6 6 0 0 1 8.48 0" />
+      <circle cx="12" cy="12" r="2" />
+      <path d="M12 14v8" />
+    </svg>
+  );
+}
+
+function ScheduleSvg({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+      <line x1="16" y1="2" x2="16" y2="6" />
+      <line x1="8" y1="2" x2="8" y2="6" />
+      <line x1="3" y1="10" x2="21" y2="10" />
+    </svg>
+  );
+}
+
+function SearchSvg({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+      <circle cx="11" cy="11" r="8" />
+      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </svg>
+  );
+}
+
+function TvSvg({ size = 14, style }: { size?: number; style?: React.CSSProperties }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, ...style }}>
+      <rect width="20" height="15" x="2" y="7" rx="2" ry="2" />
+      <polyline points="17 2 12 7 7 2" />
+    </svg>
+  );
+}
+
+function RobotSvg({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+      <rect x="3" y="11" width="18" height="10" rx="2" />
+      <circle cx="12" cy="5" r="2" />
+      <path d="M12 7v4" />
+      <line x1="8" y1="16" x2="8" y2="16" />
+      <line x1="16" y1="16" x2="16" y2="16" />
+      <path d="M9 19h6" />
+    </svg>
+  );
+}
+
+function LockSvg({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </svg>
+  );
+}
+
+function SwapSvg({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" style={{ flexShrink: 0 }}>
+      <path d="M6.99 11L3 15l3.99 4v-3H14v-2H6.99v-3zM21 9l-3.99-4v3H10v2h7.01v3L21 9z" />
+    </svg>
+  );
+}
+
+function EditSvg({ size = 13, style }: { size?: number; style?: React.CSSProperties }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, ...style }}>
+      <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+    </svg>
+  );
+}
+
+function TrashSvg({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    </svg>
+  );
+}
+
+function UndoSvg({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+      <polyline points="1 4 1 10 7 10" />
+      <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+    </svg>
+  );
+}
+
+function ResetSvg({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+      <path d="M23 4v6h-6" />
+      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+    </svg>
+  );
+}
+
+function SaveSvg({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+      <polyline points="17 21 17 13 7 13 7 21" />
+      <polyline points="7 3 7 8 15 8" />
+    </svg>
+  );
+}
+
+function SparkleSvg({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" style={{ flexShrink: 0 }}>
+      <path d="M12 2l2.4 7.2L22 12l-7.6 2.8L12 22l-2.4-7.2L2 12l7.6-2.8z" />
+    </svg>
+  );
+}
+
+function SunSvg({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+      <circle cx="12" cy="12" r="5" />
+      <line x1="12" y1="1" x2="12" y2="3" />
+      <line x1="12" y1="21" x2="12" y2="23" />
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+      <line x1="1" y1="12" x2="3" y2="12" />
+      <line x1="21" y1="12" x2="23" y2="12" />
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+    </svg>
+  );
+}
+
+function MoonSvg({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+    </svg>
+  );
+}
+
+function RulerSvg({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+      <rect x="7" y="7" width="10" height="10" rx="1" ry="1" strokeDasharray="2 2" />
+    </svg>
+  );
+}
+
+function ImageSvg({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+      <circle cx="8.5" cy="8.5" r="1.5" />
+      <polyline points="21 15 16 10 5 21" />
+    </svg>
+  );
+}
+
+function CheckSvg({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  );
+}
+
+function CrossSvg({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  );
+}
+
+function WarningSvg({ size = 14, style }: { size?: number; style?: React.CSSProperties }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, ...style }}>
+      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+      <line x1="12" y1="9" x2="12" y2="13" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
+  );
+}
+
+function PlusSvg({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+      <line x1="12" y1="5" x2="12" y2="19" />
+      <line x1="5" y1="12" x2="19" y2="12" />
+    </svg>
+  );
+}
+
+function ChevronDownSvg({ size = 12 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+      <polyline points="6 9 12 15 18 9" />
+    </svg>
+  );
+}
+
+function ChevronUpSvg({ size = 12 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+      <polyline points="18 15 12 9 6 15" />
+    </svg>
+  );
+}
+
+function ChevronRightSvg({ size = 12 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+      <polyline points="9 18 15 12 9 6" />
+    </svg>
+  );
+}
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 /** A single program row in the Programs tab */
@@ -336,11 +576,20 @@ function ProgramRow({
       {!editing && (
         <div className="epg-program-actions">
           {prog.is_deleted ? (
-            <button className="epg-program-action-btn restore" onClick={onRestore}>↩ {t('undo')}</button>
+            <button className="epg-program-action-btn restore" onClick={onRestore} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+              <UndoSvg size={12} />
+              <span>{t('undo')}</span>
+            </button>
           ) : (
             <>
-              <button className="epg-program-action-btn" onClick={() => setEditing(true)}>✏ {i18n.t('common:edit')}</button>
-              <button className="epg-program-action-btn danger" onClick={onDelete}>🗑 {i18n.t('common:delete')}</button>
+              <button className="epg-program-action-btn" onClick={() => setEditing(true)} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                <EditSvg size={12} />
+                <span>{i18n.t('common:edit')}</span>
+              </button>
+              <button className="epg-program-action-btn danger" onClick={onDelete} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                <TrashSvg size={12} />
+                <span>{i18n.t('common:delete')}</span>
+              </button>
             </>
           )}
         </div>
@@ -521,7 +770,8 @@ export function EpgEditorModal({
   // ── Automatch tab state ──
   const [automatchSources, setAutomatchSources] = useState<{ id: string; name: string }[]>([]);
   const [automatchSourceId, setAutomatchSourceId] = useState('');
-  const [automatchScope, setAutomatchScope] = useState<SearchScope>('source');
+  const [automatchChannelScope, setAutomatchChannelScope] = useState<SearchScope>('source');
+  const [automatchEpgScope, setAutomatchEpgScope] = useState<SearchScope>('source');
   const [automatchMode, setAutomatchMode] = useState<EpgSearchMode>('m3u');
   // 90% by default: a run writes what it matches straight to the library, and a
   // loose threshold (the old 40%) will happily fill a source with lookalike
@@ -795,7 +1045,7 @@ export function EpgEditorModal({
   // ── Load categories for Automatch tab ──
   useEffect(() => {
     if (activeTab !== 'automatch') return;
-    if (!automatchSourceId || automatchScope !== 'source') {
+    if (!automatchSourceId || automatchChannelScope !== 'source') {
       setSourceCategories([]);
       return;
     }
@@ -803,7 +1053,7 @@ export function EpgEditorModal({
       const sorted = cats.sort((a, b) => (a.category_name || '').localeCompare(b.category_name || ''));
       setSourceCategories(sorted);
     });
-  }, [activeTab, automatchSourceId, automatchScope]);
+  }, [activeTab, automatchSourceId, automatchChannelScope]);
 
   // ── Debounced search ──
   useEffect(() => {
@@ -828,11 +1078,17 @@ export function EpgEditorModal({
   // ── Close on Escape ──
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        if (showResetConfirm) {
+          setShowResetConfirm(false);
+          return;
+        }
+        onClose();
+      }
     }
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
-  }, [onClose]);
+  }, [onClose, showResetConfirm]);
 
   /**
    * Edit the channel's own name. A name typed here is meant to *match*, so
@@ -1107,9 +1363,9 @@ export function EpgEditorModal({
 
     try {
       const { channels, hidden: hiddenChannels } = await getChannelsMissingEpg(
-        automatchScope === 'source' ? automatchSourceId : undefined,
-        automatchAllCategories ? [] : automatchCategories,
-        automatchScope,
+        automatchChannelScope === 'source' ? automatchSourceId : undefined,
+        automatchChannelScope === 'source' && !automatchAllCategories ? automatchCategories : [],
+        automatchChannelScope,
         enabledOnly
       );
 
@@ -1141,7 +1397,7 @@ export function EpgEditorModal({
       const details: AutomatchDetail[] = [];
       const refusals: AutomatchRefusal[] = [];
       const threshold = automatchThreshold / 100;
-      const scopeId = automatchScope === 'source' ? (automatchSourceId || undefined) : undefined;
+      const scopeId = automatchEpgScope === 'source' ? (automatchSourceId || undefined) : undefined;
 
       // The candidate list is loaded ONCE for the whole run. It does not depend
       // on the channel being matched, and the run only ever writes overrides and
@@ -1191,10 +1447,13 @@ export function EpgEditorModal({
               totalChoices: cleanedMatch.totalChoices,
               choices: cleanedMatch.choices,
             });
-            details.push({ text: `⚠ ${ch.name} — ${t('automatchAmbiguous', {
-              name: cleanedMatch.cleanedName,
-              count: cleanedMatch.totalChoices,
-            })}` });
+            details.push({
+              type: 'warning',
+              text: `${ch.name} — ${t('automatchAmbiguous', {
+                name: cleanedMatch.cleanedName,
+                count: cleanedMatch.totalChoices,
+              })}`
+            });
             setAutomatchProgress({ matched: matched + skipped + errors + ambiguous, total: channels.length });
             if (i % 3 === 0) await new Promise(r => setTimeout(r, 1));
             continue;
@@ -1213,14 +1472,20 @@ export function EpgEditorModal({
             if (cleanedMatch?.match) cleaned++;
             // The row as it stood before this write, so Unmatch can restore it.
             const prior = priorOverrideSnapshot(ch as unknown as Record<string, unknown>);
-            // Bulk auto-match picks a *new* id, so any previous feed pin is
-            // cleared rather than left pointing at a feed for the old id.
+            // Bulk auto-match picks a *new* id, so the old pin is replaced — but
+            // only an *external* feed needs one. A candidate from the channel's own
+            // source is filled by that source's own pass anyway, and pinning it to
+            // itself would just put it in the always-refresh set and show up as a
+            // lock in the Matches report, so native matches stay unpinned.
+            const feedPin = topMatch.source_id && topMatch.source_id !== ch.source_id
+              ? servablePin(topMatch.source_id, ch.source_id)
+              : undefined;
             await upsertChannelOverride({
               stream_id: ch.stream_id,
               epg_channel_id: topMatch.id,
               stream_icon: topMatch.icon_url || ch.stream_icon,
               timeshift_hours: 0,
-              epg_source_id: undefined,
+              epg_source_id: feedPin,
               match_by_alias: Boolean((ch as any).match_by_alias),
             });
 
@@ -1235,7 +1500,8 @@ export function EpgEditorModal({
 
             matched++;
             details.push({
-              text: `✓ ${ch.name} → ${topMatch.display_name} (${(topMatch.score * 100).toFixed(0)}%)${cleanedMatch?.match ? ` · ${t('automatchViaCleaned')}` : ''}`,
+              type: 'success',
+              text: `${ch.name} → ${topMatch.display_name} (${(topMatch.score * 100).toFixed(0)}%)${cleanedMatch?.match ? ` · ${t('automatchViaCleaned')}` : ''}`,
               match: {
                 streamId: ch.stream_id,
                 sourceId: ch.source_id,
@@ -1247,18 +1513,24 @@ export function EpgEditorModal({
           } else {
             skipped++;
             if (cleanedMatch) {
-              details.push({ text: `✗ ${ch.name} — ${t('automatchCleanNoMatch', {
-                name: cleanedMatch.cleanedName,
-                threshold: automatchThreshold,
-              })}` });
+              details.push({
+                type: 'skipped',
+                text: `${ch.name} — ${t('automatchCleanNoMatch', {
+                  name: cleanedMatch.cleanedName,
+                  threshold: automatchThreshold,
+                })}`
+              });
             } else {
               const bestScore = bestMatch?.score ?? 0;
-              details.push({ text: `✗ ${ch.name} — best match ${(bestScore * 100).toFixed(0)}% (below ${automatchThreshold}%)` });
+              details.push({
+                type: 'skipped',
+                text: `${ch.name} — best match ${(bestScore * 100).toFixed(0)}% (below ${automatchThreshold}%)`
+              });
             }
           }
         } catch (e) {
           errors++;
-          details.push({ text: `⚠ ${ch.name} — error` });
+          details.push({ type: 'error', text: `${ch.name} — error` });
         }
 
         setAutomatchProgress({ matched: matched + skipped + errors + ambiguous, total: channels.length });
@@ -1602,20 +1874,20 @@ export function EpgEditorModal({
     ? automatchResults.details.reduce((n, d) => (d.match && !d.match.unmatched ? n + 1 : n), 0)
     : 0;
 
-  const tabs: { key: EditorTab; label: string }[] = channel
+  const tabs: { key: EditorTab; label: string; icon: React.ReactNode }[] = channel
     ? [
-        { key: 'channel',  label: `📡 ${t('channelTab')}` },
-        { key: 'programs', label: `📋 ${t('programsTab')}` },
-        { key: 'search',   label: `🔍 ${t('epgSearchTab')}` },
-        ...(showListTab ? [{ key: 'source' as const, label: `📺 ${listTabLabel}` }] : []),
-        { key: 'automatch', label: `🤖 ${t('automatchTab')}` },
-        { key: 'matches', label: `🔒 ${t('matchesTab')}` },
+        { key: 'channel',  label: t('channelTab'), icon: <AntennaSvg size={14} /> },
+        { key: 'programs', label: t('programsTab'), icon: <ScheduleSvg size={14} /> },
+        { key: 'search',   label: t('epgSearchTab'), icon: <SearchSvg size={14} /> },
+        ...(showListTab ? [{ key: 'source' as const, label: listTabLabel, icon: <TvSvg size={14} /> }] : []),
+        { key: 'automatch', label: t('automatchTab'), icon: <RobotSvg size={14} /> },
+        { key: 'matches', label: t('matchesTab'), icon: <LockSvg size={14} /> },
       ]
     : [
-        { key: 'source',   label: `📺 ${listTabLabel}` },
-        { key: 'search',   label: `🔍 ${t('epgSearchTab')}` },
-        { key: 'automatch', label: `🤖 ${t('automatchTab')}` },
-        { key: 'matches', label: `🔒 ${t('matchesTab')}` },
+        { key: 'source',   label: listTabLabel, icon: <TvSvg size={14} /> },
+        { key: 'search',   label: t('epgSearchTab'), icon: <SearchSvg size={14} /> },
+        { key: 'automatch', label: t('automatchTab'), icon: <RobotSvg size={14} /> },
+        { key: 'matches', label: t('matchesTab'), icon: <LockSvg size={14} /> },
       ];
 
   const title = channel
@@ -1628,11 +1900,21 @@ export function EpgEditorModal({
 
         {/* Header */}
         <div className="epg-editor-header">
-          <span style={{ fontSize: '1.2rem' }}>✏️</span>
-          <div className="epg-editor-title">
-            EPG Editor — <span>{title}</span>
+          <div className="epg-header-left">
+            <span className="epg-header-icon"><EpgHeaderSvg size={20} /></span>
+            <h2 className="epg-header-title">
+              {t('editorTitle', { defaultValue: 'EPG Editor' })}
+            </h2>
+            <span className="epg-header-badge" title={title}>
+              {title}
+            </span>
           </div>
-          <button className="epg-editor-close-btn" onClick={onClose}>✕</button>
+          <div className="epg-header-right">
+            <button className="epg-close-btn" onClick={onClose} title={i18n.t('common:close')}>
+              <CrossSvg size={13} />
+              <span>{i18n.t('common:close')}</span>
+            </button>
+          </div>
         </div>
 
         {/* Tabs */}
@@ -1643,7 +1925,8 @@ export function EpgEditorModal({
               className={`epg-editor-tab${activeTab === t.key ? ' active' : ''}`}
               onClick={() => setActiveTab(t.key)}
             >
-              {t.label}
+              {t.icon}
+              <span>{t.label}</span>
             </button>
           ))}
         </div>
@@ -1688,11 +1971,17 @@ export function EpgEditorModal({
                 {/* A grid, so the tag column sizes itself to the longest label
                     in any language and both rows stay aligned. */}
                 <div className="epg-editor-match-names">
-                  <span className="epg-editor-match-name-tag">📺 {t('matchNameProvider')}</span>
+                  <span className="epg-editor-match-name-tag">
+                    <TvSvg size={13} style={{ display: 'inline', verticalAlign: '-1px', marginRight: 4 }} />
+                    {t('matchNameProvider')}
+                  </span>
                   <span className="epg-editor-match-name-value" title={providerName}>
                     {providerName}
                   </span>
-                  <span className="epg-editor-match-name-tag">✏️ {t('matchNameAlias')}</span>
+                  <span className="epg-editor-match-name-tag">
+                    <EditSvg size={13} style={{ display: 'inline', verticalAlign: '-1px', marginRight: 4 }} />
+                    {t('matchNameAlias')}
+                  </span>
                   <div className="epg-editor-match-name-control">
                     <input
                       className="epg-editor-input epg-editor-match-name-input"
@@ -1706,8 +1995,10 @@ export function EpgEditorModal({
                       onClick={handleResetMatchName}
                       disabled={!customMatchName && !matchByAlias}
                       title={t('matchNameResetToProvider')}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
                     >
-                      ↺ {t('matchNameResetToProvider')}
+                      <ResetSvg size={12} />
+                      <span>{t('matchNameResetToProvider')}</span>
                     </button>
                   </div>
                 </div>
@@ -1721,7 +2012,7 @@ export function EpgEditorModal({
                       onClick={() => setMatchByAlias(false)}
                       title={t('matchNameProviderTitle')}
                     >
-                      📺 {t('matchNameProvider')}
+                      <TvSvg size={13} /> {t('matchNameProvider')}
                     </button>
                     <button
                       type="button"
@@ -1729,7 +2020,7 @@ export function EpgEditorModal({
                       onClick={() => setMatchByAlias(true)}
                       title={t('matchNameAliasTitle')}
                     >
-                      ✏️ {t('matchNameAlias')}
+                      <EditSvg size={13} /> {t('matchNameAlias')}
                     </button>
                   </div>
                 )}
@@ -1782,7 +2073,7 @@ export function EpgEditorModal({
                     onClick={() => setLogoBackground('auto')}
                     title={t('defaultBgTitle')}
                   >
-                    ✨ {t('defaultBg')}
+                    <SparkleSvg size={12} /> {t('defaultBg')}
                     {resolvedDefaultBg !== 'auto' ? ` (${t(resolvedDefaultBg === 'light' ? 'lightBg' : 'darkBg')})` : ''}
                   </button>
                   <button
@@ -1791,7 +2082,7 @@ export function EpgEditorModal({
                     onClick={() => setLogoBackground('light')}
                     title={t('lightBgTitle')}
                   >
-                    ☀️ {t('lightBg')}
+                    <SunSvg size={13} /> {t('lightBg')}
                   </button>
                   <button
                     type="button"
@@ -1799,7 +2090,7 @@ export function EpgEditorModal({
                     onClick={() => setLogoBackground('dark')}
                     title={t('darkBgTitle')}
                   >
-                    🌙 {t('darkBg')}
+                    <MoonSvg size={13} /> {t('darkBg')}
                   </button>
                 </div>
                 <div className="epg-editor-hint">
@@ -1816,7 +2107,7 @@ export function EpgEditorModal({
                     onClick={() => setLogoPadding('default')}
                     title={t('normalPaddingTitle')}
                   >
-                    📐 {t('normalPadding')}
+                    <RulerSvg size={13} /> {t('normalPadding')}
                   </button>
                   <button
                     type="button"
@@ -1824,7 +2115,7 @@ export function EpgEditorModal({
                     onClick={() => setLogoPadding('none')}
                     title={t('noPadTitle')}
                   >
-                    🖼️ {t('noPad')}
+                    <ImageSvg size={13} /> {t('noPad')}
                   </button>
                 </div>
                 <div className="epg-editor-hint">
@@ -1906,17 +2197,21 @@ export function EpgEditorModal({
                 </div>
               </div>
 
-              <div style={{ marginTop: 24, padding: 14, background: 'rgba(255,50,50,0.05)', border: '1px solid rgba(255,50,50,0.2)', borderRadius: 8 }}>
-                <div style={{ fontSize: '0.85rem', color: '#ffaaaa', marginBottom: 8 }}>
-                  <strong>{t('resetChannel')}</strong><br/>
-                  {t('resetChannelDesc')}
+              <div className="epg-danger-zone">
+                <div className="epg-danger-zone-info">
+                  <div className="epg-danger-zone-title">
+                    <WarningSvg size={14} style={{ color: '#ff6b6b' }} />
+                    <strong>{t('resetChannel')}</strong>
+                  </div>
+                  <div className="epg-danger-zone-desc">{t('resetChannelDesc')}</div>
                 </div>
                 <button
-                  className="epg-editor-btn"
-                  style={{ background: 'rgba(255,50,50,0.15)', color: '#ffaaaa', border: '1px solid rgba(255,50,50,0.3)', padding: '6px 12px' }}
+                  className="epg-editor-btn epg-editor-btn-danger"
                   onClick={handleResetToDefault}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
                 >
-                  ↻ {t('resetToDefault')}
+                  <ResetSvg size={13} />
+                  <span>{t('resetToDefault')}</span>
                 </button>
               </div>
             </div>
@@ -1931,10 +2226,10 @@ export function EpgEditorModal({
                 </span>
                 <button
                   className="epg-editor-btn epg-editor-btn-primary"
-                  style={{ padding: '7px 14px', fontSize: '0.82rem' }}
+                  style={{ padding: '7px 14px', fontSize: '0.82rem', display: 'inline-flex', alignItems: 'center', gap: 6 }}
                   onClick={() => setShowAddForm(v => !v)}
                 >
-                  {showAddForm ? `✕ ${i18n.t('common:cancel')}` : `+ ${t('addProgram')}`}
+                  {showAddForm ? <><CrossSvg size={12} /> <span>{i18n.t('common:cancel')}</span></> : <><PlusSvg size={12} /> <span>{t('addProgram')}</span></>}
                 </button>
               </div>
 
@@ -2017,8 +2312,10 @@ export function EpgEditorModal({
                         className="epg-editor-btn epg-editor-btn-primary"
                         onClick={handleAddCustomProgram}
                         disabled={!newTitle.trim() || !newStart || !newEnd}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
                       >
-                        ✓ {t('addProgram')}
+                        <CheckSvg size={12} />
+                        <span>{t('addProgram')}</span>
                       </button>
                     </div>
                   </div>
@@ -2065,7 +2362,7 @@ export function EpgEditorModal({
               </div>
               <div className="epg-search-toolbar">
                 <div className="epg-search-input-wrap">
-                  <span className="epg-search-icon">🔍</span>
+                  <span className="epg-search-icon"><SearchSvg size={14} /></span>
                   <input
                     className="epg-editor-input"
                     placeholder={t('searchPlaceholder')}
@@ -2102,8 +2399,9 @@ export function EpgEditorModal({
                     onClick={handleAutoSuggest}
                     disabled={autoSearching}
                     title={t('scoreAllTitle')}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
                   >
-                    {autoSearching ? '…' : `✨ ${t('autoMatch')}`}
+                    {autoSearching ? '…' : <><SparkleSvg size={13} /> <span>{t('autoMatch')}</span></>}
                   </button>
                 )}
               </div>
@@ -2139,7 +2437,9 @@ export function EpgEditorModal({
                             <img src={r.icon_url} alt="" className="epg-search-result-icon"
                               onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                           ) : (
-                            <div className="epg-search-result-placeholder">📡</div>
+                            <div className="epg-search-result-placeholder">
+                              <TvSvg size={16} />
+                            </div>
                           )}
                           <div className="epg-search-result-info">
                             <div className="epg-search-result-name">{r.display_name}</div>
@@ -2149,8 +2449,8 @@ export function EpgEditorModal({
                             )}
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
-                            <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary, #888)', whiteSpace: 'nowrap' }}>
-                              {isPreviewOpen ? `▲ ${t('hide')}` : `▼ ${t('programs')}`}
+                            <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary, #888)', whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                              {isPreviewOpen ? <><ChevronUpSvg size={10} /> <span>{t('hide')}</span></> : <><ChevronDownSvg size={10} /> <span>{t('programs')}</span></>}
                             </span>
                             <div className="epg-score-bar" title={t('matchScore', { score: (r.score * 100).toFixed(0) })}>
                               <div className="epg-score-pip" style={{ width: `${Math.min(100, r.score / 1.2 * 100)}%` }} />
@@ -2211,8 +2511,11 @@ export function EpgEditorModal({
               )}
 
               {!searchQuery && !searchLoading && (
-                <div className="epg-editor-empty">
-                  {t('typeToSearch')} <strong>✨ {t('autoMatch')}</strong> {t('toFindBestMatch')} <strong>{channel?.name ?? t('yourChannel')}</strong>.
+                <div className="epg-editor-empty" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+                  <SearchSvg size={28} />
+                  <div>
+                    {t('typeToSearch')} <strong style={{ color: 'var(--accent-primary, #00d4ff)' }}>{t('autoMatch')}</strong> {t('toFindBestMatch')} <strong>{channel?.name ?? t('yourChannel')}</strong>.
+                  </div>
                 </div>
               )}
             </div>
@@ -2266,14 +2569,18 @@ export function EpgEditorModal({
                               onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
                             />
                           ) : (
-                            <div style={{ width: 32, height: 32, borderRadius: 6, background: 'var(--bg-tertiary, rgba(255,255,255,0.05))', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>📡</div>
+                            <div className="epg-source-channel-placeholder">
+                              <TvSvg size={16} />
+                            </div>
                           )}
                           <div className="epg-source-channel-name">{ch.name}</div>
                           <div className="epg-source-channel-tvgid">{ch.epg_channel_id || '—'}</div>
                           {overriddenIds.has(ch.stream_id) && (
                             <div className="epg-override-dot" title={t('hasOverrides')} />
                           )}
-                          <span style={{ color: 'var(--text-secondary,#666)', fontSize: '0.85rem' }}>›</span>
+                          <span style={{ color: 'var(--text-secondary,#666)', display: 'inline-flex', alignItems: 'center' }}>
+                            <ChevronRightSvg size={13} />
+                          </span>
                         </div>
                       </div>
                     )}
@@ -2297,7 +2604,7 @@ export function EpgEditorModal({
                   className="epg-editor-input"
                   value={automatchSourceId}
                   onChange={e => setAutomatchSourceId(e.target.value)}
-                  disabled={automatchScope === 'all' || automatchRunning}
+                  disabled={(automatchChannelScope === 'all' && automatchEpgScope === 'all') || automatchRunning}
                   style={{ cursor: 'pointer' }}
                 >
                   {automatchSources.map(s => (
@@ -2306,20 +2613,37 @@ export function EpgEditorModal({
                 </select>
               </div>
 
-              {/* Scope toggle */}
+              {/* Channels to Match toggle */}
               <div className="epg-editor-field">
-                <label className="epg-editor-label">{t('scope')}</label>
+                <label className="epg-editor-label">{t('channelsToMatch', 'Channels to Match')}</label>
                 <div className="epg-search-scope-toggle">
                   <button
-                    className={`epg-search-scope-btn${automatchScope === 'source' ? ' active' : ''}`}
-                    onClick={() => setAutomatchScope('source')}
+                    className={`epg-search-scope-btn${automatchChannelScope === 'source' ? ' active' : ''}`}
+                    onClick={() => setAutomatchChannelScope('source')}
                     disabled={automatchRunning}
                   >{t('thisSource')}</button>
                   <button
-                    className={`epg-search-scope-btn${automatchScope === 'all' ? ' active' : ''}`}
-                    onClick={() => setAutomatchScope('all')}
+                    className={`epg-search-scope-btn${automatchChannelScope === 'all' ? ' active' : ''}`}
+                    onClick={() => setAutomatchChannelScope('all')}
                     disabled={automatchRunning}
                   >{t('allSources')}</button>
+                </div>
+              </div>
+
+              {/* EPG Sources to Search toggle */}
+              <div className="epg-editor-field">
+                <label className="epg-editor-label">{t('epgSourcesToSearch', 'EPG Sources to Search')}</label>
+                <div className="epg-search-scope-toggle">
+                  <button
+                    className={`epg-search-scope-btn${automatchEpgScope === 'source' ? ' active' : ''}`}
+                    onClick={() => setAutomatchEpgScope('source')}
+                    disabled={automatchRunning}
+                  >{t('thisSourceEpg', "This Source's EPG")}</button>
+                  <button
+                    className={`epg-search-scope-btn${automatchEpgScope === 'all' ? ' active' : ''}`}
+                    onClick={() => setAutomatchEpgScope('all')}
+                    disabled={automatchRunning}
+                  >{t('allEpgSources', 'All EPG Sources')}</button>
                 </div>
               </div>
 
@@ -2343,7 +2667,7 @@ export function EpgEditorModal({
               </div>
 
               {/* Category selection */}
-              {automatchScope === 'source' && sourceCategories.length > 0 && (
+              {automatchChannelScope === 'source' && sourceCategories.length > 0 && (
                 <div className="epg-editor-field">
                   <label className="epg-editor-label">{t('categories')}</label>
                   <div style={{ marginBottom: 8 }}>
@@ -2462,12 +2786,12 @@ export function EpgEditorModal({
                 <button
                   className="epg-editor-btn epg-editor-btn-primary"
                   onClick={handleAutoMatchMissing}
-                  disabled={automatchRunning || (automatchScope === 'source' && !automatchSourceId) || (!automatchAllCategories && automatchCategories.length === 0)}
+                  disabled={automatchRunning || ((automatchChannelScope === 'source' || automatchEpgScope === 'source') && !automatchSourceId) || (automatchChannelScope === 'source' && !automatchAllCategories && automatchCategories.length === 0)}
                   style={{ width: '100%', padding: '12px 22px', fontSize: '0.95rem' }}
                 >
                   {automatchRunning && automatchProgress
                     ? t('matchingProgress', { matched: automatchProgress.matched, total: automatchProgress.total })
-                    : `🤖 ${t('automatchMissingBtn')}`}
+                    : <><RobotSvg size={16} /> <span>{t('automatchMissingBtn')}</span></>}
                 </button>
               </div>
 
@@ -2592,17 +2916,40 @@ export function EpgEditorModal({
                         const match = detail.match;
                         const busy = match ? unmatchingId === match.streamId : false;
                         const notice = match ? unmatchNotices[match.streamId] : undefined;
+                        const isSuccess = detail.type === 'success' || detail.text.startsWith('✓');
+                        const isWarning = detail.type === 'warning' || detail.text.startsWith('⚠');
+                        const isError = detail.type === 'error' || detail.text.startsWith('✗');
+                        const isSkipped = detail.type === 'skipped';
+                        const hasIcon = isSuccess || isWarning || isError || isSkipped;
+                        const cleanText = detail.text.replace(/^[✓⚠✗]\s*/, '');
+
                         return (
                           <div className="epg-automatch-detail">
+                            {hasIcon && (
+                              <span
+                                style={{
+                                  color: isSuccess ? '#4caf50' : isWarning ? '#ffaa44' : isError ? '#ff6b6b' : 'var(--text-secondary, #888)',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  flexShrink: 0,
+                                  marginTop: 2,
+                                  marginRight: 6,
+                                }}
+                              >
+                                {isSuccess && <CheckSvg size={12} />}
+                                {isWarning && <WarningSvg size={12} />}
+                                {(isError || isSkipped) && <CrossSvg size={12} />}
+                              </span>
+                            )}
                             <span
                               className="epg-automatch-detail-text"
                               style={{
-                                color: detail.text.startsWith('✓') ? '#4caf50'
-                                  : detail.text.startsWith('⚠') ? '#ffaa44'
+                                color: isSuccess ? '#4caf50'
+                                  : isWarning ? '#ffaa44'
                                   : 'var(--text-secondary, #888)',
                               }}
                             >
-                              {detail.text}
+                              {cleanText}
                             </span>
                             {match && !match.unmatched && (
                               <button
@@ -2668,8 +3015,9 @@ export function EpgEditorModal({
                               title={t('ambiguousDismiss')}
                               aria-label={t('ambiguousDismiss')}
                               disabled={busy}
+                              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
                             >
-                              ✕
+                              <CrossSvg size={10} />
                             </button>
                           </div>
                           <div className="epg-refusal-choices">
@@ -2720,14 +3068,18 @@ export function EpgEditorModal({
                   <button
                     className={`epg-matches-toggle${matchLockFilter === 'locked' ? ' active' : ''}`}
                     onClick={() => setMatchLockFilter('locked')}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
                   >
-                    🔒 {t('matchesAnyLock')}
+                    <LockSvg size={12} />
+                    <span>{t('matchesAnyLock')}</span>
                   </button>
                   <button
                     className={`epg-matches-toggle${matchLockFilter === 'elsewhere' ? ' active' : ''}`}
                     onClick={() => setMatchLockFilter('elsewhere')}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
                   >
-                    ↔ {t('matchesLockedElsewhere')}
+                    <SwapSvg size={12} />
+                    <span>{t('matchesLockedElsewhere')}</span>
                   </button>
                 </div>
                 {/* A search already opens every node, so the by-hand controls would
@@ -2807,7 +3159,8 @@ export function EpgEditorModal({
                                     className="epg-matches-chip locked"
                                     title={t('matchesLockedTo', { name: matchFeedLabel(match.feedRef) })}
                                   >
-                                    🔒 {matchFeedLabel(match.feedRef)}
+                                    <LockSvg size={11} />
+                                    <span>{matchFeedLabel(match.feedRef)}</span>
                                   </span>
                                 ) : (
                                   <span className="epg-matches-chip unlocked">{t('matchesNoLock')}</span>
@@ -2835,17 +3188,21 @@ export function EpgEditorModal({
                               aria-expanded={row.expanded}
                               onClick={() => toggleMatchNode(row.key)}
                             >
-                              <span className="epg-matches-chevron">{row.expanded ? '▾' : '▸'}</span>
+                              <span className="epg-matches-chevron">
+                                {row.expanded ? <ChevronDownSvg size={11} /> : <ChevronRightSvg size={11} />}
+                              </span>
                               <span className="epg-matches-row-name">{row.label}</span>
                               <span className="epg-matches-row-count">{row.count}</span>
                               {row.locked > 0 && (
                                 <span className="epg-matches-chip locked" title={t('matchesLocked')}>
-                                  🔒 {row.locked}
+                                  <LockSvg size={11} />
+                                  <span>{row.locked}</span>
                                 </span>
                               )}
                               {row.elsewhere > 0 && (
                                 <span className="epg-matches-chip elsewhere" title={t('matchesLockedElsewhere')}>
-                                  ↔ {row.elsewhere}
+                                  <SwapSvg size={11} />
+                                  <span>{row.elsewhere}</span>
                                 </span>
                               )}
                             </button>
@@ -2871,7 +3228,10 @@ export function EpgEditorModal({
         {/* Footer */}
         <div className="epg-editor-footer">
           {channelSaved && (
-            <div className="epg-editor-saved-notice">✓ {t('saved')}</div>
+            <div className="epg-editor-saved-notice">
+              <CheckSvg size={13} />
+              <span>{t('saved')}</span>
+            </div>
           )}
           <button className="epg-editor-btn epg-editor-btn-secondary" onClick={onClose}>{i18n.t('common:close')}</button>
           {activeTab === 'channel' && channel && (
@@ -2879,8 +3239,9 @@ export function EpgEditorModal({
               className="epg-editor-btn epg-editor-btn-primary"
               onClick={handleSaveChannel}
               disabled={channelSaving}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
             >
-              {channelSaving ? t('saving') : `💾 ${t('saveChannelOverride')}`}
+              {channelSaving ? t('saving') : <><SaveSvg size={14} /> <span>{t('saveChannelOverride')}</span></>}
             </button>
           )}
         </div>
@@ -2888,35 +3249,26 @@ export function EpgEditorModal({
 
       {/* Reset Confirmation Modal Overlay */}
       {showResetConfirm && channel && (
-        <div style={{
-          position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(4px)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          zIndex: 100, borderRadius: 16
-        }}>
-          <div style={{
-            background: 'var(--bg-elevated, #1a1a1a)',
-            border: '1px solid rgba(255,50,50,0.3)',
-            padding: 24, borderRadius: 12, maxWidth: 360, width: '100%',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.8)'
-          }}>
-            <h3 style={{ margin: '0 0 12px 0', color: '#ff5555', fontSize: '1.2rem' }}>⚠ {t('resetChannel')}</h3>
-            <p style={{ margin: '0 0 24px 0', fontSize: '0.9rem', color: '#ccc', lineHeight: 1.5 }}>
+        <div className="epg-confirm-overlay" onClick={() => setShowResetConfirm(false)}>
+          <div className="epg-confirm-modal" onClick={e => e.stopPropagation()}>
+            <h3 className="epg-confirm-title">
+              <WarningSvg size={18} style={{ color: '#ff5555' }} />
+              <span>{t('resetChannel')}</span>
+            </h3>
+            <p className="epg-confirm-desc">
               {t('resetConfirm')} <strong>"{channel.name}"</strong>?
               <br/><br/>
               {t('resetConfirmDesc')}
             </p>
-            <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+            <div className="epg-confirm-actions">
               <button
-                className="epg-editor-btn"
-                style={{ background: 'rgba(255,255,255,0.08)', color: '#fff', border: 'none', padding: '8px 16px' }}
+                className="epg-editor-btn epg-editor-btn-secondary"
                 onClick={() => setShowResetConfirm(false)}
               >
                 {i18n.t('common:cancel')}
               </button>
               <button
-                className="epg-editor-btn"
-                style={{ background: 'rgba(255,50,50,0.15)', color: '#ffaaaa', border: '1px solid rgba(255,50,50,0.4)', padding: '8px 16px' }}
+                className="epg-editor-btn epg-editor-btn-danger"
                 onClick={executeResetToDefault}
               >
                 {t('yesReset')}

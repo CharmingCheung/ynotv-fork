@@ -3822,7 +3822,11 @@
     "noEnabledSources": "Увімкнені джерела не знайдено",
     "useForRegularSearch": "Використовувати ці налаштування для звичайного пошуку в рядку заголовка",
     "search": "Пошук",
-    "clickPlayCatchup": "Натисніть, щоб відтворити архів наздогін перегляду"
+    "clickPlayCatchup": "Натисніть, щоб відтворити архів наздогін перегляду",
+    "channelsToMatch": "Канали для зіставлення",
+    "epgSourcesToSearch": "Джерела EPG для пошуку",
+    "thisSourceEpg": "EPG цього джерела",
+    "allEpgSources": "Всі джерела EPG"
   },
   "live": {
     "active": "Активно",

@@ -3822,7 +3822,11 @@
     "noEnabledSources": "No se encontraron fuentes activadas",
     "useForRegularSearch": "Usar estos ajustes para las búsquedas regulares de la barra de título",
     "search": "Buscar",
-    "clickPlayCatchup": "Clic para reproducir el archivo de puesta al día"
+    "clickPlayCatchup": "Clic para reproducir el archivo de puesta al día",
+    "channelsToMatch": "Canales a coincidir",
+    "epgSourcesToSearch": "Fuentes de EPG a buscar",
+    "thisSourceEpg": "EPG de esta fuente",
+    "allEpgSources": "Todas las fuentes de EPG"
   },
   "live": {
     "active": "Activo",

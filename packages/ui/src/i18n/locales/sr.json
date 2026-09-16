@@ -3822,7 +3822,11 @@
     "noEnabledSources": "Нема пронађених омогућених извора",
     "useForRegularSearch": "Користи ова подешавања за редовну претрагу у траци наслова",
     "search": "Претражи",
-    "clickPlayCatchup": "Кликните за репродукцију архиве надокнаде"
+    "clickPlayCatchup": "Кликните за репродукцију архиве надокнаде",
+    "channelsToMatch": "Канали за подударање",
+    "epgSourcesToSearch": "EPG извори за претрагу",
+    "thisSourceEpg": "EPG овог извора",
+    "allEpgSources": "Сви EPG извори"
   },
   "live": {
     "active": "Активан",

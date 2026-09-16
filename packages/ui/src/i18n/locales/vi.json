@@ -751,7 +751,11 @@
     "noEnabledSources": "Không tìm thấy nguồn đã bật",
     "useForRegularSearch": "Dùng các cài đặt này cho các tìm kiếm trên thanh tiêu đề thông thường",
     "search": "Tìm Kiếm",
-    "clickPlayCatchup": "Nhấp để phát kho lưu Catchup"
+    "clickPlayCatchup": "Nhấp để phát kho lưu Catchup",
+    "channelsToMatch": "Kênh Cần Khớp",
+    "epgSourcesToSearch": "Nguồn EPG Cần Tìm",
+    "thisSourceEpg": "EPG Của Nguồn Này",
+    "allEpgSources": "Tất Cả Nguồn EPG"
   },
   "live": {
     "active": "Hoạt Động",

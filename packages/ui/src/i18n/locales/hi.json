@@ -3822,7 +3822,11 @@
     "noEnabledSources": "कोई सक्षम स्रोत नहीं मिला",
     "useForRegularSearch": "नियमित टाइटल बार खोजों के लिए इन सेटिंग्स का उपयोग करें",
     "search": "खोजें",
-    "clickPlayCatchup": "कैच-अप संग्रह चलाने के लिए क्लिक करें"
+    "clickPlayCatchup": "कैच-अप संग्रह चलाने के लिए क्लिक करें",
+    "channelsToMatch": "मिलान के लिए चैनल",
+    "epgSourcesToSearch": "खोजने के लिए EPG स्रोत",
+    "thisSourceEpg": "इस स्रोत का EPG",
+    "allEpgSources": "सभी EPG स्रोत"
   },
   "live": {
     "active": "सक्रिय",

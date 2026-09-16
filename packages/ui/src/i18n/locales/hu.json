@@ -3822,7 +3822,11 @@
     "noEnabledSources": "Nem találhatók engedélyezett források",
     "useForRegularSearch": "Használja ezeket a beállításokat a szokásos címsoros keresésekhez",
     "search": "Keresés",
-    "clickPlayCatchup": "Kattintson a Catchup archívum lejátszásához"
+    "clickPlayCatchup": "Kattintson a Catchup archívum lejátszásához",
+    "channelsToMatch": "Párosítandó csatornák",
+    "epgSourcesToSearch": "Keresendő EPG források",
+    "thisSourceEpg": "Ezen forrás EPG-je",
+    "allEpgSources": "Összes EPG forrás"
   },
   "live": {
     "active": "Aktív",

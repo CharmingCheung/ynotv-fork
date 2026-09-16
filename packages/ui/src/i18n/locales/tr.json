@@ -3822,7 +3822,11 @@
     "noEnabledSources": "Etkin kaynak bulunamadı",
     "useForRegularSearch": "Bu ayarları normal başlık çubuğu aramaları için kullan",
     "search": "Ara",
-    "clickPlayCatchup": "Tekrar izleme arşivini oynatmak için tıklayın"
+    "clickPlayCatchup": "Tekrar izleme arşivini oynatmak için tıklayın",
+    "channelsToMatch": "Eşleştirilecek Kanallar",
+    "epgSourcesToSearch": "Aranacak EPG Kaynakları",
+    "thisSourceEpg": "Bu Kaynağın EPG'si",
+    "allEpgSources": "Tüm EPG Kaynakları"
   },
   "live": {
     "active": "Etkin",

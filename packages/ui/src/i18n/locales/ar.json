@@ -3822,7 +3822,11 @@
     "noEnabledSources": "لا توجد مصادر مفعلة",
     "useForRegularSearch": "استخدم هذه الإعدادات لعمليات البحث العادية في شريط العنوان",
     "search": "بحث",
-    "clickPlayCatchup": "انقر لتشغيل أرشيف البث المتأخر"
+    "clickPlayCatchup": "انقر لتشغيل أرشيف البث المتأخر",
+    "channelsToMatch": "القنوات للمطابقة",
+    "epgSourcesToSearch": "مصادر EPG للبحث",
+    "thisSourceEpg": "EPG هذا المصدر",
+    "allEpgSources": "كل مصادر EPG"
   },
   "live": {
     "active": "نشط",

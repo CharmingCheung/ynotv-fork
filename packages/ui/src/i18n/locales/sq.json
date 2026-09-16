@@ -3822,7 +3822,11 @@
     "noEnabledSources": "Nuk u gjetën burime të aktivizuara",
     "useForRegularSearch": "Përdor këto cilësime për kërkimin e rregullt në shiritin e titullit",
     "search": "Kërko",
-    "clickPlayCatchup": "Kliko për të luajtur arkivin e shikimit me vonesë"
+    "clickPlayCatchup": "Kliko për të luajtur arkivin e shikimit me vonesë",
+    "channelsToMatch": "Kanalet për përputhje",
+    "epgSourcesToSearch": "Burimet EPG për kërkim",
+    "thisSourceEpg": "EPG e këtij burimi",
+    "allEpgSources": "Të gjitha burimet EPG"
   },
   "live": {
     "active": "Aktiv",
