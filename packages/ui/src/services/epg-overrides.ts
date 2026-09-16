@@ -233,9 +233,202 @@ export async function getEditorProgramsForStream(
   return all;
 }
 
+// ─── Feed guide resolution ────────────────────────────────────────────────────
+
+/** The minimal adapter surface these helpers touch (`db.dbPromise`). */
+type SqlDb = {
+  select: (sql: string, params?: unknown[]) => Promise<any[]>;
+  execute: (sql: string, params?: unknown[]) => Promise<unknown>;
+};
+
+/** Where one feed's guide for a tvg-id lives: a link cache, or a channel holding it. */
+export type FeedGuideSource =
+  | { kind: 'cache'; linkId: string }
+  | { kind: 'channel'; streamId: string };
+
+/**
+ * The single place that decides where a feed's guide for `epgChannelId` comes from.
+ *
+ * A tvg-id is not unique: `aandenetwork.us` is carried by the US A&E East channel
+ * of several playlists at once, and a global EPG feed keeps its own copy. Picking
+ * "any channel with that id" (the old `LIMIT 1`, with no source filter and no
+ * ordering) therefore handed back whichever row the planner found first — the
+ * preview showed a guide the feed does not carry, and Apply copied it onto the
+ * channel under the *other* playlist's source stamp. Every caller now names the
+ * feed it is asking about and gets that feed's own channel, or nothing.
+ *
+ * `feedRef` is the `source_id` a search result carries: a playlist id, or
+ * `global_epg_<linkId>` for a link (resolved straight to its cache DB). Omitting it
+ * keeps the old library-wide lookup for callers that have no feed to name.
+ * `excludeStreamId` drops the channel being written, so a copy can never read the
+ * rows it just deleted. Ordering is explicit: the answer must not depend on the
+ * query planner.
+ */
+export async function findFeedGuideSource(
+  epgChannelId: string | null | undefined,
+  feedRef?: string | null,
+  excludeStreamId?: string
+): Promise<FeedGuideSource | null> {
+  const id = epgChannelId?.trim();
+  if (!id) return null;
+
+  if (feedRef && feedRef.startsWith('global_epg_')) {
+    return { kind: 'cache', linkId: feedRef.slice('global_epg_'.length) };
+  }
+
+  const dbInstance = (await (db as any).dbPromise) as SqlDb;
+  const params: unknown[] = [id];
+  let where = 'COALESCE(o.epg_channel_id, c.epg_channel_id) = $1';
+  if (feedRef) {
+    params.push(feedRef);
+    where += ` AND c.source_id = $${params.length}`;
+  }
+  if (excludeStreamId) {
+    params.push(excludeStreamId);
+    where += ` AND c.stream_id != $${params.length}`;
+  }
+
+  // A feed can hold more than one channel for an id, and an overridden sibling must
+  // not shadow a native one: an override naming this very id is exactly what
+  // Automatch produces, and such a sibling may hold nothing, which would resolve a
+  // copy to 0 rows while a native channel with a full guide sat right beside it.
+  // Native first, then a stable order so the answer never depends on the planner.
+  // Deliberately softer than the alignment's `sc.stream_id NOT IN (…overrides)`:
+  // there an overridden carrier must be excluded outright, because the guide it
+  // holds belongs to *its* pin; here a fallback to an overridden sibling that does
+  // hold rows still beats resolving to nothing.
+  const rows = (await dbInstance.select(
+    `SELECT c.stream_id
+       FROM channels c
+       LEFT JOIN epg_channel_overrides o ON o.stream_id = c.stream_id
+      WHERE ${where}
+      ORDER BY (o.epg_channel_id IS NOT NULL) ASC, c.stream_id ASC
+      LIMIT 1`,
+    params
+  )) as { stream_id: string }[];
+
+  return rows[0] ? { kind: 'channel', streamId: rows[0].stream_id } : null;
+}
+
+/** The playlist a channel belongs to, which owns the guide rows written onto it. */
+async function getChannelSourceId(dbInstance: SqlDb, streamId: string): Promise<string> {
+  const rows = (await dbInstance.select(
+    'SELECT source_id FROM channels WHERE stream_id = $1 LIMIT 1',
+    [streamId]
+  )) as { source_id: string | null }[];
+  return rows[0]?.source_id || 'unknown';
+}
+
+/**
+ * Programmes `streamId` holds right now.
+ *
+ * Every copy path reports this, so `0` means "the channel has no guide", never "the
+ * copy found nothing to move" — those are different states and only one of them is
+ * worth acting on.
+ */
+async function countChannelPrograms(dbInstance: SqlDb, streamId: string): Promise<number> {
+  const rows = (await dbInstance.select(
+    'SELECT COUNT(*) AS rows FROM programs WHERE stream_id = $1',
+    [streamId]
+  )) as { rows: number }[];
+  return rows[0]?.rows ?? 0;
+}
+
+/**
+ * Whether the guide a channel currently holds can only have come from another feed,
+ * so a reset must drop it rather than leave it showing.
+ *
+ * Three ways that happens, all read from what the override actually did rather than
+ * inferred from the rows (which carry the channel's own source whichever feed wrote
+ * them): the channel has no provider id of its own, the override locked it to a
+ * different feed, or the override remapped it to an id the provider never gave.
+ *
+ * A plain override naming the channel's own id is deliberately *not* one of them:
+ * that is the Automatch self-match, and its rows are the provider's own.
+ *
+ * Also deliberately *not* used is "the feed's parsed keys don't include this id": the
+ * matcher fills channels by name, by display-name and by the advanced token tier, so
+ * a feed with no `epg_channels` row for an id can still be the one that wrote the
+ * guide — deciding on that would delete guides the provider really did supply.
+ */
+function rowsCameFromAnotherFeed(
+  hadOverride: boolean,
+  ownSourceId: string | null | undefined,
+  originalEpgId: string | null | undefined,
+  overrideEpgId: string | null,
+  overridePin: string | null
+): boolean {
+  // No override at all means nothing was borrowed: the rows are the channel's own,
+  // or a global EPG link's that legitimately matches it, and a reset has nothing to
+  // undo.
+  if (!hadOverride) return false;
+  if (!originalEpgId) return true;
+  if (overridePin && overridePin !== ownSourceId) return true;
+  if (overrideEpgId && overrideEpgId !== originalEpgId) return true;
+  return false;
+}
+
+/**
+ * Make `targetStreamId`'s guide exactly the guide source's rows, stamped with the
+ * target channel's own source — the same stamp the sync writer and the post-sync
+ * alignment use, so the channel's own wipe owns the rows and no other playlist's
+ * programme count grows from a copy it never made.
+ *
+ * A guide source that holds no programmes is not a reason to delete the channel's
+ * current ones: that is the ordinary state of a feed whose download came back
+ * empty, and emptying the channel for it is what turned a pinned channel blank in
+ * the first place. Returns the rows the channel holds afterwards.
+ */
+async function replaceGuideFromChannel(
+  dbInstance: SqlDb,
+  targetStreamId: string,
+  sourceStreamId: string
+): Promise<number> {
+  const counts = (await dbInstance.select(
+    `SELECT
+       (SELECT COUNT(*) FROM programs WHERE stream_id = $1) AS source_rows,
+       (SELECT COUNT(*) FROM programs WHERE stream_id = $2) AS target_rows`,
+    [sourceStreamId, targetStreamId]
+  )) as { source_rows: number; target_rows: number }[];
+
+  const sourceRows = counts[0]?.source_rows ?? 0;
+  if (sourceRows === 0) {
+    console.warn(
+      `[EPG Override] Guide source ${sourceStreamId} holds no programs; kept the ` +
+        `${counts[0]?.target_rows ?? 0} row(s) already on ${targetStreamId}`
+    );
+    return counts[0]?.target_rows ?? 0;
+  }
+
+  const targetSourceId = await getChannelSourceId(dbInstance, targetStreamId);
+
+  await dbInstance.execute(`DELETE FROM programs WHERE stream_id = $1`, [targetStreamId]);
+
+  // IDs are built from the raw start string ({stream_id}_{start}) exactly like the
+  // sync writer, so INSERT OR REPLACE lets the next sync overwrite copies seamlessly.
+  await dbInstance.execute(
+    `INSERT OR REPLACE INTO programs (id, stream_id, title, subtitle, description, start, end, source_id)
+     SELECT
+       $1 || '_' || start AS id,
+       $1 AS stream_id,
+       title, subtitle, description, start, end,
+       $3 AS source_id
+     FROM programs
+     WHERE stream_id = $2`,
+    [targetStreamId, sourceStreamId, targetSourceId]
+  );
+
+  // Ids are derived from `start`, exactly as the source's own ids are, so the
+  // channel now holds the guide source's row count.
+  return sourceRows;
+}
+
 /**
  * Load programs for preview when the user clicks a search result.
- * Finds an existing channel that uses the given epg_channel_id and returns its programs.
+ * Finds the channel the *feed that result belongs to* holds for this tvg-id and
+ * returns its programs, so a feed with no data previews empty instead of showing
+ * another feed's guide. Note for playlist feeds this is a view of what is stored
+ * locally for that feed's channel: an unsynced feed previews empty too.
  */
 export async function getPreviewProgramsForEpgId(
   epgChannelId: string,
@@ -273,43 +466,41 @@ export async function getPreviewProgramsForEpgId(
     }
   }
 
-  const dbInstance = await (db as any).dbPromise;
-
-  // Find a stream_id that already has programs for this epg_channel_id
-  // (checking both the raw channel value and any user-applied overrides)
-  const rows = await dbInstance.select(
-    `SELECT c.stream_id
-     FROM channels c
-     LEFT JOIN epg_channel_overrides o ON o.stream_id = c.stream_id
-     WHERE COALESCE(o.epg_channel_id, c.epg_channel_id) = $1
-     LIMIT 1`,
-    [epgChannelId]
-  ) as { stream_id: string }[];
-
-  if (rows.length === 0) return [];
-  return getEditorProgramsForStream(rows[0].stream_id, windowDays);
+  const guide = await findFeedGuideSource(epgChannelId, sourceId);
+  if (!guide || guide.kind !== 'channel') return [];
+  return getEditorProgramsForStream(guide.streamId, windowDays);
 }
 
 /**
- * Immediately copy programs from the channel matched to epgChannelId into targetStreamId.
- * Called after "Apply" so the channel shows programs right away without waiting for a sync.
- * Returns the number of programs copied (0 if no source found).
+ * Immediately copy programs from the feed's channel for epgChannelId into
+ * targetStreamId. Called after "Apply" so the channel shows programs right away
+ * without waiting for a sync. Only the feed the user picked is read, so an id that
+ * several feeds share can never hand back another feed's rows.
+ *
+ * Returns the number of programs the channel now holds — on every path. A feed with
+ * nothing for the id copies nothing and leaves the current guide in place rather
+ * than deleting it for a copy that will never land, so the count it reports is the
+ * guide that survived, never the zero rows it moved.
  */
 export async function copyProgramsFromEpgChannel(
   targetStreamId: string,
   epgChannelId: string,
   sourceId?: string
 ): Promise<number> {
-  const dbInstance = await (db as any).dbPromise;
+  const dbInstance = (await (db as any).dbPromise) as SqlDb;
 
-  // 1. Delete all existing *raw/synced* programs for the target stream so they don't merge
-  await dbInstance.execute(
-    `DELETE FROM programs WHERE stream_id = $1`,
-    [targetStreamId]
-  );
+  const guide = await findFeedGuideSource(epgChannelId, sourceId, targetStreamId);
+  if (!guide) {
+    console.warn(
+      `[EPG Override] Feed ${sourceId ?? '(unspecified)'} carries no guide for "${epgChannelId}"; ` +
+        `leaving the current guide on ${targetStreamId} as it is`
+    );
+    // Nothing was copied, so the channel keeps whatever it held.
+    return countChannelPrograms(dbInstance, targetStreamId);
+  }
 
-  if (sourceId && sourceId.startsWith('global_epg_')) {
-    const epgLinkId = sourceId.replace('global_epg_', '');
+  if (guide.kind === 'cache') {
+    const epgLinkId = guide.linkId;
     try {
       const cacheDbName = `epg_cache_${epgLinkId}`;
       const Database = (await import('@tauri-apps/plugin-sql')).default;
@@ -321,12 +512,9 @@ export async function copyProgramsFromEpgChannel(
       ) as any[];
 
       if (progs.length > 0) {
-        // Query the channel's source_id to associate with programs
-        const channelRow = await dbInstance.select(
-          'SELECT source_id FROM channels WHERE stream_id = $1 LIMIT 1',
-          [targetStreamId]
-        ) as { source_id: string }[];
-        const targetSourceId = channelRow[0]?.source_id || 'unknown';
+        // The guide belongs to the target channel, so its rows carry the target's
+        // source — never the feed's.
+        const targetSourceId = await getChannelSourceId(dbInstance, targetStreamId);
 
         const programsToInsert = progs.map(p => ({
           id: `${targetStreamId}_${p.start}`,
@@ -339,6 +527,8 @@ export async function copyProgramsFromEpgChannel(
           source_id: targetSourceId
         }));
 
+        // Replace, don't merge: the guide is exactly this feed's window.
+        await dbInstance.execute(`DELETE FROM programs WHERE stream_id = $1`, [targetStreamId]);
         await db.programs.bulkPut(programsToInsert);
         const { dbEvents } = await import('../db/sqlite-adapter');
         dbEvents.notify('programs', 'clear');
@@ -348,46 +538,25 @@ export async function copyProgramsFromEpgChannel(
     } catch (e) {
       console.warn(`[EPG Override] Failed to copy programs from cache DB ${epgLinkId}:`, e);
     }
-    return 0;
+    // Nothing came out of the link's cache, so the channel keeps what it had.
+    return countChannelPrograms(dbInstance, targetStreamId);
   }
 
-  // Find a source stream that has programs for this epg_channel_id (not the target itself)
-  const rows = await dbInstance.select(
-    `SELECT stream_id FROM channels
-     WHERE epg_channel_id = $1 AND stream_id != $2
-     LIMIT 1`,
-    [epgChannelId, targetStreamId]
-  ) as { stream_id: string }[];
-
-  if (rows.length === 0) return 0;
-
-  const sourceStreamId = rows[0].stream_id;
-
-  // 2. Copy the source channel's FULL EPG to the target stream (no time cutoff —
-  // the whole guide is what the user expects when they apply a match).
-  // IDs are built from the raw start string ({stream_id}_{start}) exactly like the
-  // sync writer, so INSERT OR REPLACE lets the next sync overwrite copies seamlessly.
-  await dbInstance.execute(
-    `INSERT OR REPLACE INTO programs (id, stream_id, title, subtitle, description, start, end, source_id)
-     SELECT
-       $1 || '_' || start AS id,
-       $1 AS stream_id,
-       title, subtitle, description, start, end, source_id
-     FROM programs
-     WHERE stream_id = $2`,
-    [targetStreamId, sourceStreamId]
-  );
+  // The feed's own channel supplies the guide (no time cutoff — the whole guide is
+  // what the user expects when they apply a match).
+  const count = await replaceGuideFromChannel(dbInstance, targetStreamId, guide.streamId);
 
   const { dbEvents } = await import('../db/sqlite-adapter');
   dbEvents.notify('programs', 'clear');
   dbEvents.notify('programs', 'add');
-  return 1;
+  return count;
 }
 
 /**
- * Resets a channel back to its default state.
- * Deletes the channel override, custom programs, and restores tombstoned programs.
- * Also copies the original programs back so a sync isn't needed.
+ * Resets a channel back to its default state: the override, the feed lock and any
+ * custom programs go, and the channel's *own* feed's guide for its original tvg-id
+ * is put back so a sync isn't needed. A feed that carries nothing for that id leaves
+ * the current guide untouched instead of blanking the channel.
  */
 /**
  * Release a channel's feed lock without touching the rest of its override
@@ -644,41 +813,58 @@ export async function unmatchAutomatchChannels(targets: UnmatchTarget[]): Promis
 export async function resetChannelToDefault(streamId: string): Promise<void> {
   const dbInstance = await (db as any).dbPromise;
 
-  // 1. Get original epg_channel_id before we delete the override
+  // 1. The channel's own provider id and playlist, and what the override changed,
+  // all read before the override is deleted.
   const rows = await dbInstance.select(
-    `SELECT epg_channel_id FROM channels WHERE stream_id = $1`,
+    `SELECT epg_channel_id, source_id FROM channels WHERE stream_id = $1`,
     [streamId]
-  ) as { epg_channel_id: string | null }[];
+  ) as { epg_channel_id: string | null; source_id: string | null }[];
   const originalEpgId = rows[0]?.epg_channel_id;
+  const ownSourceId = rows[0]?.source_id;
+  const overrideRows = await dbInstance.select(
+    `SELECT epg_channel_id, epg_source_id FROM epg_channel_overrides WHERE stream_id = $1`,
+    [streamId]
+  ) as { epg_channel_id: string | null; epg_source_id: string | null }[];
+  const hadOverride = overrideRows.length > 0;
+  const overrideEpgId = overrideRows[0]?.epg_channel_id ?? null;
+  const overridePin = (overrideRows[0]?.epg_source_id ?? '').trim() || null;
 
   // 2. Delete overrides
   await dbInstance.execute(`DELETE FROM epg_channel_overrides WHERE stream_id = $1`, [streamId]);
   await dbInstance.execute(`DELETE FROM epg_program_overrides WHERE stream_id = $1`, [streamId]);
 
-  // 3. Restore original programs if we have an original epg_channel_id
-  if (originalEpgId) {
-    // Clear programs that belonged to the previous override
+  // 3. Put the channel's own feed's guide back for its original tvg-id. Scoped to
+  // the channel's own playlist, so a reset can never restore a different
+  // playlist's channel under this source's name.
+  //
+  // When that feed has nothing for the id there is no guide to restore, and what the
+  // channel is holding is then either its own provider's rows (an override that just
+  // names this channel's own id — the Automatch self-match) or the guide the
+  // override borrowed from another feed. The borrowed ones go: the user asked to be
+  // back on their provider, those rows now count as "has a guide" and so would also
+  // block a global EPG link from filling the channel, and the confirmation dialog
+  // promises the original data is restored. The provider's own rows stay, because
+  // deleting a guide we cannot prove is foreign just blanks the channel until the
+  // next sync.
+  const guide = originalEpgId
+    ? await findFeedGuideSource(originalEpgId, ownSourceId, streamId)
+    : null;
+  if (guide?.kind === 'channel') {
+    await replaceGuideFromChannel(dbInstance, streamId, guide.streamId);
+  } else if (rowsCameFromAnotherFeed(hadOverride, ownSourceId, originalEpgId, overrideEpgId, overridePin)) {
+    const dropped = await countChannelPrograms(dbInstance, streamId);
     await dbInstance.execute(`DELETE FROM programs WHERE stream_id = $1`, [streamId]);
-
-    // Find a stream that has the original epg_channel_id (to copy its programs)
-    const srcRows = await dbInstance.select(
-      `SELECT stream_id FROM channels WHERE epg_channel_id = $1 AND stream_id != $2 LIMIT 1`,
-      [originalEpgId, streamId]
-    ) as { stream_id: string }[];
-
-    if (srcRows.length > 0) {
-      const sourceStreamId = srcRows[0].stream_id;
-      await dbInstance.execute(
-        `INSERT OR REPLACE INTO programs (id, stream_id, title, subtitle, description, start, end, source_id)
-         SELECT
-           $1 || '_' || start AS id,
-           $1 AS stream_id,
-           title, subtitle, description, start, end, source_id
-         FROM programs
-         WHERE stream_id = $2`,
-        [streamId, sourceStreamId]
-      );
-    }
+    console.log(
+      `[EPG Override] Reset: dropped ${dropped} borrowed row(s) from ${streamId} ` +
+        `(override ${overridePin ? `pinned to ${overridePin}` : `named "${overrideEpgId}"`}, ` +
+        `own feed ${ownSourceId ?? '(unknown)'} has no guide for ` +
+        `"${originalEpgId ?? overrideEpgId ?? '(none)'}")`
+    );
+  } else if (originalEpgId) {
+    console.warn(
+      `[EPG Override] Reset: feed ${ownSourceId ?? '(unknown)'} carries no guide for ` +
+        `"${originalEpgId}"; kept the current guide on ${streamId}`
+    );
   }
 
   const { dbEvents } = await import('../db/sqlite-adapter');

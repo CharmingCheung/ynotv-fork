@@ -4353,6 +4353,88 @@ function alignPinMatches(unservableFeeds: string[]): { sql: string; params: stri
   };
 }
 
+/**
+ * Freshness cutoff every alignment statement shares, so the rows the DELETE
+ * claims are exactly the rows the INSERTs would write.
+ */
+export const ALIGN_GUIDE_CUTOFF_SQL = `datetime('now', '-1 hour')`;
+
+/**
+ * The `sc` (guide-providing channel) conditions the DELETE and both INSERTs in
+ * `alignOverriddenChannelPrograms` must agree on: a carrier that is a different
+ * channel, is not itself overridden (a carrier with its own override is written
+ * by *its* pin, never used as a source) and holds at least one row inside the
+ * current window.
+ */
+function alignCarrierSql(match: 'id' | 'name'): string {
+  const byColumn = match === 'id'
+    ? 'sc.epg_channel_id = eco.epg_channel_id'
+    : 'sc.name = eco.epg_channel_id';
+  return `${byColumn}
+                          AND sc.stream_id != eco.stream_id
+                          AND sc.stream_id NOT IN (SELECT stream_id FROM epg_channel_overrides)`;
+}
+
+/**
+ * The three statements `alignOverriddenChannelPrograms` runs, in order: one
+ * DELETE followed by the id-match and name-match INSERTs.
+ *
+ * The DELETE deliberately claims *only* the rows the INSERTs are about to write.
+ * Without that, a target whose id exists only on a carrier that is itself
+ * overridden, or that holds nothing in the current window (an empty or truncated
+ * provider feed — the 108-byte XMLTV case), was emptied and never refilled: the
+ * alignment deleted the rows the channel's own EPG pass had just written and put
+ * nothing back, on every sync. The carrier conditions and the cutoff are shared
+ * here rather than repeated, and `alignmentReplaceOnly.test.ts` runs all three
+ * against a real SQLite asserting every channel the delete touches gets rows
+ * back.
+ */
+export function buildAlignmentStatements(pinSql: string): {
+  deleteProgramsSql: string;
+  insertByIdSql: string;
+  insertByNameSql: string;
+} {
+  const touched = `(tc.source_id = $1 OR sc.source_id = $1)
+           AND ${pinSql}`;
+  const carrierExists = `EXISTS (
+             SELECT 1 FROM programs p
+              WHERE p.stream_id = sc.stream_id
+                AND p.end >= ${ALIGN_GUIDE_CUTOFF_SQL}
+           )`;
+  const insert = (carrier: string) => `INSERT OR REPLACE INTO programs (id, stream_id, title, subtitle, description, start, end, source_id)
+       SELECT
+         eco.stream_id || '_' || CAST(CAST(strftime('%s', p.start) AS INTEGER) * 1000 AS TEXT) AS id,
+         eco.stream_id AS stream_id,
+         p.title, p.subtitle, p.description, p.start, p.end, tc.source_id AS source_id
+       FROM epg_channel_overrides eco
+       JOIN channels tc ON tc.stream_id = eco.stream_id
+       JOIN channels sc ON ${carrier}
+       JOIN programs p ON p.stream_id = sc.stream_id
+       WHERE (tc.source_id = $1 OR sc.source_id = $1)
+         AND ${pinSql}
+         AND p.end >= ${ALIGN_GUIDE_CUTOFF_SQL}
+       GROUP BY eco.stream_id, p.start`;
+
+  return {
+    deleteProgramsSql: `DELETE FROM programs
+       WHERE stream_id IN (
+         SELECT eco.stream_id FROM epg_channel_overrides eco
+         JOIN channels tc ON tc.stream_id = eco.stream_id
+         JOIN channels sc ON ${alignCarrierSql('id')}
+         WHERE ${touched}
+           AND ${carrierExists}
+         UNION
+         SELECT eco.stream_id FROM epg_channel_overrides eco
+         JOIN channels tc ON tc.stream_id = eco.stream_id
+         JOIN channels sc ON ${alignCarrierSql('name')}
+         WHERE ${touched}
+           AND ${carrierExists}
+       )`,
+    insertByIdSql: insert(alignCarrierSql('id')),
+    insertByNameSql: insert(alignCarrierSql('name')),
+  };
+}
+
 /** A channel whose guide is pinned to a *different* feed than its own source. */
 type CrossFeedPinTarget = {
   stream_id: string;
@@ -4540,70 +4622,20 @@ export async function alignOverriddenChannelPrograms(sourceId: string): Promise<
     // rows moved somewhere. Empty (and cheap) for a library without pins.
     const pinnedBefore = await readCrossFeedPinTargets(sourceId);
 
-    // 1. Delete existing copied programs for target channels in this alignment to avoid stale overlaps (using index-friendly UNION subquery)
-    const deletedResult = await executeWithRetry(
-      dbInstance,
-      `DELETE FROM programs
-       WHERE stream_id IN (
-         SELECT eco.stream_id FROM epg_channel_overrides eco
-         JOIN channels tc ON tc.stream_id = eco.stream_id
-         JOIN channels sc ON sc.epg_channel_id = eco.epg_channel_id AND sc.stream_id != eco.stream_id
-         WHERE (tc.source_id = $1 OR sc.source_id = $1)
-           AND ${pinMatch.sql}
-         UNION
-         SELECT eco.stream_id FROM epg_channel_overrides eco
-         JOIN channels tc ON tc.stream_id = eco.stream_id
-         JOIN channels sc ON sc.name = eco.epg_channel_id AND sc.stream_id != eco.stream_id
-         WHERE (tc.source_id = $1 OR sc.source_id = $1)
-           AND ${pinMatch.sql}
-       )`,
-      [sourceId, ...pinMatch.params]
-    );
+    // 1 & 2. Delete the target channels' rows and refill them from their guide
+    // carrier (see `buildAlignmentStatements`: the delete claims only the rows the
+    // inserts are about to write, and the two INSERTs are kept index-friendly and
+    // separate to avoid an unindexed OR join blocking the DB).
+    const { deleteProgramsSql, insertByIdSql, insertByNameSql } = buildAlignmentStatements(pinMatch.sql);
+    const alignParams = [sourceId, ...pinMatch.params];
 
-    // 2. Insert fresh programs from native provider channels to target channels
-    // We execute two separate, ultra-fast index-friendly insert statements to prevent unindexed OR joins from blocking the DB.
-    
+    const deletedResult = await executeWithRetry(dbInstance, deleteProgramsSql, alignParams);
+
     // Step 2a: Match by epg_channel_id (uses idx_channels_epg index)
-    const insertedByIdResult = await executeWithRetry(
-      dbInstance,
-      `INSERT OR REPLACE INTO programs (id, stream_id, title, subtitle, description, start, end, source_id)
-       SELECT 
-         eco.stream_id || '_' || CAST(CAST(strftime('%s', p.start) AS INTEGER) * 1000 AS TEXT) AS id,
-         eco.stream_id AS stream_id,
-         p.title, p.subtitle, p.description, p.start, p.end, tc.source_id AS source_id
-       FROM epg_channel_overrides eco
-       JOIN channels tc ON tc.stream_id = eco.stream_id
-       JOIN channels sc ON sc.epg_channel_id = eco.epg_channel_id
-                        AND sc.stream_id != eco.stream_id
-                        AND sc.stream_id NOT IN (SELECT stream_id FROM epg_channel_overrides)
-       JOIN programs p ON p.stream_id = sc.stream_id
-       WHERE (tc.source_id = $1 OR sc.source_id = $1)
-         AND ${pinMatch.sql}
-         AND p.end >= datetime('now', '-1 hour')
-       GROUP BY eco.stream_id, p.start`,
-      [sourceId, ...pinMatch.params]
-    );
+    const insertedByIdResult = await executeWithRetry(dbInstance, insertByIdSql, alignParams);
 
     // Step 2b: Match by name fallback (uses idx_channels_name index)
-    const insertedByNameResult = await executeWithRetry(
-      dbInstance,
-      `INSERT OR REPLACE INTO programs (id, stream_id, title, subtitle, description, start, end, source_id)
-       SELECT 
-         eco.stream_id || '_' || CAST(CAST(strftime('%s', p.start) AS INTEGER) * 1000 AS TEXT) AS id,
-         eco.stream_id AS stream_id,
-         p.title, p.subtitle, p.description, p.start, p.end, tc.source_id AS source_id
-       FROM epg_channel_overrides eco
-       JOIN channels tc ON tc.stream_id = eco.stream_id
-       JOIN channels sc ON sc.name = eco.epg_channel_id
-                        AND sc.stream_id != eco.stream_id
-                        AND sc.stream_id NOT IN (SELECT stream_id FROM epg_channel_overrides)
-       JOIN programs p ON p.stream_id = sc.stream_id
-       WHERE (tc.source_id = $1 OR sc.source_id = $1)
-         AND ${pinMatch.sql}
-         AND p.end >= datetime('now', '-1 hour')
-       GROUP BY eco.stream_id, p.start`,
-      [sourceId, ...pinMatch.params]
-    );
+    const insertedByNameResult = await executeWithRetry(dbInstance, insertByNameSql, alignParams);
     
     // Report the feed-locked targets while the alignment's effect is still
     // attributable to this source, before anything else writes rows.
