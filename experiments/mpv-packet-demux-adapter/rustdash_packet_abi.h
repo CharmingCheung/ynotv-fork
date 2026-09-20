@@ -1,0 +1,17 @@
+#ifndef YNOTV_RUSTDASH_PACKET_ABI_H
+#define YNOTV_RUSTDASH_PACKET_ABI_H
+
+#include <stdint.h>
+
+/* Experimental, little-endian, file-backed packet contract. Not production ABI. */
+#define RDP_MAGIC "RDPKT001"
+#define RDP_VERSION 1u
+#define RDP_CODEC_NAME_BYTES 32u
+#define RDP_RECORD_PACKET 0x31544b50u /* "PKT1" */
+#define RDP_RECORD_EOF    0x31464f45u /* "EOF1" */
+#define RDP_TRACK_VIDEO 1u
+#define RDP_TRACK_AUDIO 2u
+#define RDP_FLAG_KEYFRAME 1u
+#define RDP_NOPTS INT64_MIN
+
+#endif

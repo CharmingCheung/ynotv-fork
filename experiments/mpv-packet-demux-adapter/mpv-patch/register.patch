@@ -1,0 +1,32 @@
+diff --git a/demux/demux.c b/demux/demux.c
+index 83304d15c..94aca5352 100644
+--- a/demux/demux.c
++++ b/demux/demux.c
+@@ -58,6 +58,7 @@ extern const demuxer_desc_t demuxer_desc_rawvideo;
+ extern const demuxer_desc_t demuxer_desc_mf;
+ extern const demuxer_desc_t demuxer_desc_matroska;
+ extern const demuxer_desc_t demuxer_desc_lavf;
++extern const demuxer_desc_t demuxer_desc_rustdash;
+ extern const demuxer_desc_t demuxer_desc_playlist;
+ extern const demuxer_desc_t demuxer_desc_directory;
+ extern const demuxer_desc_t demuxer_desc_disc;
+@@ -84,6 +85,7 @@ static const demuxer_desc_t *const demuxer_list[] = {
+     &demuxer_desc_sbr,
+ #endif
+     &demuxer_desc_lavf,
++    &demuxer_desc_rustdash,
+     &demuxer_desc_mf,
+     &demuxer_desc_playlist,
+     &demuxer_desc_null,
+diff --git a/meson.build b/meson.build
+index 5cfd3db98..9eb5f8bf8 100644
+--- a/meson.build
++++ b/meson.build
+@@ -98,6 +98,7 @@ sources = files(
+     'demux/demux_disc.c',
+     'demux/demux_edl.c',
+     'demux/demux_lavf.c',
++    'demux/demux_rustdash.c',
+     'demux/demux_mf.c',
+     'demux/demux_mkv.c',
+     'demux/demux_mkv_timeline.c',
