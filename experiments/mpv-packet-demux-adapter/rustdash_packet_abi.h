@@ -3,9 +3,11 @@
 
 #include <stdint.h>
 
-/* Experimental, little-endian, file-backed packet contract. Not production ABI. */
+/* Experimental, little-endian packet-fixture contract. Not production ABI. */
 #define RDP_MAGIC "RDPKT001"
 #define RDP_VERSION 1u
+#define RDP_GENERATION_MAGIC "RDPKT002"
+#define RDP_GENERATION_VERSION 2u
 #define RDP_CODEC_NAME_BYTES 32u
 #define RDP_RECORD_PACKET 0x31544b50u /* "PKT1" */
 #define RDP_RECORD_EOF    0x31464f45u /* "EOF1" */

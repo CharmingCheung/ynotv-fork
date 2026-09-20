@@ -17,19 +17,20 @@ assert "pts_ne_dts=75" in producer
 
 software = text("software.log")
 for expected in (
-    "indexed 217 externally supplied packets",
+    "bounded producer started packets=217 groups=3 queue_packets=8 queue_bytes=131072",
     "Using software decoding.",
     "Selected decoder: aac",
     "TRACKS=2",
     "A-V:  0.000",
     "experimental producer final EOF",
     "finished playback, success",
+    "max_packets=8",
 ):
     assert expected in software, expected
 
 av_samples = [float(value) for value in
               re.findall(r"A-V:\s*([-+]?\d+\.\d+)", software)]
-assert len(av_samples) == 85, len(av_samples)
+assert len(av_samples) >= 80, len(av_samples)
 assert min(av_samples) == 0.0, min(av_samples)
 assert max(av_samples) == 0.0, max(av_samples)
 

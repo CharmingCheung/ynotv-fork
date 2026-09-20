@@ -18,6 +18,25 @@ index 83304d15c..94aca5352 100644
      &demuxer_desc_mf,
      &demuxer_desc_playlist,
      &demuxer_desc_null,
+@@ -3893,1 +3895,4 @@ int demux_seek(demuxer_t *demuxer, double seek_pts, int flags)
++    if (res && in->seeking && demuxer->desc->interrupt)
++        demuxer->desc->interrupt(in->d_thread);
++
+     mp_cond_signal(&in->wakeup);
+diff --git a/demux/demux.h b/demux/demux.h
+index 669315e12..7037cf90c 100644
+--- a/demux/demux.h
++++ b/demux/demux.h
+@@ -145,6 +145,9 @@ typedef struct demuxer_desc {
+     // will be repeated.
+     bool (*read_packet)(struct demuxer *demuxer, struct demux_packet **pkt);
++    // Wake a blocking read so a queued low-level seek can run.
++    // The callback must not call back into the demux core.
++    void (*interrupt)(struct demuxer *demuxer);
+     void (*drop_buffers)(struct demuxer *demuxer);
+     void (*close)(struct demuxer *demuxer);
+     void (*seek)(struct demuxer *demuxer, double rel_seek_secs, int flags);
+     void (*switched_tracks)(struct demuxer *demuxer);
 diff --git a/meson.build b/meson.build
 index 5cfd3db98..9eb5f8bf8 100644
 --- a/meson.build
