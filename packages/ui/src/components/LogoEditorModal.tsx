@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { db, type StoredChannel, type EpgChannelOverride } from '../db';
 import { ChannelLogo } from './ChannelLogo';
 import { batchUpsertLogoOverrides } from '../services/epg-overrides';
+import { storedLogoPaddingOverride, type LogoPaddingOverride } from '../utils/logoPadding';
 import './LogoEditorModal.css';
 
 export interface LogoEditorModalProps {
@@ -25,8 +26,11 @@ export function LogoEditorModal({
   const [existingOverrides, setExistingOverrides] = useState<Map<string, EpgChannelOverride>>(new Map());
   const [logoBgMap, setLogoBgMap] = useState<Record<string, 'auto' | 'light' | 'dark'>>({});
   const [initialBgMap, setInitialBgMap] = useState<Record<string, 'auto' | 'light' | 'dark'>>({});
-  const [logoPaddingMap, setLogoPaddingMap] = useState<Record<string, 'default' | 'none'>>({});
-  const [initialPaddingMap, setInitialPaddingMap] = useState<Record<string, 'default' | 'none'>>({});
+  // Tile padding is tri-state: 'default' = the user asked for Normal, 'none' = No
+  // Pad, and `undefined` = no choice of its own, so the tile follows Settings →
+  // Logos. See utils/logoPadding.
+  const [logoPaddingMap, setLogoPaddingMap] = useState<Record<string, LogoPaddingOverride>>({});
+  const [initialPaddingMap, setInitialPaddingMap] = useState<Record<string, LogoPaddingOverride>>({});
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
   const [filterMode, setFilterMode] = useState<'all' | 'auto' | 'light' | 'dark' | 'no-padding'>('all');
@@ -126,7 +130,7 @@ export function LogoEditorModal({
         const streamIds = channelList.map(ch => ch.stream_id);
         const overridesMap = new Map<string, EpgChannelOverride>();
         const bgMap: Record<string, 'auto' | 'light' | 'dark'> = {};
-        const padMap: Record<string, 'default' | 'none'> = {};
+        const padMap: Record<string, LogoPaddingOverride> = {};
 
         if (streamIds.length > 0) {
           const overrides = await db.epgChannelOverrides.where('stream_id').anyOf(streamIds).toArray();
@@ -136,7 +140,7 @@ export function LogoEditorModal({
               bgMap[ov.stream_id] = ov.logo_background as 'auto' | 'light' | 'dark';
             }
             if (ov.logo_padding) {
-              padMap[ov.stream_id] = ov.logo_padding as 'default' | 'none';
+              padMap[ov.stream_id] = storedLogoPaddingOverride(ov.logo_padding);
             }
           }
         }
@@ -145,9 +149,9 @@ export function LogoEditorModal({
           if (!bgMap[ch.stream_id]) {
             bgMap[ch.stream_id] = 'auto';
           }
-          if (!padMap[ch.stream_id]) {
-            padMap[ch.stream_id] = 'default';
-          }
+          // Deliberately no padding default: a channel with no override of its own
+          // has made no choice, and seeding 'default' here would read as one — the
+          // tile would then render padded no matter what Settings → Logos says.
         }
 
         if (isMounted) {
@@ -190,7 +194,7 @@ export function LogoEditorModal({
     return channels.filter(ch => {
       const matchesSearch = !query || ch.name.toLowerCase().includes(query) || ch.stream_id.toLowerCase().includes(query);
       const bg = logoBgMap[ch.stream_id] || 'auto';
-      const pad = logoPaddingMap[ch.stream_id] || 'default';
+      const pad = logoPaddingMap[ch.stream_id];
 
       let matchesFilter = true;
       if (filterMode === 'auto' || filterMode === 'light' || filterMode === 'dark') {
@@ -256,7 +260,7 @@ export function LogoEditorModal({
     let noPadCount = 0;
     for (const ch of channels) {
       const bg = logoBgMap[ch.stream_id] || 'auto';
-      const pad = logoPaddingMap[ch.stream_id] || 'default';
+      const pad = logoPaddingMap[ch.stream_id];
       if (bg === 'light') lightCount++;
       else if (bg === 'dark') darkCount++;
       else autoCount++;
@@ -309,7 +313,7 @@ export function LogoEditorModal({
   }, []);
 
   // Individual padding update
-  const setChannelPadding = useCallback((streamId: string, pad: 'default' | 'none') => {
+  const setChannelPadding = useCallback((streamId: string, pad: LogoPaddingOverride) => {
     setLogoPaddingMap(prev => ({
       ...prev,
       [streamId]: pad,
@@ -331,7 +335,7 @@ export function LogoEditorModal({
   }, [selectedIds, filteredChannels]);
 
   // Bulk padding update
-  const applyBulkPadding = useCallback((pad: 'default' | 'none') => {
+  const applyBulkPadding = useCallback((pad: LogoPaddingOverride) => {
     const targetIds = selectedIds.size > 0 ? Array.from(selectedIds) : filteredChannels.map(ch => ch.stream_id);
     if (targetIds.length === 0) return;
 
@@ -351,8 +355,10 @@ export function LogoEditorModal({
       const initialBg = initialBgMap[ch.stream_id] || 'auto';
       if (currentBg !== initialBg) return true;
 
-      const currentPad = logoPaddingMap[ch.stream_id] || 'default';
-      const initialPad = initialPaddingMap[ch.stream_id] || 'default';
+      // Compared raw, so "no choice" (undefined) is a state of its own: putting a
+      // channel back on the global setting is a change worth saving.
+      const currentPad = logoPaddingMap[ch.stream_id];
+      const initialPad = initialPaddingMap[ch.stream_id];
       if (currentPad !== initialPad) return true;
     }
     return false;
@@ -365,18 +371,27 @@ export function LogoEditorModal({
       const updates: Array<{
         streamId: string;
         logoBackground?: 'auto' | 'light' | 'dark';
-        logoPadding?: 'default' | 'none';
+        // `null` is the explicit "no choice", which the write path has to tell
+        // apart from an update that simply doesn't mention padding.
+        logoPadding?: 'default' | 'none' | null;
       }> = [];
       for (const ch of channels) {
         const currentBg = logoBgMap[ch.stream_id] || 'auto';
         const initialBg = initialBgMap[ch.stream_id] || 'auto';
-        const currentPad = logoPaddingMap[ch.stream_id] || 'default';
-        const initialPad = initialPaddingMap[ch.stream_id] || 'default';
+        const currentPad = logoPaddingMap[ch.stream_id];
+        const initialPad = initialPaddingMap[ch.stream_id];
         if (currentBg !== initialBg || currentPad !== initialPad) {
+          // Send only what the user changed: an unchanged field is kept from the
+          // stored override, and sending it anyway would record a choice that was
+          // never made — editing a channel's background would pin a tile padding
+          // onto it, which then overrides the global Tile Layout setting.
           updates.push({
             streamId: ch.stream_id,
-            logoBackground: currentBg,
-            logoPadding: currentPad,
+            ...(currentBg !== initialBg ? { logoBackground: currentBg } : {}),
+            // `currentPad` undefined means the user put the channel back on the
+            // global setting; `null` says so, where omitting the field would mean
+            // "leave the stored padding alone".
+            ...(currentPad !== initialPad ? { logoPadding: currentPad ?? null } : {}),
           });
         }
       }
@@ -506,6 +521,13 @@ export function LogoEditorModal({
 
             <span className="bulk-action-label">{t('paddingLabel')}</span>
             <button
+              className="bulk-btn bulk-btn-pad-default"
+              onClick={() => applyBulkPadding(undefined)}
+              title={i18n.t('epg:paddingDefaultTitle')}
+            >
+              ✨ {i18n.t('common:default')}
+            </button>
+            <button
               className="bulk-btn bulk-btn-no-pad"
               onClick={() => applyBulkPadding('none')}
               title={selectedIds.size > 0 ? t('removePaddingSelected') : t('removePaddingAll')}
@@ -544,7 +566,7 @@ export function LogoEditorModal({
               {visibleChannels.map((channel, i) => {
                 const isSelected = selectedIds.has(channel.stream_id);
                 const bg = logoBgMap[channel.stream_id] || 'auto';
-                const pad = logoPaddingMap[channel.stream_id] || 'default';
+                const pad = logoPaddingMap[channel.stream_id];
 
                 return (
                   <div
@@ -612,21 +634,31 @@ export function LogoEditorModal({
                       </button>
                     </div>
 
-                    {/* Segmented Control Pills for Padding */}
+                    {/* Segmented Control Pills for Padding. Three options, matching
+                        the EPG editor's framing control: Default follows Settings →
+                        Logos, Normal and No Pad are explicit choices of this
+                        channel's own. */}
                     <div className="card-segmented-control card-padding-control">
+                      <button
+                        className={`segmented-btn ${pad === undefined ? 'active' : ''}`}
+                        onClick={(e) => { e.stopPropagation(); setChannelPadding(channel.stream_id, undefined); }}
+                        title={i18n.t('epg:paddingDefaultTitle')}
+                      >
+                        ✨ {i18n.t('common:default')}
+                      </button>
                       <button
                         className={`segmented-btn ${pad === 'default' ? 'active' : ''}`}
                         onClick={(e) => { e.stopPropagation(); setChannelPadding(channel.stream_id, 'default'); }}
                         title={i18n.t('epg:normalPaddingTitle')}
                       >
-                        📐 Normal
+                        📐 {i18n.t('epg:normalPadding')}
                       </button>
                       <button
                         className={`segmented-btn ${pad === 'none' ? 'active' : ''}`}
                         onClick={(e) => { e.stopPropagation(); setChannelPadding(channel.stream_id, 'none'); }}
                         title={i18n.t('epg:noPadTitle')}
                       >
-                        🖼️ No Pad
+                        🖼️ {i18n.t('epg:noPad')}
                       </button>
                     </div>
                   </div>

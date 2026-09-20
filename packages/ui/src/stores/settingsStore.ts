@@ -1412,7 +1412,16 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     set({ channelLogoRoundEdges: enabled });
     persistSettings({ channelLogoRoundEdges: enabled });
   },
-  channelLogoPadding: (cachedSettings?.channelLogoPadding as 'none' | 'padded') ?? 'none',
+  /**
+   * The Tile Layout setting (Settings → LiveTV → Logos).
+   *
+   * The fallback is the default for a user who has never opened the toggle; a
+   * *stored* value is their own choice and is never rewritten — including 'none',
+   * which was this setting's shipped default for a while and is therefore as
+   * likely to be deliberate as any other value. Deliberately no migration: see the
+   * note on `channelLogoPadding` in settingsStoreHydration.
+   */
+  channelLogoPadding: (cachedSettings?.channelLogoPadding as 'none' | 'padded') ?? 'padded',
   setChannelLogoPadding: (padding) => {
     set({ channelLogoPadding: padding });
     persistSettings({ channelLogoPadding: padding });

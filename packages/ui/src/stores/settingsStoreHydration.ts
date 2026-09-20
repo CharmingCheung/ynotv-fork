@@ -520,7 +520,10 @@ async function hydrateSettingsStore(): Promise<void> {
         epgAutomatchEnabledOnly: data.epgAutomatchEnabledOnly ?? true,
         channelLogoSize: data.channelLogoSize ?? 42,
         channelLogoRoundEdges: data.channelLogoRoundEdges ?? true,
-        channelLogoPadding: data.channelLogoPadding ?? 'none',
+        // The Tile Layout setting: an absent value takes the default below, and a
+        // stored one is the user's own choice — nothing here rewrites it, so Full
+        // Bleed stays Full Bleed across releases.
+        channelLogoPadding: data.channelLogoPadding ?? 'padded',
         logoSmartTrim: data.logoSmartTrim ?? false,
         logoLightBackgroundDetection: data.logoLightBackgroundDetection ?? true,
         logoDefaultBackground: (data.logoDefaultBackground ?? 'auto') as 'auto' | 'light' | 'dark',

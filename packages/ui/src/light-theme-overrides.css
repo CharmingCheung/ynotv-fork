@@ -6167,9 +6167,9 @@ html.modern-ui-v3[data-theme="light"] body.tv-nav-active .tv-focused {
  * plain amber-700 are only 3.2-3.9:1.
  */
 [data-theme="light"] .epg-matches-chip.elsewhere {
-  color: #92400e !important;
-  border-color: color-mix(in srgb, #92400e 45%, transparent) !important;
-  background: color-mix(in srgb, #92400e 10%, transparent) !important;
+  color: var(--status-warning-text, #92400e) !important;
+  border-color: color-mix(in srgb, var(--status-warning-text, #92400e) 45%, transparent) !important;
+  background: color-mix(in srgb, var(--status-warning-text, #92400e) 10%, transparent) !important;
 }
 
 /*
@@ -6329,7 +6329,7 @@ html.modern-ui-v3[data-theme="light"] body.tv-nav-active .tv-focused {
 }
 
 [data-theme="light"] .epg-refusal-title {
-  color: #92400e !important;
+  color: var(--status-warning-text, #92400e) !important;
 }
 
 [data-theme="light"] .epg-refusal-dismiss {
@@ -6346,21 +6346,21 @@ html.modern-ui-v3[data-theme="light"] body.tv-nav-active .tv-focused {
 [data-theme="light"] .epg-danger-zone-title,
 [data-theme="light"] .epg-automatch-undo-error,
 [data-theme="light"] .epg-program-action-btn.danger {
-  color: var(--lt-text-danger-dark, #b91c1c) !important;
+  color: var(--status-danger-text, #b91c1c) !important;
 }
 
 [data-theme="light"] .epg-editor-saved-notice,
 [data-theme="light"] .epg-program-action-btn.restore {
-  color: #15803d !important;
+  color: var(--status-success-text, #166534) !important;
 }
 
 [data-theme="light"] .epg-badge-modified,
 [data-theme="light"] .epg-automatch-notice {
-  color: #92400e !important;
+  color: var(--status-warning-text, #92400e) !important;
 }
 
 [data-theme="light"] .epg-badge-deleted {
-  color: var(--lt-text-danger-dark, #b91c1c) !important;
+  color: var(--status-danger-text, #b91c1c) !important;
 }
 
 /* Dropdown: the caret is a white data-URI SVG and the options were white on
@@ -6377,3 +6377,212 @@ html.modern-ui-v3[data-theme="light"] body.tv-nav-active .tv-focused {
 [data-theme="light"] .epg-matches-row-main.is-node.open {
   border-color: var(--accent-primary, #0066cc) !important;
 }
+
+/* Modern Card Sections */
+[data-theme="light"] .epg-editor-card {
+  background: var(--lt-bg-surface, #ffffff) !important;
+  border: 1px solid var(--lt-bd-color, #e2e8f0) !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .epg-editor-card:hover {
+  border-color: var(--lt-bd-color-strong, #cbd5e1) !important;
+}
+
+[data-theme="light"] .epg-editor-card-title {
+  color: var(--lt-text-primary, #0f172a) !important;
+}
+
+[data-theme="light"] .epg-editor-card-desc {
+  color: var(--lt-text-secondary, #64748b) !important;
+}
+
+/* Tab & general badges */
+[data-theme="light"] .epg-tab-badge {
+  background: var(--lt-bg-active, #e2e8f0) !important;
+  color: var(--lt-text-secondary, #475569) !important;
+}
+
+[data-theme="light"] .epg-editor-tab.active .epg-tab-badge {
+  background: var(--lt-bg-info, #bae6fd) !important;
+  color: var(--accent-primary, #0066cc) !important;
+}
+
+[data-theme="light"] .epg-badge-muted {
+  background: var(--lt-bg-subtle, #f1f5f9) !important;
+  color: var(--lt-text-secondary, #64748b) !important;
+  border-color: var(--lt-bd-color, #e2e8f0) !important;
+}
+
+/* Logo studio */
+[data-theme="light"] .epg-logo-stage-box {
+  background: var(--lt-bg-subtle, #f8fafc) !important;
+  border-color: var(--lt-bd-color, #cbd5e1) !important;
+}
+
+[data-theme="light"] .epg-quick-select-chip {
+  background: var(--lt-bg-subtle, #f8fafc) !important;
+  border-color: var(--lt-bd-color, #cbd5e1) !important;
+  color: var(--lt-text-primary, #0f172a) !important;
+}
+
+[data-theme="light"] .epg-quick-select-chip:hover {
+  background: var(--lt-bg-hover, #f1f5f9) !important;
+  border-color: var(--accent-primary, #0066cc) !important;
+}
+
+[data-theme="light"] .epg-quick-select-chip.active {
+  background: var(--lt-bg-info, #e0f2fe) !important;
+  border-color: var(--accent-primary, #0066cc) !important;
+  color: var(--accent-primary, #0066cc) !important;
+}
+
+/* Timeshift presets */
+[data-theme="light"] .epg-preset-pill {
+  background: var(--lt-bg-subtle, #f8fafc) !important;
+  border-color: var(--lt-bd-color, #cbd5e1) !important;
+  color: var(--lt-text-secondary, #475569) !important;
+}
+
+[data-theme="light"] .epg-preset-pill:hover {
+  background: var(--lt-bg-hover, #f1f5f9) !important;
+  color: var(--lt-text-primary, #0f172a) !important;
+  border-color: var(--lt-bd-color-strong, #94a3b8) !important;
+}
+
+[data-theme="light"] .epg-preset-pill.active {
+  background: var(--lt-bg-info, #e0f2fe) !important;
+  border-color: var(--accent-primary, #0066cc) !important;
+  color: var(--accent-primary, #0066cc) !important;
+}
+
+/* Stats deck */
+[data-theme="light"] .epg-stat-card {
+  background: var(--lt-bg-surface, #ffffff) !important;
+  border: 1px solid var(--lt-bd-color, #e2e8f0) !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+}
+
+[data-theme="light"] .epg-stat-card:hover {
+  border-color: var(--lt-bd-color-strong, #cbd5e1) !important;
+}
+
+/* No blanket rule for .epg-stat-val: the deck's numbers are plain text
+   (--text-primary) or a signal, and a signal now asks for the --status-* token
+   its element carries (see "Semantic badges and score chips" below). The blanket
+   override that used to sit here flattened every colour to one value, which is
+   what made the "matched" green and the "N ambiguous" amber lose their meaning
+   the moment light theme was on. */
+
+[data-theme="light"] .epg-stat-lbl {
+  color: var(--lt-text-secondary, #64748b) !important;
+}
+
+/* Search deck & score badges */
+[data-theme="light"] .epg-search-deck {
+  background: var(--lt-bg-surface, #ffffff) !important;
+  border-color: var(--lt-bd-color, #e2e8f0) !important;
+}
+
+[data-theme="light"] .epg-score-badge.poor {
+  background: var(--lt-bg-subtle, #f1f5f9) !important;
+  color: var(--lt-text-secondary, #64748b) !important;
+  border-color: var(--lt-bd-color, #e2e8f0) !important;
+}
+
+/* Log filters */
+[data-theme="light"] .epg-log-filters {
+  background: var(--lt-bg-subtle, #f8fafc) !important;
+  border-bottom: 1px solid var(--lt-bd-color, #e2e8f0) !important;
+}
+
+[data-theme="light"] .epg-log-filter-pill {
+  color: var(--lt-text-secondary, #64748b) !important;
+}
+
+[data-theme="light"] .epg-log-filter-pill:hover {
+  background: var(--lt-bg-hover, #f1f5f9) !important;
+  color: var(--lt-text-primary, #0f172a) !important;
+}
+
+[data-theme="light"] .epg-log-filter-pill.active {
+  background: var(--lt-bg-active, #e2e8f0) !important;
+  border-color: var(--lt-bd-color-strong, #cbd5e1) !important;
+  color: var(--lt-text-primary, #0f172a) !important;
+}
+
+/* EPG currently airing program row */
+[data-theme="light"] .epg-program-row.is-current {
+  background: rgba(2, 132, 199, 0.07) !important;
+  border-color: rgba(2, 132, 199, 0.45) !important;
+  box-shadow: 0 2px 10px rgba(2, 132, 199, 0.12), inset 3px 0 0 #0284c7 !important;
+}
+
+[data-theme="light"] .epg-program-row.is-current:hover {
+  background: rgba(2, 132, 199, 0.1) !important;
+  border-color: #0284c7 !important;
+}
+
+[data-theme="light"] .epg-badge-live {
+  background: rgba(2, 132, 199, 0.12) !important;
+  color: #0284c7 !important;
+  border-color: rgba(2, 132, 199, 0.3) !important;
+}
+
+[data-theme="light"] .epg-live-pulse {
+  background: #0284c7 !important;
+  box-shadow: 0 0 6px rgba(2, 132, 199, 0.6) !important;
+}
+
+/* Semantic badges and score chips.
+ *
+ * These were built for the dark guide, where the neon greens and ambers read fine
+ * on near-black. The text colour of each one is no longer set here: it comes from
+ * the --status-* tokens themes.css defines per theme ("Signals" in the Light Theme
+ * block), which is what makes the same badge rule correct in both themes. The rule
+ * keeps only the tint and border.
+ *
+ * What those tokens have to clear, measured: the neon set on its own tint over a
+ * white card is #22c55e 2.00:1, #f59e0b 1.91:1, #ffaa44 1.77:1 and bare #4caf50
+ * 2.78:1 — under half the 4.5:1 AA minimum for text this size (0.75rem), so the
+ * match score, the run's success/warning lines and the "N ambiguous" tab count
+ * were all hard to read in light theme. The light tokens land at #166534 7.13:1
+ * (6.14:1 on their 10% tint), #92400e 7.09:1 (6.08:1), #b91c1c 6.47:1 (5.45:1) and
+ * #6d28d9 7.10:1, and 6.3/6.3/5.7/6.3:1 on the theme's grey rows. The accent pair
+ * below sits at 4.96:1 (4.54:1 on a hovered row) — its tint is held at 8% because at
+ * 12% it drops to 4.42:1, under AA. Keep those numbers in mind when changing a tint
+ * or a token value.
+ */
+[data-theme="light"] .epg-badge-success,
+[data-theme="light"] .epg-score-badge.high {
+  background: rgba(22, 101, 52, 0.1) !important;
+  color: var(--status-success, #166534) !important;
+  border-color: rgba(22, 101, 52, 0.3) !important;
+}
+
+[data-theme="light"] .epg-badge-warning,
+[data-theme="light"] .epg-score-badge.low {
+  background: rgba(146, 64, 14, 0.1) !important;
+  color: var(--status-warning, #92400e) !important;
+  border-color: rgba(146, 64, 14, 0.3) !important;
+}
+
+[data-theme="light"] .epg-badge-info,
+[data-theme="light"] .epg-score-badge.medium {
+  background: rgba(0, 102, 204, 0.08) !important;
+  color: var(--accent-primary, #0066cc) !important;
+  border-color: rgba(0, 102, 204, 0.28) !important;
+}
+
+/* The ambiguous-match count on the Automatch tab. The active-tab rule below sets
+   the badge's own colours at a higher specificity than the base tab badge, so the
+   warning variant has to be named for both states or the count loses its amber
+   signal the moment its tab is the open one (it keeps it in dark theme). */
+html[data-theme="light"] .epg-tab-badge-warning,
+html[data-theme="light"] .epg-editor-tab.active .epg-tab-badge-warning {
+  background: rgba(146, 64, 14, 0.12) !important;
+  color: var(--status-warning, #92400e) !important;
+  border-color: rgba(146, 64, 14, 0.35) !important;
+}
+
+

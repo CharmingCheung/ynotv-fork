@@ -41,6 +41,19 @@
   --status-recording: #e74c3c;
   --status-new: #2ecc71;
 
+  /* Semantic signal colors (badges, score chips, inline status text).
+     Dark keeps the guide's neon set: `--status-*` is the saturated shade the
+     badges and stat numbers use, `--status-*-text` the softer one small inline
+     text and icon glyphs use. The Light Theme block below redefines all of them
+     with values checked against the light surfaces. */
+  --status-success: #22c55e;
+  --status-warning: #f59e0b;
+  --status-danger: #ef4444;
+  --status-info: #a855f7;
+  --status-success-text: #4caf50;
+  --status-warning-text: #ffaa44;
+  --status-danger-text: #ff6b6b;
+
   /* Background gradients (subtle for dark) */
   --bg-gradient-1: #1a1a1a;
   --bg-gradient-2: #2d2d2d;
@@ -68,6 +81,22 @@
   --accent-primary: #0066cc;
   --accent-secondary: #004499;
   --accent-glow: rgba(0, 102, 204, 0.3);
+
+  /* Signals. The dark neon set measures 1.7-4.0:1 on the light surfaces (worst:
+     #ffaa44 at 1.68:1 on the cards and log rows), under AA for text. These are
+     the same hues taken dark enough to survive both the white cards and the
+     theme's own #f1f1f1 rows: success #166534 7.13:1, warning #92400e 7.09:1,
+     danger #b91c1c 6.47:1, info #6d28d9 7.10:1 (6.3/6.3/5.7/6.3:1 on #f1f1f1),
+     and past 5:1 again on each badge's own 10% tint. `-text` matches its
+     saturated twin here on purpose: light has no bright surface for the softer
+     shade to sit on, so both resolve to the AA-safe value. */
+  --status-success: #166534;
+  --status-warning: #92400e;
+  --status-danger: #b91c1c;
+  --status-info: #6d28d9;
+  --status-success-text: #166534;
+  --status-warning-text: #92400e;
+  --status-danger-text: #b91c1c;
 
   --glass-blur: 0px;
   --glass-saturation: 100%;

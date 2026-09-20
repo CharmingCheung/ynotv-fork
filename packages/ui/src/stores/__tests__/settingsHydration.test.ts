@@ -10,7 +10,9 @@
  *   - missing/undefined values keep the store's defaults (never null),
  *   - corrupted shapes are rejected so a mismatched blob can't hydrate in,
  *   - localStorage is the fallback when Tauri storage has no data,
- *   - the one-time timeshift migration persists its flag exactly once.
+ *   - the one-time timeshift migration persists its flag exactly once,
+ *   - a stored logo Tile Layout choice survives every boot: the default is only
+ *     ever applied to an *absent* value, never written over a chosen one.
  *
  * Environment: node (no DOM needed — the applier no-ops without `document`,
  * and the store's persist helpers no-op without a real bridge).
@@ -286,6 +288,56 @@ describe('settings store hydration', () => {
     const secondMigrationWrites = mockUpdate.mock.calls.filter(([patch]) =>
       (patch as Record<string, unknown>).v3DefaultMigrated === true);
     expect(secondMigrationWrites).toHaveLength(0);
+  });
+
+  it('never rewrites a stored Tile Layout choice, including full-bleed', async () => {
+    // 'none' was this setting's shipped default for a while, so it is as likely to
+    // be a deliberate Full-Bleed choice as any other value — and a user who picked
+    // it must find it still picked after an update. Nothing on the boot path may
+    // rewrite the setting: the store default only ever fills in an *absent* value.
+    storageBackend.modernUiEnabled = 'v3';
+    storageBackend.channelLogoPadding = 'none';
+    await ensureSettingsHydration();
+    await vi.waitFor(() => expect(useSettingsStore.getState().layoutSettingsLoaded).toBe(true));
+
+    expect(useSettingsStore.getState().channelLogoPadding).toBe('none');
+    const paddingWrites = mockUpdate.mock.calls.filter(
+      ([patch]) => 'channelLogoPadding' in (patch as Record<string, unknown>)
+    );
+    expect(paddingWrites).toHaveLength(0);
+
+    // …and the same on a later boot, for every UI generation.
+    for (const ui of ['v2', 'v3'] as const) {
+      vi.resetModules();
+      ({ useSettingsStore } = await import('../settingsStore'));
+      ({ ensureSettingsHydration } = await import('../settingsStoreHydration'));
+      storageBackend.modernUiEnabled = ui;
+      await ensureSettingsHydration();
+      await vi.waitFor(() => expect(useSettingsStore.getState().layoutSettingsLoaded).toBe(true));
+      expect(useSettingsStore.getState().channelLogoPadding).toBe('none');
+    }
+  });
+
+  it('gives an install that never chose a Tile Layout the padded default', async () => {
+    // The flip side: a user who never opened the toggle has no stored value, so the
+    // new default applies — and stays unpersisted, so a future change of mind about
+    // the default can still reach them.
+    delete storageBackend.channelLogoPadding;
+    await ensureSettingsHydration();
+    await vi.waitFor(() => expect(useSettingsStore.getState().layoutSettingsLoaded).toBe(true));
+
+    expect(useSettingsStore.getState().channelLogoPadding).toBe('padded');
+    expect(
+      mockUpdate.mock.calls.some(([patch]) => 'channelLogoPadding' in (patch as Record<string, unknown>))
+    ).toBe(false);
+  });
+
+  it('keeps an explicit padded Tile Layout as padded', async () => {
+    storageBackend.channelLogoPadding = 'padded';
+    await ensureSettingsHydration();
+    await vi.waitFor(() => expect(useSettingsStore.getState().layoutSettingsLoaded).toBe(true));
+
+    expect(useSettingsStore.getState().channelLogoPadding).toBe('padded');
   });
 
   it('hydrates the new CSS-var fields with defaults (no null leaks)', async () => {

@@ -1,0 +1,62 @@
+/* Settings → Live TV → Logos: the live logo swatch preview.
+ *
+ * The swatches themselves are the real <ChannelLogo> component, so their size,
+ * radius, shape, padding and background come from the Live TV guide's own
+ * stylesheet and the `--channel-logo-*` / `--guide-*` tokens it consumes. This
+ * file therefore only supplies the frame — the box, the surface the logos sit
+ * on, and the captions — and deliberately sets no tile geometry of its own.
+ */
+
+.logo-preview-box {
+  margin-top: 16px;
+  margin-bottom: 20px;
+  padding: 16px;
+  background: var(--bg-tertiary, #1e1e24);
+  border: 1px solid var(--surface-border, rgba(255, 255, 255, 0.08));
+  border-radius: 8px;
+}
+
+.logo-preview-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+/* The surface the guide puts behind its logos (`.guide-channel-info`), so a
+   tile's own translucency reads here exactly as it does in the guide. */
+.logo-preview-stage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: var(--guide-info-bg, rgba(0, 0, 0, 0.25));
+  border: 1px solid var(--surface-border, rgba(255, 255, 255, 0.08));
+}
+
+.logo-preview-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.logo-preview-tile-label {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.logo-preview-summary {
+  margin-left: auto;
+  max-width: 280px;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.logo-preview-summary strong {
+  color: var(--text-primary);
+}

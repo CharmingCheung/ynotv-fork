@@ -1514,12 +1514,20 @@ html.epg-highlight-border-current .guide-channel-row.currently-playing::after {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  padding: 0;
+  padding: 3px;
   box-sizing: border-box;
 }
 
-html.logo-padded-tiles .guide-channel-logo,
-.logo-padded-tiles .guide-channel-logo {
+/* `:not(.logo-padded)` matters as much as `:not(.no-padding)`: this rule is the
+   legacy expression of the global Tile Layout setting, and with `!important` it
+   used to beat every context that declares its own padding at lower specificity
+   — the rectangle shape (2px 4px), the EPG editor's 6px logo stage and the logo
+   editor's 4px preview all rendered at 3px whenever the global setting was
+   Padded. ChannelLogo now writes `logo-padded`/`no-padding` itself, so this rule
+   only has to cover markup that carries neither. */
+.guide-channel-logo.logo-padded,
+html.logo-padded-tiles .guide-channel-logo:not(.no-padding):not(.logo-padded),
+.logo-padded-tiles .guide-channel-logo:not(.no-padding):not(.logo-padded) {
   padding: 3px !important;
 }
 
@@ -1549,8 +1557,12 @@ html.epg-rectangle-logos .guide-channel-logo,
   width: var(--guide-logo-rect-w, calc(var(--channel-logo-size, 42px) * 1.833));
   height: var(--guide-logo-rect-h, calc(var(--channel-logo-size, 42px) * 0.888));
   border-radius: var(--guide-logo-rect-radius, var(--channel-logo-radius, 4px));
-  padding: 0;
+  padding: 2px 4px;
   background: var(--guide-logo-rect-bg, transparent);
+}
+html.epg-rectangle-logos .guide-channel-logo.logo-padded,
+.guide-channel-logo.logo-shape-rectangle.logo-padded {
+  padding: 2px 4px !important;
 }
 html.epg-rectangle-logos .guide-channel-logo.logo-on-light,
 .guide-channel-logo.logo-shape-rectangle.logo-on-light {
@@ -1562,8 +1574,12 @@ html.epg-rectangle-logos .guide-channel-logo.logo-shape-square {
   width: var(--channel-logo-size, 42px);
   height: var(--channel-logo-size, 42px);
   border-radius: var(--guide-logo-square-radius, var(--channel-logo-radius, 4px));
-  padding: 0;
+  padding: 3px;
   background: var(--guide-logo-square-bg, rgba(255, 255, 255, 0.08));
+}
+html.epg-rectangle-logos .guide-channel-logo.logo-shape-square.logo-padded,
+.guide-channel-logo.logo-shape-square.logo-padded {
+  padding: 3px !important;
 }
 html.epg-rectangle-logos .guide-channel-logo.logo-shape-square.logo-on-light {
   background: var(--guide-logo-onlight-bg, rgba(255, 255, 255, 0.9));
@@ -1577,15 +1593,26 @@ html.logo-sharp-edges .guide-channel-logo,
 
 /* No-padding overrides for standard & rectangle logos */
 .guide-channel-logo.no-padding,
-html.epg-rectangle-logos .guide-channel-logo.no-padding {
+html.epg-rectangle-logos .guide-channel-logo.no-padding,
+.guide-channel-logo.logo-shape-rectangle.no-padding,
+.guide-channel-logo.logo-shape-square.no-padding {
   padding: 0 !important;
 }
 
-.guide-channel-logo.no-padding img,
-html.epg-rectangle-logos .guide-channel-logo.no-padding img {
+/* `:not(.logo-smart-trim)` matters: a trimmed tile gets its image size and
+   position from the smart-trim rule below, and that rule loses to these
+   (shape-class selectors add a class, and `!important` only settles ties at
+   equal specificity). Letting both apply left the trimmed image sized to the
+   whole tile while still shifted by the trim's `left`, so the logo was drawn
+   off-centre and clipped on the right — visible in the EPG editor's preview,
+   which always passes a shape class. */
+.guide-channel-logo.no-padding:not(.logo-smart-trim) img,
+html.epg-rectangle-logos .guide-channel-logo.no-padding:not(.logo-smart-trim) img,
+.guide-channel-logo.logo-shape-rectangle.no-padding:not(.logo-smart-trim) img,
+.guide-channel-logo.logo-shape-square.no-padding:not(.logo-smart-trim) img {
   width: 100% !important;
   height: 100% !important;
-  object-fit: cover !important;
+  object-fit: contain !important;
 }
 
 /* Smart trim: auto-crop baked-in transparent padding so opaque content fills the tile */

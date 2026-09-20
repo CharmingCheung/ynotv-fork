@@ -4,6 +4,7 @@ import './EpgEditorModal.css';
 import { db, updateChannelsBatch } from '../db';
 import type { StoredChannel, StoredCategory } from '../db';
 import { ChannelLogo } from './ChannelLogo';
+import { storedLogoPaddingOverride } from '../utils/logoPadding';
 import { useEpgClockFormat } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useTranslation } from 'react-i18next';
@@ -464,11 +465,15 @@ function ChevronRightSvg({ size = 12 }: { size?: number }) {
 /** A single program row in the Programs tab */
 function ProgramRow({
   prog,
+  isCurrent = false,
+  rowRef,
   onSave,
   onDelete,
   onRestore,
 }: {
   prog: EditorProgram;
+  isCurrent?: boolean;
+  rowRef?: React.Ref<HTMLDivElement>;
   onSave: (updated: Partial<EditorProgram>) => void;
   onDelete: () => void;
   onRestore: () => void;
@@ -504,7 +509,10 @@ function ProgramRow({
   }
 
   return (
-    <div className={`epg-program-row${prog.is_deleted ? ' is-deleted' : ''}${prog.is_custom ? ' is-custom' : ''}${editing ? ' editing' : ''}`}>
+    <div
+      ref={rowRef}
+      className={`epg-program-row${isCurrent ? ' is-current' : ''}${prog.is_deleted ? ' is-deleted' : ''}${prog.is_custom ? ' is-custom' : ''}${editing ? ' editing' : ''}`}
+    >
       <div className="epg-program-time">
         <div>{formatShortDatetime(prog.start, epgClockFormat)}</div>
         <div style={{ opacity: 0.6, fontSize: '0.7rem', marginTop: 2 }}>→ {formatShortDatetime(prog.end, epgClockFormat)}</div>
@@ -515,6 +523,12 @@ function ProgramRow({
           <div className="epg-program-subtitle" style={{ fontSize: '0.85em', opacity: 0.7, marginTop: 2 }}>{prog.subtitle}</div>
         )}
         <div className="epg-program-badges">
+          {isCurrent && (
+            <span className="epg-badge epg-badge-live" title={t('nowAiring', 'Currently Airing')}>
+              <span className="epg-live-pulse" aria-hidden="true" />
+              <span>{i18n.t('common:live')}</span>
+            </span>
+          )}
           {prog.has_override && !prog.is_deleted && !prog.is_custom && (
             <span className="epg-badge epg-badge-modified">{t('modified')}</span>
           )}
@@ -654,7 +668,14 @@ export function EpgEditorModal({
   const [confirmReleaseAll, setConfirmReleaseAll] = useState(false);
   const [logoUrl, setLogoUrl] = useState('');
   const [logoBackground, setLogoBackground] = useState<'auto' | 'light' | 'dark'>('auto');
-  const [logoPadding, setLogoPadding] = useState<'default' | 'none'>('default');
+  /**
+   * No choice (`undefined`) by default: the channel's tile then follows the global
+   * Logo Tile Layout setting. `'default'` and `'none'` are the user's explicit
+   * choices and are the only states that belong in the database — a channel whose
+   * tile was never touched must not have one recorded on Save, or editing its
+   * TVG-ID would silently pull it out of the global Full-Bleed setting.
+   */
+  const [logoPadding, setLogoPadding] = useState<'default' | 'none' | undefined>(undefined);
   const [epgLogoUrl, setEpgLogoUrl] = useState('');
   const [timeshiftHours, setTimeshiftHours] = useState('0');
   const [channelSaving, setChannelSaving] = useState(false);
@@ -681,6 +702,39 @@ export function EpgEditorModal({
   const [newDesc, setNewDesc]   = useState('');
   const [newStart, setNewStart] = useState('');
   const [newEnd, setNewEnd]     = useState('');
+  const currentProgramRowRef = useRef<HTMLDivElement>(null);
+  const scrolledStreamIdRef = useRef<string | null>(null);
+
+  const currentProgramId = useMemo(() => {
+    const now = Date.now();
+    const match = programs.find(p => {
+      if (p.is_deleted) return false;
+      const s = new Date(p.start).getTime();
+      const e = new Date(p.end).getTime();
+      return !isNaN(s) && !isNaN(e) && s <= now && now < e;
+    });
+    return match?.id;
+  }, [programs]);
+
+  const targetScrollProgramId = useMemo(() => {
+    if (currentProgramId) return currentProgramId;
+    const now = Date.now();
+    const upcoming = programs.find(p => {
+      if (p.is_deleted) return false;
+      const s = new Date(p.start).getTime();
+      return !isNaN(s) && s > now;
+    });
+    return upcoming?.id;
+  }, [currentProgramId, programs]);
+
+  const scrollToCurrentProgram = useCallback((smooth = true) => {
+    if (currentProgramRowRef.current) {
+      currentProgramRowRef.current.scrollIntoView({
+        block: 'center',
+        behavior: smooth ? 'smooth' : 'auto',
+      });
+    }
+  }, []);
 
   // ── Search tab state ──
   const [searchQuery, setSearchQuery] = useState('');
@@ -810,6 +864,20 @@ export function EpgEditorModal({
   /** Scroll container for the virtualized results list. */
   const automatchListRef = useRef<HTMLDivElement>(null);
   const [sourceCategories, setSourceCategories] = useState<StoredCategory[]>([]);
+  const [automatchLogFilter, setAutomatchLogFilter] = useState<'all' | 'success' | 'warning' | 'error' | 'skipped'>('all');
+
+  const filteredAutomatchDetails = useMemo(() => {
+    if (!automatchResults) return [];
+    if (automatchLogFilter === 'all') return automatchResults.details;
+    return automatchResults.details.filter(d => {
+      if (automatchLogFilter === 'success') return d.type === 'success' || d.text.startsWith('✓');
+      if (automatchLogFilter === 'warning') return d.type === 'warning' || d.text.startsWith('⚠');
+      if (automatchLogFilter === 'error') return d.type === 'error' || d.text.startsWith('✗');
+      if (automatchLogFilter === 'skipped') return d.type === 'skipped';
+      return true;
+    });
+  }, [automatchResults, automatchLogFilter]);
+
 
   // ── Load channel override and raw channel when channel changes ──
   useEffect(() => {
@@ -837,7 +905,7 @@ export function EpgEditorModal({
       const playlistIcon = rawChan?.stream_icon ?? channel.stream_icon ?? '';
       setLogoUrl(ov?.stream_icon ?? playlistIcon);
       setLogoBackground((ov?.logo_background as 'auto' | 'light' | 'dark') ?? 'auto');
-      setLogoPadding((ov?.logo_padding as 'default' | 'none') ?? 'default');
+      setLogoPadding(storedLogoPaddingOverride(ov?.logo_padding));
       
       setTimeshiftHours(ov?.timeshift_hours != null ? String(ov.timeshift_hours) : '0');
     }).catch(err => {
@@ -911,6 +979,25 @@ export function EpgEditorModal({
       setProgramsLoading(false);
     });
   }, [activeTab, channel]);
+
+  // Reset scroll tracker when navigating away from programs tab
+  useEffect(() => {
+    if (activeTab !== 'programs') {
+      scrolledStreamIdRef.current = null;
+    }
+  }, [activeTab]);
+
+  // Auto-scroll to currently airing (or next upcoming) program when programs load
+  useEffect(() => {
+    if (activeTab !== 'programs' || programsLoading || programs.length === 0 || !channel) return;
+    if (scrolledStreamIdRef.current === channel.stream_id) return;
+    scrolledStreamIdRef.current = channel.stream_id;
+
+    const timer = setTimeout(() => {
+      scrollToCurrentProgram(false);
+    }, 60);
+    return () => clearTimeout(timer);
+  }, [activeTab, programsLoading, programs.length, channel, scrollToCurrentProgram]);
 
   // ── Load source channels when switching to Source tab ──
   useEffect(() => {
@@ -1031,11 +1118,15 @@ export function EpgEditorModal({
     if (!window.storage) return;
     window.storage.getSources().then((result: any) => {
       if (result.data) {
-        const sources = result.data.map((s: any) => ({ id: s.id, name: s.name }));
+        const sources = (result.data as any[])
+          .filter((s: any) => s.enabled !== false)
+          .map((s: any) => ({ id: s.id, name: s.name }));
         setAutomatchSources(sources);
-        if (!automatchSourceId && resolvedSourceId) {
-          setAutomatchSourceId(resolvedSourceId);
-        } else if (!automatchSourceId && sources.length > 0) {
+        if (resolvedSourceId && sources.some((s: any) => s.id === resolvedSourceId)) {
+          if (!automatchSourceId || !sources.some((s: any) => s.id === automatchSourceId)) {
+            setAutomatchSourceId(resolvedSourceId);
+          }
+        } else if ((!automatchSourceId || !sources.some((s: any) => s.id === automatchSourceId)) && sources.length > 0) {
           setAutomatchSourceId(sources[0].id);
         }
       }
@@ -1133,7 +1224,11 @@ export function EpgEditorModal({
         epg_channel_id: tvgId.trim() || undefined,
         stream_icon: logoUrl.trim() || undefined,
         logo_background: logoBackground === 'auto' ? undefined : logoBackground,
-        logo_padding: logoPadding === 'default' ? undefined : logoPadding,
+        // Only what the user chose in this editor goes in. `undefined` means "no
+        // choice", and the write path clears the stored value for it rather than
+        // recording a padding — so saving a TVG-ID or a timeshift leaves a channel
+        // that follows the global Tile Layout setting following it.
+        logo_padding: logoPadding,
         timeshift_hours: isNaN(hours) ? 0 : hours,
         epg_source_id: idChanged ? undefined : pinnedFeed,
         match_by_alias: matchByAlias,
@@ -1611,7 +1706,7 @@ export function EpgEditorModal({
     setPinnedFeed(prior.feedSourceId ?? undefined);
     setLogoUrl(prior.streamIcon ?? rawChannel?.stream_icon ?? channel.stream_icon ?? '');
     setLogoBackground((prior.logoBackground as 'auto' | 'light' | 'dark') ?? 'auto');
-    setLogoPadding((prior.logoPadding as 'default' | 'none') ?? 'default');
+    setLogoPadding(storedLogoPaddingOverride(prior.logoPadding));
     setTimeshiftHours(String(prior.timeshiftHours ?? 0));
     setMatchByAlias(Boolean(prior.matchByAlias));
   }
@@ -1874,20 +1969,55 @@ export function EpgEditorModal({
     ? automatchResults.details.reduce((n, d) => (d.match && !d.match.unmatched ? n + 1 : n), 0)
     : 0;
 
-  const tabs: { key: EditorTab; label: string; icon: React.ReactNode }[] = channel
+  const tabs: { key: EditorTab; label: string; icon: React.ReactNode; badge?: React.ReactNode }[] = channel
     ? [
         { key: 'channel',  label: t('channelTab'), icon: <AntennaSvg size={14} /> },
-        { key: 'programs', label: t('programsTab'), icon: <ScheduleSvg size={14} /> },
+        {
+          key: 'programs',
+          label: t('programsTab'),
+          icon: <ScheduleSvg size={14} />,
+          badge: programs.length > 0 ? <span className="epg-tab-badge">{programs.length}</span> : undefined,
+        },
         { key: 'search',   label: t('epgSearchTab'), icon: <SearchSvg size={14} /> },
-        ...(showListTab ? [{ key: 'source' as const, label: listTabLabel, icon: <TvSvg size={14} /> }] : []),
-        { key: 'automatch', label: t('automatchTab'), icon: <RobotSvg size={14} /> },
-        { key: 'matches', label: t('matchesTab'), icon: <LockSvg size={14} /> },
+        ...(showListTab ? [{
+          key: 'source' as const,
+          label: listTabLabel,
+          icon: <TvSvg size={14} />,
+          badge: sourceChannels.length > 0 ? <span className="epg-tab-badge">{sourceChannels.length}</span> : undefined,
+        }] : []),
+        {
+          key: 'automatch',
+          label: t('automatchTab'),
+          icon: <RobotSvg size={14} />,
+          badge: automatchRefusals.length > 0 ? <span className="epg-tab-badge epg-tab-badge-warning">{automatchRefusals.length}</span> : undefined,
+        },
+        {
+          key: 'matches',
+          label: t('matchesTab'),
+          icon: <LockSvg size={14} />,
+          badge: matchVisibleCount > 0 ? <span className="epg-tab-badge">{matchVisibleCount}</span> : undefined,
+        },
       ]
     : [
-        { key: 'source',   label: listTabLabel, icon: <TvSvg size={14} /> },
+        {
+          key: 'source',
+          label: listTabLabel,
+          icon: <TvSvg size={14} />,
+          badge: sourceChannels.length > 0 ? <span className="epg-tab-badge">{sourceChannels.length}</span> : undefined,
+        },
         { key: 'search',   label: t('epgSearchTab'), icon: <SearchSvg size={14} /> },
-        { key: 'automatch', label: t('automatchTab'), icon: <RobotSvg size={14} /> },
-        { key: 'matches', label: t('matchesTab'), icon: <LockSvg size={14} /> },
+        {
+          key: 'automatch',
+          label: t('automatchTab'),
+          icon: <RobotSvg size={14} />,
+          badge: automatchRefusals.length > 0 ? <span className="epg-tab-badge epg-tab-badge-warning">{automatchRefusals.length}</span> : undefined,
+        },
+        {
+          key: 'matches',
+          label: t('matchesTab'),
+          icon: <LockSvg size={14} />,
+          badge: matchVisibleCount > 0 ? <span className="epg-tab-badge">{matchVisibleCount}</span> : undefined,
+        },
       ];
 
   const title = channel
@@ -1905,9 +2035,43 @@ export function EpgEditorModal({
             <h2 className="epg-header-title">
               {t('editorTitle', { defaultValue: 'EPG Editor' })}
             </h2>
-            <span className="epg-header-badge" title={title}>
-              {title}
-            </span>
+            {channel ? (
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <span className="epg-header-badge" title={title} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  {(logoUrl || channel.stream_icon) ? (
+                    <img
+                      src={logoUrl || channel.stream_icon}
+                      alt=""
+                      style={{ width: 16, height: 16, objectFit: 'contain', borderRadius: 2 }}
+                      onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                    />
+                  ) : (
+                    <TvSvg size={12} />
+                  )}
+                  <span>{title}</span>
+                </span>
+                {channel.source_id && sourceNameMap.get(channel.source_id) && (
+                  <span className="epg-badge epg-badge-muted" title={sourceNameMap.get(channel.source_id)}>
+                    {sourceNameMap.get(channel.source_id)}
+                  </span>
+                )}
+                {tvgId.trim() ? (
+                  <span className="epg-badge epg-badge-success" title={tvgId}>
+                    <CheckSvg size={11} />
+                    <span>{t('mapped', 'Mapped')}</span>
+                  </span>
+                ) : (
+                  <span className="epg-badge epg-badge-warning" title={t('unmapped', 'Unmapped')}>
+                    <WarningSvg size={11} />
+                    <span>{t('unmapped', 'Unmapped')}</span>
+                  </span>
+                )}
+              </div>
+            ) : (
+              <span className="epg-header-badge" title={title}>
+                {title}
+              </span>
+            )}
           </div>
           <div className="epg-header-right">
             <button className="epg-close-btn" onClick={onClose} title={i18n.t('common:close')}>
@@ -1927,6 +2091,7 @@ export function EpgEditorModal({
             >
               {t.icon}
               <span>{t.label}</span>
+              {t.badge}
             </button>
           ))}
         </div>
@@ -1937,270 +2102,328 @@ export function EpgEditorModal({
           {/* ═══ CHANNEL TAB ═══ */}
           {activeTab === 'channel' && channel && (
             <div>
-              <div className="epg-editor-field">
-                <label className="epg-editor-label">{t('tvgIdLabel')}</label>
-                <input
-                  className="epg-editor-input"
-                  value={tvgId}
-                  onChange={e => setTvgId(e.target.value)}
-                  placeholder={t('tvgIdPlaceholder')}
-                />
-                <div className="epg-editor-hint">
-                  {t('tvgIdHint')}
-                </div>
-                {pinnedFeed && tvgId.trim() === originalTvgId.trim() && (
-                  <div className="epg-editor-hint epg-editor-pinned-feed">
-                    {t('pinnedFeedHint', {
-                      name: sourceNameMap.get(pinnedFeed) || pinnedFeed,
-                    })}
+              {/* Card 1: Channel Mapping & Identity */}
+              <div className="epg-editor-card">
+                <div className="epg-editor-card-header">
+                  <div>
+                    <h3 className="epg-editor-card-title">
+                      <AntennaSvg size={15} />
+                      <span>{t('channelMappingTitle', 'Channel Mapping & Identity')}</span>
+                    </h3>
+                    <p className="epg-editor-card-desc">
+                      {t('channelMappingDesc', 'Associate this channel stream with an EPG guide identifier and configure matching rules.')}
+                    </p>
                   </div>
-                )}
-              </div>
+                  {tvgId.trim() ? (
+                    <span className="epg-badge epg-badge-success">
+                      <CheckSvg size={12} /> {t('mapped', 'Mapped')}
+                    </span>
+                  ) : (
+                    <span className="epg-badge epg-badge-warning">
+                      <WarningSvg size={12} /> {t('unmapped', 'Unmapped')}
+                    </span>
+                  )}
+                </div>
 
-              {/*
-                Which name EPG matching uses, with both names always visible and
-                the channel's own name editable in place — a provider name that
-                can't match a feed no longer means leaving the editor to rename
-                the channel first. Gated on the raw row being loaded so the tab
-                can't briefly claim there is no rename.
-              */}
-              {rawChannel && (
-              <div className="epg-editor-field">
-                <label className="epg-editor-label">{t('matchNameLabel')}</label>
-
-                {/* A grid, so the tag column sizes itself to the longest label
-                    in any language and both rows stay aligned. */}
-                <div className="epg-editor-match-names">
-                  <span className="epg-editor-match-name-tag">
-                    <TvSvg size={13} style={{ display: 'inline', verticalAlign: '-1px', marginRight: 4 }} />
-                    {t('matchNameProvider')}
-                  </span>
-                  <span className="epg-editor-match-name-value" title={providerName}>
-                    {providerName}
-                  </span>
-                  <span className="epg-editor-match-name-tag">
-                    <EditSvg size={13} style={{ display: 'inline', verticalAlign: '-1px', marginRight: 4 }} />
-                    {t('matchNameAlias')}
-                  </span>
-                  <div className="epg-editor-match-name-control">
+                <div className="epg-editor-card-body">
+                  <div className="epg-editor-field" style={{ margin: 0 }}>
+                    <label className="epg-editor-label">{t('tvgIdLabel')}</label>
                     <input
-                      className="epg-editor-input epg-editor-match-name-input"
-                      value={matchNameDraft}
-                      onChange={e => handleMatchNameChange(e.target.value)}
-                      placeholder={t('matchNameCustomPlaceholder', { provider: providerName })}
+                      className="epg-editor-input"
+                      value={tvgId}
+                      onChange={e => setTvgId(e.target.value)}
+                      placeholder={t('tvgIdPlaceholder')}
                     />
-                    <button
-                      type="button"
-                      className="epg-editor-match-name-reset"
-                      onClick={handleResetMatchName}
-                      disabled={!customMatchName && !matchByAlias}
-                      title={t('matchNameResetToProvider')}
-                      style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
-                    >
-                      <ResetSvg size={12} />
-                      <span>{t('matchNameResetToProvider')}</span>
-                    </button>
+                    <div className="epg-editor-hint">
+                      {t('tvgIdHint')}
+                    </div>
+                    {pinnedFeed && tvgId.trim() === originalTvgId.trim() && (
+                      <div className="epg-editor-hint epg-editor-pinned-feed" style={{ marginTop: 8, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                        <LockSvg size={12} />
+                        <span>
+                          {t('pinnedFeedHint', {
+                            name: sourceNameMap.get(pinnedFeed) || pinnedFeed,
+                          })}
+                        </span>
+                      </div>
+                    )}
                   </div>
-                </div>
 
-                {/* Only meaningful once there are two names to choose between. */}
-                {customMatchName && (
-                  <div className="card-segmented-control" style={{ marginTop: 8 }}>
-                    <button
-                      type="button"
-                      className={`segmented-btn ${!matchByAlias ? 'active' : ''}`}
-                      onClick={() => setMatchByAlias(false)}
-                      title={t('matchNameProviderTitle')}
-                    >
-                      <TvSvg size={13} /> {t('matchNameProvider')}
-                    </button>
-                    <button
-                      type="button"
-                      className={`segmented-btn ${matchByAlias ? 'active' : ''}`}
-                      onClick={() => setMatchByAlias(true)}
-                      title={t('matchNameAliasTitle')}
-                    >
-                      <EditSvg size={13} /> {t('matchNameAlias')}
-                    </button>
-                  </div>
-                )}
+                  {rawChannel && (
+                    <div className="epg-editor-field" style={{ margin: 0 }}>
+                      <label className="epg-editor-label">{t('matchNameLabel')}</label>
+                      <div className="epg-editor-match-names">
+                        <span className="epg-editor-match-name-tag">
+                          <TvSvg size={13} style={{ display: 'inline', verticalAlign: '-1px', marginRight: 4 }} />
+                          {t('matchNameProvider')}
+                        </span>
+                        <span className="epg-editor-match-name-value" title={providerName}>
+                          {providerName}
+                        </span>
+                        <span className="epg-editor-match-name-tag">
+                          <EditSvg size={13} style={{ display: 'inline', verticalAlign: '-1px', marginRight: 4 }} />
+                          {t('matchNameAlias')}
+                        </span>
+                        <div className="epg-editor-match-name-control">
+                          <input
+                            className="epg-editor-input epg-editor-match-name-input"
+                            value={matchNameDraft}
+                            onChange={e => handleMatchNameChange(e.target.value)}
+                            placeholder={t('matchNameCustomPlaceholder', { provider: providerName })}
+                          />
+                          <button
+                            type="button"
+                            className="epg-editor-match-name-reset"
+                            onClick={handleResetMatchName}
+                            disabled={!customMatchName && !matchByAlias}
+                            title={t('matchNameResetToProvider')}
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
+                          >
+                            <ResetSvg size={12} />
+                            <span>{t('matchNameResetToProvider')}</span>
+                          </button>
+                        </div>
+                      </div>
 
-                <div className="epg-editor-hint">
-                  {customMatchName
-                    ? (matchByAlias
-                        ? t('matchNameAliasHint', {
-                            name: customMatchName,
-                            provider: providerName,
-                          })
-                        : t('matchNameProviderHint', {
-                            name: customMatchName,
-                            provider: providerName,
-                          }))
-                    : t('matchNameNoCustomName', { provider: providerName })}
-                </div>
-              </div>
-              )}
-
-              <div className="epg-editor-field">
-                <label className="epg-editor-label">{t('logoUrlLabel')}</label>
-                <div className="epg-editor-logo-row">
-                  <input
-                    className="epg-editor-input"
-                    value={logoUrl}
-                    onChange={e => setLogoUrl(e.target.value)}
-                    placeholder={t('logoUrlPlaceholder')}
-                  />
-                  <div className="epg-editor-logo-preview-wrapper">
-                    <ChannelLogo
-                      src={logoUrl || undefined}
-                      name={channel?.name || ''}
-                      background={logoBackground}
-                      defaultBackground={channel?.source_id ? sourceLogoBackgroundOverrides[channel.source_id] : undefined}
-                      padding={logoPadding}
-                      shape={logoShape}
-                      lazy={false}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="epg-editor-field">
-                <label className="epg-editor-label">{t('logoBackgroundLabel')}</label>
-                <div className="card-segmented-control" style={{ marginTop: 4 }}>
-                  <button
-                    type="button"
-                    className={`segmented-btn ${logoBackground === 'auto' ? 'active' : ''}`}
-                    onClick={() => setLogoBackground('auto')}
-                    title={t('defaultBgTitle')}
-                  >
-                    <SparkleSvg size={12} /> {t('defaultBg')}
-                    {resolvedDefaultBg !== 'auto' ? ` (${t(resolvedDefaultBg === 'light' ? 'lightBg' : 'darkBg')})` : ''}
-                  </button>
-                  <button
-                    type="button"
-                    className={`segmented-btn ${logoBackground === 'light' ? 'active' : ''}`}
-                    onClick={() => setLogoBackground('light')}
-                    title={t('lightBgTitle')}
-                  >
-                    <SunSvg size={13} /> {t('lightBg')}
-                  </button>
-                  <button
-                    type="button"
-                    className={`segmented-btn ${logoBackground === 'dark' ? 'active' : ''}`}
-                    onClick={() => setLogoBackground('dark')}
-                    title={t('darkBgTitle')}
-                  >
-                    <MoonSvg size={13} /> {t('darkBg')}
-                  </button>
-                </div>
-                <div className="epg-editor-hint">
-                  {t('logoBgHint')}
-                </div>
-              </div>
-
-              <div className="epg-editor-field">
-                <label className="epg-editor-label">{t('logoPaddingLabel')}</label>
-                <div className="card-segmented-control card-padding-control" style={{ marginTop: 4 }}>
-                  <button
-                    type="button"
-                    className={`segmented-btn ${logoPadding === 'default' ? 'active' : ''}`}
-                    onClick={() => setLogoPadding('default')}
-                    title={t('normalPaddingTitle')}
-                  >
-                    <RulerSvg size={13} /> {t('normalPadding')}
-                  </button>
-                  <button
-                    type="button"
-                    className={`segmented-btn ${logoPadding === 'none' ? 'active' : ''}`}
-                    onClick={() => setLogoPadding('none')}
-                    title={t('noPadTitle')}
-                  >
-                    <ImageSvg size={13} /> {t('noPad')}
-                  </button>
-                </div>
-                <div className="epg-editor-hint">
-                  {t('logoPaddingHint')}
-                </div>
-              </div>
-
-              {(() => {
-                const playlistIcon = rawChannel?.stream_icon || channel.stream_icon;
-                if (!playlistIcon && !epgLogoUrl) return null;
-                return (
-                  <div className="epg-editor-field" style={{ marginTop: -8, marginBottom: 16 }}>
-                    <label className="epg-editor-label" style={{ fontSize: '0.75rem', opacity: 0.6 }}>{t('quickSelectLogo')}</label>
-                    <div style={{ display: 'flex', gap: 16, alignItems: 'center', marginTop: 4 }}>
-                      {playlistIcon && (
-                        <button
-                          type="button"
-                          onClick={() => setLogoUrl(playlistIcon)}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 6,
-                            background: logoUrl === playlistIcon ? 'rgba(0,212,255,0.15)' : 'rgba(255,255,255,0.03)',
-                            border: logoUrl === playlistIcon ? '1px solid rgba(0,212,255,0.5)' : '1px solid rgba(255,255,255,0.1)',
-                            borderRadius: 6,
-                            padding: '4px 8px',
-                            cursor: 'pointer',
-                            color: '#fff',
-                            fontSize: '0.75rem',
-                            outline: 'none',
-                          }}
-                        >
-                          <img src={playlistIcon} alt="" style={{ width: 20, height: 20, objectFit: 'contain' }} />
-                          <span>{t('playlistLogo')}</span>
-                        </button>
+                      {customMatchName && (
+                        <div className="card-segmented-control" style={{ marginTop: 8 }}>
+                          <button
+                            type="button"
+                            className={`segmented-btn ${!matchByAlias ? 'active' : ''}`}
+                            onClick={() => setMatchByAlias(false)}
+                            title={t('matchNameProviderTitle')}
+                          >
+                            <TvSvg size={13} /> {t('matchNameProvider')}
+                          </button>
+                          <button
+                            type="button"
+                            className={`segmented-btn ${matchByAlias ? 'active' : ''}`}
+                            onClick={() => setMatchByAlias(true)}
+                            title={t('matchNameAliasTitle')}
+                          >
+                            <EditSvg size={13} /> {t('matchNameAlias')}
+                          </button>
+                        </div>
                       )}
-                      {epgLogoUrl && (
-                        <button
-                          type="button"
-                          onClick={() => setLogoUrl(epgLogoUrl)}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 6,
-                            background: logoUrl === epgLogoUrl ? 'rgba(0,212,255,0.15)' : 'rgba(255,255,255,0.03)',
-                            border: logoUrl === epgLogoUrl ? '1px solid rgba(0,212,255,0.5)' : '1px solid rgba(255,255,255,0.1)',
-                            borderRadius: 6,
-                            padding: '4px 8px',
-                            cursor: 'pointer',
-                            color: '#fff',
-                            fontSize: '0.75rem',
-                            outline: 'none',
-                          }}
-                        >
-                          <img src={epgLogoUrl} alt="" style={{ width: 20, height: 20, objectFit: 'contain' }} />
-                          <span>{t('epgLogo')}</span>
-                        </button>
-                      )}
+
+                      <div className="epg-editor-hint">
+                        {customMatchName
+                          ? (matchByAlias
+                              ? t('matchNameAliasHint', {
+                                  name: customMatchName,
+                                  provider: providerName,
+                                })
+                              : t('matchNameProviderHint', {
+                                  name: customMatchName,
+                                  provider: providerName,
+                                }))
+                          : t('matchNameNoCustomName', { provider: providerName })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Card 2: Logo & Appearance Studio */}
+              <div className="epg-editor-card">
+                <div className="epg-editor-card-header">
+                  <div>
+                    <h3 className="epg-editor-card-title">
+                      <ImageSvg size={15} />
+                      <span>{t('logoStudioTitle', 'Branding & Logo Studio')}</span>
+                    </h3>
+                    <p className="epg-editor-card-desc">
+                      {t('logoStudioDesc', 'Customize the channel logo, background treatment, and framing for the guide and player.')}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="epg-editor-card-body">
+                  <div className="epg-logo-grid">
+                    {/* Left: Preview Stage */}
+                    <div className="epg-logo-stage">
+                      <div className="epg-logo-stage-box">
+                        <ChannelLogo
+                          src={logoUrl || undefined}
+                          name={channel?.name || ''}
+                          background={logoBackground}
+                          defaultBackground={channel?.source_id ? sourceLogoBackgroundOverrides[channel.source_id] : undefined}
+                          padding={logoPadding}
+                          shape={logoShape}
+                          lazy={false}
+                        />
+                      </div>
+                      <div className="epg-logo-stage-controls">
+                        <div className="card-segmented-control">
+                          <button
+                            type="button"
+                            className={`segmented-btn ${logoBackground === 'auto' ? 'active' : ''}`}
+                            onClick={() => setLogoBackground('auto')}
+                            title={t('defaultBgTitle')}
+                          >
+                            <SparkleSvg size={12} /> {t('defaultBg')}
+                            {resolvedDefaultBg !== 'auto' ? ` (${t(resolvedDefaultBg === 'light' ? 'lightBg' : 'darkBg')})` : ''}
+                          </button>
+                          <button
+                            type="button"
+                            className={`segmented-btn ${logoBackground === 'light' ? 'active' : ''}`}
+                            onClick={() => setLogoBackground('light')}
+                            title={t('lightBgTitle')}
+                          >
+                            <SunSvg size={13} /> {t('lightBg')}
+                          </button>
+                          <button
+                            type="button"
+                            className={`segmented-btn ${logoBackground === 'dark' ? 'active' : ''}`}
+                            onClick={() => setLogoBackground('dark')}
+                            title={t('darkBgTitle')}
+                          >
+                            <MoonSvg size={13} /> {t('darkBg')}
+                          </button>
+                        </div>
+                        <div className="card-segmented-control card-padding-control">
+                          {/* The padding control mirrors the background one above it:
+                              a Default that follows the global setting, then the two
+                              explicit choices. Without the Default option a channel
+                              would be stuck on whichever option was clicked first,
+                              with no way back to the setting it was following. */}
+                          <button
+                            type="button"
+                            className={`segmented-btn ${logoPadding === undefined ? 'active' : ''}`}
+                            onClick={() => setLogoPadding(undefined)}
+                            title={t('paddingDefaultTitle')}
+                          >
+                            <SparkleSvg size={12} /> {i18n.t('common:default')}
+                          </button>
+                          <button
+                            type="button"
+                            className={`segmented-btn ${logoPadding === 'default' ? 'active' : ''}`}
+                            onClick={() => setLogoPadding('default')}
+                            title={t('normalPaddingTitle')}
+                          >
+                            <RulerSvg size={13} /> {t('normalPadding')}
+                          </button>
+                          <button
+                            type="button"
+                            className={`segmented-btn ${logoPadding === 'none' ? 'active' : ''}`}
+                            onClick={() => setLogoPadding('none')}
+                            title={t('noPadTitle')}
+                          >
+                            <ImageSvg size={13} /> {t('noPad')}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Right: URL & Quick Select */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                      <div className="epg-editor-field" style={{ margin: 0 }}>
+                        <label className="epg-editor-label">{t('logoUrlLabel')}</label>
+                        <input
+                          className="epg-editor-input"
+                          value={logoUrl}
+                          onChange={e => setLogoUrl(e.target.value)}
+                          placeholder={t('logoUrlPlaceholder')}
+                        />
+                        <div className="epg-editor-hint">
+                          {t('logoBgHint')}
+                        </div>
+                      </div>
+
+                      {(() => {
+                        const playlistIcon = rawChannel?.stream_icon || channel.stream_icon;
+                        if (!playlistIcon && !epgLogoUrl) return null;
+                        return (
+                          <div className="epg-editor-field" style={{ margin: 0 }}>
+                            <label className="epg-editor-label">{t('quickSelectLogo')}</label>
+                            <div className="epg-quick-select-row">
+                              {playlistIcon && (
+                                <button
+                                  type="button"
+                                  className={`epg-quick-select-chip${logoUrl === playlistIcon ? ' active' : ''}`}
+                                  onClick={() => setLogoUrl(playlistIcon)}
+                                  title={t('playlistLogo')}
+                                >
+                                  <img src={playlistIcon} alt="" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                                  <span>{t('playlistLogo')}</span>
+                                </button>
+                              )}
+                              {epgLogoUrl && (
+                                <button
+                                  type="button"
+                                  className={`epg-quick-select-chip${logoUrl === epgLogoUrl ? ' active' : ''}`}
+                                  onClick={() => setLogoUrl(epgLogoUrl)}
+                                  title={t('epgLogo')}
+                                >
+                                  <img src={epgLogoUrl} alt="" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                                  <span>{t('epgLogo')}</span>
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
-                );
-              })()}
-
-              <div className="epg-editor-field">
-                <label className="epg-editor-label">{t('timeOffsetLabel')}</label>
-                <div className="epg-editor-timeshift-row">
-                  <input
-                    type="number"
-                    step="0.5"
-                    min="-24"
-                    max="24"
-                    className="epg-editor-timeshift-input"
-                    value={timeshiftHours}
-                    onChange={e => setTimeshiftHours(e.target.value)}
-                  />
-                  <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #888)' }}>
-                    {t('timeOffsetHint')}
-                  </span>
                 </div>
               </div>
 
+              {/* Card 3: Broadcast Timing & Schedule Offset */}
+              <div className="epg-editor-card">
+                <div className="epg-editor-card-header">
+                  <div>
+                    <h3 className="epg-editor-card-title">
+                      <ScheduleSvg size={15} />
+                      <span>{t('timeOffsetTitle', 'Broadcast Timing & Schedule Offset')}</span>
+                    </h3>
+                    <p className="epg-editor-card-desc">
+                      {t('timeOffsetDesc', 'Adjust EPG program schedule alignment if broadcasts are delayed or ahead of guide listings.')}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="epg-editor-card-body">
+                  <div className="epg-editor-field" style={{ margin: 0 }}>
+                    <label className="epg-editor-label">{t('timeOffsetLabel')}</label>
+                    <div className="epg-timeshift-deck">
+                      {[-2, -1, 0, 1, 2].map(preset => {
+                        const label = preset === 0 ? '0h' : preset > 0 ? `+${preset}h` : `${preset}h`;
+                        const active = Number(timeshiftHours) === preset;
+                        return (
+                          <button
+                            key={preset}
+                            type="button"
+                            className={`epg-preset-pill${active ? ' active' : ''}`}
+                            onClick={() => setTimeshiftHours(String(preset))}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+                      <div className="epg-editor-timeshift-row" style={{ marginLeft: 'auto' }}>
+                        <input
+                          type="number"
+                          step="0.5"
+                          min="-24"
+                          max="24"
+                          className="epg-editor-timeshift-input"
+                          value={timeshiftHours}
+                          onChange={e => setTimeshiftHours(e.target.value)}
+                        />
+                        <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #888)' }}>
+                          {t('timeOffsetHint')}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Danger Zone */}
               <div className="epg-danger-zone">
                 <div className="epg-danger-zone-info">
                   <div className="epg-danger-zone-title">
-                    <WarningSvg size={14} style={{ color: '#ff6b6b' }} />
+                    <WarningSvg size={14} />
                     <strong>{t('resetChannel')}</strong>
                   </div>
                   <div className="epg-danger-zone-desc">{t('resetChannelDesc')}</div>
@@ -2221,16 +2444,37 @@ export function EpgEditorModal({
           {activeTab === 'programs' && channel && (
             <div>
               <div className="epg-editor-programs-toolbar">
-                <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #888)' }}>
-                  {t('showingProgramsRange')} <strong>{channel.name}</strong>
-                </span>
-                <button
-                  className="epg-editor-btn epg-editor-btn-primary"
-                  style={{ padding: '7px 14px', fontSize: '0.82rem', display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                  onClick={() => setShowAddForm(v => !v)}
-                >
-                  {showAddForm ? <><CrossSvg size={12} /> <span>{i18n.t('common:cancel')}</span></> : <><PlusSvg size={12} /> <span>{t('addProgram')}</span></>}
-                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary, #888)' }}>
+                    {t('showingProgramsRange')} <strong>{channel.name}</strong>
+                  </span>
+                  {programs.length > 0 && (
+                    <span className="epg-tab-badge">
+                      {programs.length} {t('programs', 'programs')}
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {targetScrollProgramId && (
+                    <button
+                      type="button"
+                      className="epg-editor-btn"
+                      style={{ padding: '7px 12px', fontSize: '0.82rem', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                      onClick={() => scrollToCurrentProgram(true)}
+                      title={currentProgramId ? t('jumpToCurrent', 'Scroll to currently airing program') : t('jumpToUpcoming', 'Scroll to next upcoming program')}
+                    >
+                      <ScheduleSvg size={13} />
+                      <span>{currentProgramId ? i18n.t('common:now') : t('start', 'Upcoming')}</span>
+                    </button>
+                  )}
+                  <button
+                    className="epg-editor-btn epg-editor-btn-primary"
+                    style={{ padding: '7px 14px', fontSize: '0.82rem', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                    onClick={() => setShowAddForm(v => !v)}
+                  >
+                    {showAddForm ? <><CrossSvg size={12} /> <span>{i18n.t('common:cancel')}</span></> : <><PlusSvg size={12} /> <span>{t('addProgram')}</span></>}
+                  </button>
+                </div>
               </div>
 
               {(pinnedFeed || pinnedInPlaylist > 0) && (
@@ -2280,13 +2524,14 @@ export function EpgEditorModal({
               )}
 
               {showAddForm && (
-                <div style={{
-                  padding: 14, marginBottom: 14,
-                  border: '1px solid rgba(0,212,255,0.25)',
-                  borderRadius: 10,
-                  background: 'rgba(0,212,255,0.04)',
-                }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <div className="epg-editor-card" style={{ borderColor: 'rgba(0, 212, 255, 0.3)', background: 'rgba(0, 212, 255, 0.03)' }}>
+                  <div className="epg-editor-card-header">
+                    <h3 className="epg-editor-card-title">
+                      <PlusSvg size={14} />
+                      <span>{t('addProgram')}</span>
+                    </h3>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                     <div style={{ gridColumn: '1/-1' }}>
                       <label className="epg-editor-label">{t('titleRequired')}</label>
                       <input className="epg-editor-input" value={newTitle} onChange={e => setNewTitle(e.target.value)} placeholder={t('programTitlePlaceholder')} />
@@ -2307,7 +2552,13 @@ export function EpgEditorModal({
                       <label className="epg-editor-label">{t('endRequired')}</label>
                       <input type="datetime-local" className="epg-editor-input" value={newEnd} onChange={e => setNewEnd(e.target.value)} />
                     </div>
-                    <div style={{ gridColumn: '1/-1', display: 'flex', justifyContent: 'flex-end' }}>
+                    <div style={{ gridColumn: '1/-1', display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+                      <button
+                        className="epg-editor-btn epg-editor-btn-secondary"
+                        onClick={() => setShowAddForm(false)}
+                      >
+                        {i18n.t('common:cancel')}
+                      </button>
                       <button
                         className="epg-editor-btn epg-editor-btn-primary"
                         onClick={handleAddCustomProgram}
@@ -2335,6 +2586,8 @@ export function EpgEditorModal({
                     <ProgramRow
                       key={prog.id}
                       prog={prog}
+                      isCurrent={prog.id === currentProgramId}
+                      rowRef={prog.id === targetScrollProgramId ? currentProgramRowRef : undefined}
                       onSave={changes => handleProgramSave(prog, changes)}
                       onDelete={() => handleProgramDelete(prog)}
                       onRestore={() => handleProgramRestore(prog)}
@@ -2360,57 +2613,82 @@ export function EpgEditorModal({
                   </span>
                 )}
               </div>
-              <div className="epg-search-toolbar">
-                <div className="epg-search-input-wrap">
-                  <span className="epg-search-icon"><SearchSvg size={14} /></span>
-                  <input
-                    className="epg-editor-input"
-                    placeholder={t('searchPlaceholder')}
-                    value={searchQuery}
-                    onChange={e => setSearchQuery(e.target.value)}
-                    autoFocus
-                  />
+
+              <div className="epg-search-deck">
+                <div className="epg-search-toolbar" style={{ margin: 0 }}>
+                  <div className="epg-search-input-wrap">
+                    <span className="epg-search-icon"><SearchSvg size={14} /></span>
+                    <input
+                      className="epg-editor-input"
+                      placeholder={t('searchPlaceholder')}
+                      value={searchQuery}
+                      onChange={e => setSearchQuery(e.target.value)}
+                      autoFocus
+                    />
+                    {searchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setSearchQuery('')}
+                        style={{
+                          position: 'absolute',
+                          right: 8,
+                          top: '50%',
+                          transform: 'translateY(-50%)',
+                          background: 'transparent',
+                          border: 'none',
+                          color: 'var(--text-secondary, #888)',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          padding: 2,
+                        }}
+                        title={i18n.t('common:clearAll')}
+                      >
+                        <CrossSvg size={11} />
+                      </button>
+                    )}
+                  </div>
+                  <div className="epg-search-scope-toggle">
+                    <button
+                      className={`epg-search-scope-btn${searchScope === 'source' ? ' active' : ''}`}
+                      onClick={() => setSearchScope('source')}
+                    >{t('thisSource')}</button>
+                    <button
+                      className={`epg-search-scope-btn${searchScope === 'all' ? ' active' : ''}`}
+                      onClick={() => setSearchScope('all')}
+                    >{t('allSources')}</button>
+                  </div>
+                  <div className="epg-search-scope-toggle">
+                    <button
+                      className={`epg-search-scope-btn${searchMode === 'm3u' ? ' active' : ''}`}
+                      onClick={() => setSearchMode('m3u')}
+                      title={t('searchM3uTitle')}
+                    >{t('m3uNames')}</button>
+                    <button
+                      className={`epg-search-scope-btn${searchMode === 'epg' ? ' active' : ''}`}
+                      onClick={() => setSearchMode('epg')}
+                      title={t('searchEpgNamesTitle')}
+                    >{t('epgNames')}</button>
+                  </div>
+                  {channel && (
+                    <button
+                      className="epg-search-auto-btn"
+                      onClick={handleAutoSuggest}
+                      disabled={autoSearching}
+                      title={t('scoreAllTitle')}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                    >
+                      {autoSearching ? '…' : <><SparkleSvg size={13} /> <span>{t('autoMatch')}</span></>}
+                    </button>
+                  )}
                 </div>
-                <div className="epg-search-scope-toggle">
-                  <button
-                    className={`epg-search-scope-btn${searchScope === 'source' ? ' active' : ''}`}
-                    onClick={() => setSearchScope('source')}
-                  >{t('thisSource')}</button>
-                  <button
-                    className={`epg-search-scope-btn${searchScope === 'all' ? ' active' : ''}`}
-                    onClick={() => setSearchScope('all')}
-                  >{t('allSources')}</button>
-                </div>
-                <div className="epg-search-scope-toggle">
-                  <button
-                    className={`epg-search-scope-btn${searchMode === 'm3u' ? ' active' : ''}`}
-                    onClick={() => setSearchMode('m3u')}
-                    title={t('searchM3uTitle')}
-                  >{t('m3uNames')}</button>
-                  <button
-                    className={`epg-search-scope-btn${searchMode === 'epg' ? ' active' : ''}`}
-                    onClick={() => setSearchMode('epg')}
-                    title={t('searchEpgNamesTitle')}
-                  >{t('epgNames')}</button>
-                </div>
-                {channel && (
-                  <button
-                    className="epg-search-auto-btn"
-                    onClick={handleAutoSuggest}
-                    disabled={autoSearching}
-                    title={t('scoreAllTitle')}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                  >
-                    {autoSearching ? '…' : <><SparkleSvg size={13} /> <span>{t('autoMatch')}</span></>}
-                  </button>
-                )}
               </div>
 
               {!channel && (
                 <div style={{
                   padding: '10px 14px', borderRadius: 8, marginBottom: 12,
                   background: 'rgba(255,165,0,0.08)', border: '1px solid rgba(255,165,0,0.2)',
-                  fontSize: '0.82rem', color: '#ffaa44',
+                  fontSize: '0.82rem', color: 'var(--status-warning-text, #ffaa44)',
                 }}>
                   {t('openChannelFirst')}
                 </div>
@@ -2426,6 +2704,8 @@ export function EpgEditorModal({
                 <div className="epg-search-results">
                   {searchResults.map((r, i) => {
                     const isPreviewOpen = previewResult?.id === r.id && previewResult?.source_id === r.source_id;
+                    const pct = Math.round(r.score * 100);
+                    const scoreClass = r.score >= 0.85 ? 'high' : r.score >= 0.60 ? 'medium' : r.score >= 0.35 ? 'low' : 'poor';
                     return (
                       <div key={r.id + r.source_id}>
                         <div
@@ -2448,13 +2728,13 @@ export function EpgEditorModal({
                               <div className="epg-search-result-source">{t('sourceLabel2', { name: sourceNameMap.get(r.source_id) ?? r.source_id })}</div>
                             )}
                           </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
                             <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary, #888)', whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                               {isPreviewOpen ? <><ChevronUpSvg size={10} /> <span>{t('hide')}</span></> : <><ChevronDownSvg size={10} /> <span>{t('programs')}</span></>}
                             </span>
-                            <div className="epg-score-bar" title={t('matchScore', { score: (r.score * 100).toFixed(0) })}>
-                              <div className="epg-score-pip" style={{ width: `${Math.min(100, r.score / 1.2 * 100)}%` }} />
-                            </div>
+                            <span className={`epg-score-badge ${scoreClass}`} title={t('matchScore', { score: pct })}>
+                              {pct}%
+                            </span>
                             {channel && (
                               <button
                                 className="epg-search-apply-btn"
@@ -2471,12 +2751,12 @@ export function EpgEditorModal({
                         {isPreviewOpen && (
                           <div style={{
                             margin: '4px 0 10px 0', border: '1px solid rgba(0,212,255,0.2)',
-                            borderRadius: 6, overflow: 'hidden',
-                            background: 'rgba(0,0,0,0.2)',
+                            borderRadius: 8, overflow: 'hidden',
+                            background: 'rgba(0,0,0,0.25)',
                           }}>
                             <div style={{
-                              padding: '6px 14px', background: 'rgba(0,212,255,0.07)',
-                              fontSize: '0.8rem', color: '#fff'
+                              padding: '8px 14px', background: 'rgba(0,212,255,0.08)',
+                              fontSize: '0.8rem', color: '#fff', fontWeight: 600
                             }}>
                               {t('programsFor')} <strong>{r.display_name}</strong>
                             </div>
@@ -2490,7 +2770,7 @@ export function EpgEditorModal({
                               <div style={{ maxHeight: 200, overflowY: 'auto', padding: '4px 0' }}>
                                 {previewPrograms.map(p => (
                                   <div key={p.id} style={{
-                                    display: 'flex', gap: 12, padding: '4px 14px',
+                                    display: 'flex', gap: 12, padding: '6px 14px',
                                     borderBottom: '1px solid rgba(255,255,255,0.04)',
                                     fontSize: '0.81rem',
                                   }}>
@@ -2593,464 +2873,535 @@ export function EpgEditorModal({
           {/* ═══ AUTOMATCH MISSING TAB ═══ */}
           {activeTab === 'automatch' && (
             <div>
-              <div style={{ marginBottom: 16, fontSize: '0.82rem', color: 'var(--text-secondary, #888)' }}>
-                {t('automatchHint')}
-              </div>
-
-              {/* Source selection */}
-              <div className="epg-editor-field">
-                <label className="epg-editor-label">{t('sourceLabel')}</label>
-                <select
-                  className="epg-editor-input"
-                  value={automatchSourceId}
-                  onChange={e => setAutomatchSourceId(e.target.value)}
-                  disabled={(automatchChannelScope === 'all' && automatchEpgScope === 'all') || automatchRunning}
-                  style={{ cursor: 'pointer' }}
-                >
-                  {automatchSources.map(s => (
-                    <option key={s.id} value={s.id}>{s.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Channels to Match toggle */}
-              <div className="epg-editor-field">
-                <label className="epg-editor-label">{t('channelsToMatch', 'Channels to Match')}</label>
-                <div className="epg-search-scope-toggle">
-                  <button
-                    className={`epg-search-scope-btn${automatchChannelScope === 'source' ? ' active' : ''}`}
-                    onClick={() => setAutomatchChannelScope('source')}
-                    disabled={automatchRunning}
-                  >{t('thisSource')}</button>
-                  <button
-                    className={`epg-search-scope-btn${automatchChannelScope === 'all' ? ' active' : ''}`}
-                    onClick={() => setAutomatchChannelScope('all')}
-                    disabled={automatchRunning}
-                  >{t('allSources')}</button>
-                </div>
-              </div>
-
-              {/* EPG Sources to Search toggle */}
-              <div className="epg-editor-field">
-                <label className="epg-editor-label">{t('epgSourcesToSearch', 'EPG Sources to Search')}</label>
-                <div className="epg-search-scope-toggle">
-                  <button
-                    className={`epg-search-scope-btn${automatchEpgScope === 'source' ? ' active' : ''}`}
-                    onClick={() => setAutomatchEpgScope('source')}
-                    disabled={automatchRunning}
-                  >{t('thisSourceEpg', "This Source's EPG")}</button>
-                  <button
-                    className={`epg-search-scope-btn${automatchEpgScope === 'all' ? ' active' : ''}`}
-                    onClick={() => setAutomatchEpgScope('all')}
-                    disabled={automatchRunning}
-                  >{t('allEpgSources', 'All EPG Sources')}</button>
-                </div>
-              </div>
-
-              {/* Search mode toggle */}
-              <div className="epg-editor-field">
-                <label className="epg-editor-label">{t('matchAgainst')}</label>
-                <div className="epg-search-scope-toggle">
-                  <button
-                    className={`epg-search-scope-btn${automatchMode === 'm3u' ? ' active' : ''}`}
-                    onClick={() => setAutomatchMode('m3u')}
-                    disabled={automatchRunning}
-                    title={t('searchM3uTitle')}
-                  >{t('m3uNames')}</button>
-                  <button
-                    className={`epg-search-scope-btn${automatchMode === 'epg' ? ' active' : ''}`}
-                    onClick={() => setAutomatchMode('epg')}
-                    disabled={automatchRunning}
-                    title={t('searchEpgNamesTitle')}
-                  >{t('epgNames')}</button>
-                </div>
-              </div>
-
-              {/* Category selection */}
-              {automatchChannelScope === 'source' && sourceCategories.length > 0 && (
-                <div className="epg-editor-field">
-                  <label className="epg-editor-label">{t('categories')}</label>
-                  <div style={{ marginBottom: 8 }}>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: '0.85rem', color: 'var(--text-primary, #e0e0e0)' }}>
-                      <input
-                        type="checkbox"
-                        checked={automatchAllCategories}
-                        onChange={e => setAutomatchAllCategories(e.target.checked)}
-                        disabled={automatchRunning}
-                      />
-                      {t('allCategoriesInSource')}
-                    </label>
+              {/* Card 1: Target Scope */}
+              <div className="epg-editor-card">
+                <div className="epg-editor-card-header">
+                  <div>
+                    <h3 className="epg-editor-card-title">
+                      <RobotSvg size={15} />
+                      <span>{t('targetScopeTitle', 'Target Scope & Sources')}</span>
+                    </h3>
+                    <p className="epg-editor-card-desc">
+                      {t('targetScopeDesc', 'Define which playlist channels are evaluated and which EPG sources to query.')}
+                    </p>
                   </div>
-                  {!automatchAllCategories && (
-                    <div className="epg-automatch-category-grid">
-                      {sourceCategories.map(cat => (
-                        <label key={cat.category_id} className="epg-automatch-category-item">
+                </div>
+
+                <div className="epg-editor-card-body">
+                  {/* Source selection */}
+                  <div className="epg-editor-field" style={{ margin: 0 }}>
+                    <label className="epg-editor-label">{t('sourceLabel')}</label>
+                    <select
+                      className="epg-editor-input"
+                      value={automatchSourceId}
+                      onChange={e => setAutomatchSourceId(e.target.value)}
+                      disabled={(automatchChannelScope === 'all' && automatchEpgScope === 'all') || automatchRunning}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      {automatchSources.map(s => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Channels to Match toggle */}
+                  <div className="epg-editor-field" style={{ margin: 0 }}>
+                    <label className="epg-editor-label">{t('channelsToMatch', 'Channels to Match')}</label>
+                    <div className="epg-search-scope-toggle">
+                      <button
+                        className={`epg-search-scope-btn${automatchChannelScope === 'source' ? ' active' : ''}`}
+                        onClick={() => setAutomatchChannelScope('source')}
+                        disabled={automatchRunning}
+                      >{t('thisSource')}</button>
+                      <button
+                        className={`epg-search-scope-btn${automatchChannelScope === 'all' ? ' active' : ''}`}
+                        onClick={() => setAutomatchChannelScope('all')}
+                        disabled={automatchRunning}
+                      >{t('allSources')}</button>
+                    </div>
+                  </div>
+
+                  {/* EPG Sources to Search toggle */}
+                  <div className="epg-editor-field" style={{ margin: 0 }}>
+                    <label className="epg-editor-label">{t('epgSourcesToSearch', 'EPG Sources to Search')}</label>
+                    <div className="epg-search-scope-toggle">
+                      <button
+                        className={`epg-search-scope-btn${automatchEpgScope === 'source' ? ' active' : ''}`}
+                        onClick={() => setAutomatchEpgScope('source')}
+                        disabled={automatchRunning}
+                      >{t('thisSourceEpg', "This Source's EPG")}</button>
+                      <button
+                        className={`epg-search-scope-btn${automatchEpgScope === 'all' ? ' active' : ''}`}
+                        onClick={() => setAutomatchEpgScope('all')}
+                        disabled={automatchRunning}
+                      >{t('allEpgSources', 'All EPG Sources')}</button>
+                    </div>
+                  </div>
+
+                  {/* Category selection */}
+                  {automatchChannelScope === 'source' && sourceCategories.length > 0 && (
+                    <div className="epg-editor-field" style={{ margin: 0 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                        <label className="epg-editor-label" style={{ margin: 0 }}>{t('categories')}</label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: '0.82rem', color: 'var(--text-secondary, #aaa)' }}>
                           <input
                             type="checkbox"
-                            checked={automatchCategories.includes(cat.category_id)}
-                            onChange={e => {
-                              if (e.target.checked) {
-                                setAutomatchCategories(prev => [...prev, cat.category_id]);
-                              } else {
-                                setAutomatchCategories(prev => prev.filter(id => id !== cat.category_id));
-                              }
-                            }}
+                            checked={automatchAllCategories}
+                            onChange={e => setAutomatchAllCategories(e.target.checked)}
                             disabled={automatchRunning}
                           />
-                          <span>{cat.category_name}</span>
+                          {t('allCategoriesInSource')}
                         </label>
-                      ))}
+                      </div>
+                      {!automatchAllCategories && (
+                        <div className="epg-automatch-category-grid">
+                          {sourceCategories.map(cat => (
+                            <label key={cat.category_id} className="epg-automatch-category-item">
+                              <input
+                                type="checkbox"
+                                checked={automatchCategories.includes(cat.category_id)}
+                                onChange={e => {
+                                  if (e.target.checked) {
+                                    setAutomatchCategories(prev => [...prev, cat.category_id]);
+                                  } else {
+                                    setAutomatchCategories(prev => prev.filter(id => id !== cat.category_id));
+                                  }
+                                }}
+                                disabled={automatchRunning}
+                              />
+                              <span>{cat.category_name}</span>
+                            </label>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
-                </div>
-              )}
 
-              {/* Enabled-only scope */}
-              <div className="epg-editor-field">
-                <label
-                  style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: automatchRunning ? 'default' : 'pointer' }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={enabledOnly}
-                    onChange={e => setEpgAutomatchEnabledOnly(e.target.checked)}
-                    disabled={automatchRunning}
-                  />
-                  <span className="epg-editor-label" style={{ margin: 0 }}>{t('enabledOnlyLabel')}</span>
-                </label>
-                <div className="epg-editor-hint">
-                  {t('enabledOnlyHint')}
-                </div>
-              </div>
-
-              {/* Threshold slider */}
-              <div className="epg-editor-field">
-                <label className="epg-editor-label">
-                  {t('minMatchThreshold')} <strong>{automatchThreshold}%</strong>
-                </label>
-                <input
-                  type="range"
-                  min={10}
-                  max={100}
-                  step={5}
-                  value={automatchThreshold}
-                  onChange={e => setAutomatchThreshold(Number(e.target.value))}
-                  disabled={automatchRunning}
-                  className="epg-automatch-slider"
-                />
-                <div className="epg-editor-hint">
-                  {t('thresholdHint')}
-                </div>
-              </div>
-
-              {/* Opt-in decorated-name handling */}
-              <div className="epg-editor-field">
-                <label
-                  style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: automatchRunning ? 'default' : 'pointer' }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={epgAutomatchCleanNames}
-                    onChange={e => setEpgAutomatchCleanNames(e.target.checked)}
-                    disabled={automatchRunning}
-                  />
-                  <span className="epg-editor-label" style={{ margin: 0 }}>{t('cleanNamesLabel')}</span>
-                </label>
-                <div className="epg-editor-hint">
-                  {t('cleanNamesHint')}
-                </div>
-                {epgAutomatchCleanNames && (
-                  <>
-                    <label className="epg-editor-label" style={{ marginTop: 10 }}>
-                      {t('stripTagsLabel')}
+                  {/* Enabled-only scope */}
+                  <div className="epg-editor-field" style={{ margin: 0 }}>
+                    <label
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: automatchRunning ? 'default' : 'pointer' }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={enabledOnly}
+                        onChange={e => setEpgAutomatchEnabledOnly(e.target.checked)}
+                        disabled={automatchRunning}
+                      />
+                      <span className="epg-editor-label" style={{ margin: 0 }}>{t('enabledOnlyLabel')}</span>
                     </label>
+                    <div className="epg-editor-hint">
+                      {t('enabledOnlyHint')}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Card 2: Precision & Matching Engine */}
+              <div className="epg-editor-card">
+                <div className="epg-editor-card-header">
+                  <div>
+                    <h3 className="epg-editor-card-title">
+                      <SparkleSvg size={15} />
+                      <span>{t('engineRulesTitle', 'Precision & Matching Engine')}</span>
+                    </h3>
+                    <p className="epg-editor-card-desc">
+                      {t('engineRulesDesc', 'Tune the string similarity algorithm, match threshold, and noise reduction filters.')}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="epg-editor-card-body">
+                  {/* Search mode toggle */}
+                  <div className="epg-editor-field" style={{ margin: 0 }}>
+                    <label className="epg-editor-label">{t('matchAgainst')}</label>
+                    <div className="epg-search-scope-toggle">
+                      <button
+                        className={`epg-search-scope-btn${automatchMode === 'm3u' ? ' active' : ''}`}
+                        onClick={() => setAutomatchMode('m3u')}
+                        disabled={automatchRunning}
+                        title={t('searchM3uTitle')}
+                      >{t('m3uNames')}</button>
+                      <button
+                        className={`epg-search-scope-btn${automatchMode === 'epg' ? ' active' : ''}`}
+                        onClick={() => setAutomatchMode('epg')}
+                        disabled={automatchRunning}
+                        title={t('searchEpgNamesTitle')}
+                      >{t('epgNames')}</button>
+                    </div>
+                  </div>
+
+                  {/* Threshold slider */}
+                  <div className="epg-editor-field" style={{ margin: 0 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <label className="epg-editor-label" style={{ margin: 0 }}>
+                        {t('minMatchThreshold')}
+                      </label>
+                      <span className={`epg-score-badge ${automatchThreshold >= 85 ? 'high' : automatchThreshold >= 70 ? 'medium' : 'low'}`}>
+                        {automatchThreshold}% ({automatchThreshold >= 85 ? t('thresholdStrict', 'Strict') : automatchThreshold >= 70 ? t('thresholdBalanced', 'Balanced') : t('thresholdPermissive', 'Permissive')})
+                      </span>
+                    </div>
                     <input
-                      className="epg-editor-input"
-                      value={stripTagsInput}
-                      onChange={e => {
-                        setStripTagsInput(e.target.value);
-                        setEpgAutomatchStripTags(parseStripTags(e.target.value));
-                      }}
-                      placeholder={t('stripTagsPlaceholder')}
+                      type="range"
+                      min={10}
+                      max={100}
+                      step={5}
+                      value={automatchThreshold}
+                      onChange={e => setAutomatchThreshold(Number(e.target.value))}
                       disabled={automatchRunning}
+                      className="epg-automatch-slider"
                     />
                     <div className="epg-editor-hint">
-                      {t('stripTagsHint')}
+                      {t('thresholdHint')}
                     </div>
-                  </>
-                )}
-              </div>
-
-              {/* Action button */}
-              <div style={{ marginTop: 20, marginBottom: 16 }}>
-                <button
-                  className="epg-editor-btn epg-editor-btn-primary"
-                  onClick={handleAutoMatchMissing}
-                  disabled={automatchRunning || ((automatchChannelScope === 'source' || automatchEpgScope === 'source') && !automatchSourceId) || (automatchChannelScope === 'source' && !automatchAllCategories && automatchCategories.length === 0)}
-                  style={{ width: '100%', padding: '12px 22px', fontSize: '0.95rem' }}
-                >
-                  {automatchRunning && automatchProgress
-                    ? t('matchingProgress', { matched: automatchProgress.matched, total: automatchProgress.total })
-                    : <><RobotSvg size={16} /> <span>{t('automatchMissingBtn')}</span></>}
-                </button>
-              </div>
-
-              {/* Progress bar */}
-              {automatchRunning && automatchProgress && automatchProgress.total > 0 && (
-                <div style={{ marginBottom: 20 }}>
-                  <div style={{
-                    height: 6,
-                    background: 'var(--bg-tertiary, rgba(255,255,255,0.05))',
-                    borderRadius: 3,
-                    overflow: 'hidden',
-                  }}>
-                    <div style={{
-                      height: '100%',
-                      width: `${(automatchProgress.matched / automatchProgress.total) * 100}%`,
-                      background: 'var(--accent-primary, #00d4ff)',
-                      borderRadius: 3,
-                      transition: 'width 0.2s ease-out',
-                    }} />
                   </div>
-                  <div style={{ textAlign: 'center', marginTop: 6, fontSize: '0.8rem', color: 'var(--text-secondary, #888)' }}>
-                    {t('channelsProcessed', { matched: automatchProgress.matched, total: automatchProgress.total })}
-                  </div>
-                </div>
-              )}
 
-              {/* Results */}
-              {automatchResults && (
-                <div style={{
-                  border: '1px solid var(--border-color, rgba(255,255,255,0.1))',
-                  borderRadius: 10,
-                  background: 'var(--bg-tertiary, rgba(255,255,255,0.03))',
-                  overflow: 'hidden',
-                }}>
-                  <div style={{
-                    padding: '10px 14px',
-                    background: 'rgba(255,255,255,0.03)',
-                    borderBottom: '1px solid var(--border-color, rgba(255,255,255,0.07))',
-                    display: 'flex',
-                    alignItems: 'center',
-                    flexWrap: 'wrap',
-                    gap: 16,
-                    fontSize: '0.82rem',
-                  }}>
-                    <span style={{ color: '#4caf50' }}><strong>{automatchResults.matched}</strong> {t('matched')}</span>
-                    <span style={{ color: 'var(--text-secondary, #888)' }}><strong>{automatchResults.skipped}</strong> {t('skipped')}</span>
-                    {automatchResults.errors > 0 && (
-                      <span style={{ color: '#ff6b6b' }}><strong>{automatchResults.errors}</strong> {t('errors')}</span>
-                    )}
-                    {automatchResults.cleaned > 0 && (
-                      <span style={{ color: '#4caf50' }} title={t('automatchViaCleaned')}>
-                        <strong>{automatchResults.cleaned}</strong> {t('automatchViaCleaned')}
-                      </span>
-                    )}
-                    {automatchResults.ambiguous > 0 && (
-                      <span style={{ color: '#ffaa44' }} title={t('automatchAmbiguousHint')}>
-                        <strong>{automatchResults.ambiguous}</strong> {t('ambiguous')}
-                      </span>
-                    )}
-                    {automatchResults.filtered > 0 && (
-                      <span style={{ color: 'var(--text-secondary, #888)' }} title={t('enabledOnlyHint')}>
-                        <strong>{automatchResults.filtered.toLocaleString()}</strong> {t('enabledOnlyFiltered')}
-                      </span>
-                    )}
-                    {automatchResults.unmatched > 0 && (
-                      <span style={{ color: 'var(--text-secondary, #888)' }}>
-                        <strong>{automatchResults.unmatched}</strong> {t('automatchUnmatched')}
-                      </span>
-                    )}
-                    {automatchUndoCount > 0 && (
-                      <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-                        {confirmUndoAll ? (
-                          <>
-                            <button
-                              className="epg-automatch-unmatch epg-automatch-undo-all"
-                              onClick={() => setConfirmUndoAll(false)}
-                              disabled={undoingAll}
-                            >
-                              {i18n.t('common:cancel')}
-                            </button>
-                            <button
-                              className="epg-automatch-unmatch epg-automatch-undo-all epg-automatch-undo-all-confirm"
-                              onClick={handleUndoAllMatches}
-                              disabled={undoingAll}
-                            >
-                              {undoingAll ? '…' : t('automatchUndoAllConfirm', { count: automatchUndoCount })}
-                            </button>
-                          </>
-                        ) : (
-                          <button
-                            className="epg-automatch-unmatch epg-automatch-undo-all"
-                            onClick={() => setConfirmUndoAll(true)}
-                            disabled={unmatchingId !== null || undoingAll}
-                            title={t('automatchUndoAllHint')}
-                          >
-                            {t('automatchUndoAll')}
-                          </button>
-                        )}
+                  {/* Opt-in decorated-name handling */}
+                  <div className="epg-editor-field" style={{ margin: 0 }}>
+                    <label
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: automatchRunning ? 'default' : 'pointer' }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={epgAutomatchCleanNames}
+                        onChange={e => setEpgAutomatchCleanNames(e.target.checked)}
+                        disabled={automatchRunning}
+                      />
+                      <span className="epg-editor-label" style={{ margin: 0 }}>{t('cleanNamesLabel')}</span>
+                    </label>
+                    <div className="epg-editor-hint">
+                      {t('cleanNamesHint')}
+                    </div>
+                    {epgAutomatchCleanNames && (
+                      <div style={{ marginTop: 10 }}>
+                        <label className="epg-editor-label">
+                          {t('stripTagsLabel')}
+                        </label>
+                        <input
+                          className="epg-editor-input"
+                          value={stripTagsInput}
+                          onChange={e => {
+                            setStripTagsInput(e.target.value);
+                            setEpgAutomatchStripTags(parseStripTags(e.target.value));
+                          }}
+                          placeholder={t('stripTagsPlaceholder')}
+                          disabled={automatchRunning}
+                        />
+                        <div className="epg-editor-hint">
+                          {t('stripTagsHint')}
+                        </div>
                       </div>
                     )}
                   </div>
-                  {undoAllError && (
-                    <div className="epg-automatch-undo-error">{undoAllError}</div>
-                  )}
-                  {/*
-                    A run touches up to every channel in scope and logs a line per
-                    channel, so this list is virtualized — mounting tens of
-                    thousands of rows is what would make the modal stutter after a
-                    big run. Rows wrap, so heights are measured rather than assumed.
-                  */}
-                  <div
-                    ref={automatchListRef}
-                    style={{ maxHeight: 280, overflowY: 'auto', padding: '6px 0' }}
-                  >
-                    <VirtualList
-                      scrollRef={automatchListRef}
-                      items={automatchResults.details}
-                      estimateItemHeight={26}
-                      overscan={10}
-                      getKey={(_, index) => index}
-                      renderItem={(detail) => {
-                        const match = detail.match;
-                        const busy = match ? unmatchingId === match.streamId : false;
-                        const notice = match ? unmatchNotices[match.streamId] : undefined;
-                        const isSuccess = detail.type === 'success' || detail.text.startsWith('✓');
-                        const isWarning = detail.type === 'warning' || detail.text.startsWith('⚠');
-                        const isError = detail.type === 'error' || detail.text.startsWith('✗');
-                        const isSkipped = detail.type === 'skipped';
-                        const hasIcon = isSuccess || isWarning || isError || isSkipped;
-                        const cleanText = detail.text.replace(/^[✓⚠✗]\s*/, '');
+                </div>
+              </div>
 
-                        return (
-                          <div className="epg-automatch-detail">
-                            {hasIcon && (
-                              <span
-                                style={{
-                                  color: isSuccess ? '#4caf50' : isWarning ? '#ffaa44' : isError ? '#ff6b6b' : 'var(--text-secondary, #888)',
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  flexShrink: 0,
-                                  marginTop: 2,
-                                  marginRight: 6,
-                                }}
-                              >
-                                {isSuccess && <CheckSvg size={12} />}
-                                {isWarning && <WarningSvg size={12} />}
-                                {(isError || isSkipped) && <CrossSvg size={12} />}
-                              </span>
-                            )}
-                            <span
-                              className="epg-automatch-detail-text"
-                              style={{
-                                color: isSuccess ? '#4caf50'
-                                  : isWarning ? '#ffaa44'
-                                  : 'var(--text-secondary, #888)',
-                              }}
-                            >
-                              {cleanText}
-                            </span>
-                            {match && !match.unmatched && (
-                              <button
-                                className="epg-automatch-unmatch"
-                                onClick={() => handleUnmatchMatch(match)}
-                                disabled={unmatchingId !== null || undoingAll}
-                                title={t('automatchUnmatchHint')}
-                              >
-                                {busy ? '…' : t('automatchUnmatch')}
-                              </button>
-                            )}
-                            {match?.unmatched && (
-                              <span className="epg-automatch-unmatched">{t('automatchUnmatched')}</span>
-                            )}
-                            {notice && <span className="epg-automatch-notice">{notice}</span>}
-                          </div>
-                        );
-                      }}
-                    />
+              {/* Card 3: Execution Deck & Results */}
+              <div className="epg-editor-card">
+                <div className="epg-editor-card-header">
+                  <div>
+                    <h3 className="epg-editor-card-title">
+                      <SparkleSvg size={15} />
+                      <span>{t('executionDeckTitle', 'Execute Automatch & Review Results')}</span>
+                    </h3>
+                    <p className="epg-editor-card-desc">
+                      {t('executionDeckDesc', 'Launch the automatch sweep across your channels and inspect real-time outcomes.')}
+                    </p>
                   </div>
                 </div>
-              )}
 
-              {/*
-                Ambiguity worklist. Every channel the run refused to guess at is
-                a row you can settle here: pick the feed channel that should
-                supply the guide, or dismiss the row for later.
-              */}
-              {automatchRefusals.length > 0 && (
-                <div className="epg-refusal-panel">
-                  <div className="epg-refusal-header">
-                    <span className="epg-refusal-title">
-                      {t('ambiguousWorklistTitle', { count: automatchRefusals.length })}
-                    </span>
+                <div className="epg-editor-card-body">
+                  {/* Action button */}
+                  <div>
                     <button
-                      className="epg-refusal-dismiss-all"
-                      onClick={() => setAutomatchRefusals([])}
-                      disabled={resolvingRefusal !== null}
+                      className="epg-editor-btn epg-editor-btn-primary"
+                      onClick={handleAutoMatchMissing}
+                      disabled={automatchRunning || ((automatchChannelScope === 'source' || automatchEpgScope === 'source') && !automatchSourceId) || (automatchChannelScope === 'source' && !automatchAllCategories && automatchCategories.length === 0)}
+                      style={{ width: '100%', padding: '12px 22px', fontSize: '0.95rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
                     >
-                      {t('ambiguousDismissAll')}
+                      {automatchRunning && automatchProgress
+                        ? t('matchingProgress', { matched: automatchProgress.matched, total: automatchProgress.total })
+                        : <><RobotSvg size={16} /> <span>{t('automatchMissingBtn')}</span></>}
                     </button>
                   </div>
-                  <div className="epg-editor-hint" style={{ marginBottom: 8 }}>
-                    {t('ambiguousWorklistHint')}
-                  </div>
-                  <div className="epg-refusal-list">
-                    {automatchRefusals.map(refusal => {
-                      const busy = resolvingRefusal === refusal.streamId;
-                      const hidden = refusal.totalChoices - refusal.choices.length;
-                      return (
-                        <div key={refusal.streamId} className="epg-refusal-row">
-                          <div className="epg-refusal-row-head">
-                            <span className="epg-refusal-channel" title={refusal.channelName}>
-                              {refusal.channelName}
-                            </span>
-                            <span className="epg-refusal-cleaned">
-                              {t('ambiguousCleanedAs', { name: refusal.cleanedName })}
-                              {hidden > 0 ? ` +${hidden}` : ''}
-                            </span>
-                            <button
-                              className="epg-refusal-dismiss"
-                              onClick={() => dismissRefusal(refusal.streamId)}
-                              title={t('ambiguousDismiss')}
-                              aria-label={t('ambiguousDismiss')}
-                              disabled={busy}
-                              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
-                            >
-                              <CrossSvg size={10} />
-                            </button>
-                          </div>
-                          <div className="epg-refusal-choices">
-                            {refusal.choices.map(choice => {
-                              const feed = sourceNameMap.get(choice.source_id) || choice.source_id;
-                              return (
-                                <button
-                                  key={`${choice.source_id}:${choice.id}`}
-                                  className="epg-refusal-choice"
-                                  onClick={() => handleResolveRefusal(refusal, choice)}
-                                  disabled={busy}
-                                  title={`${feed} — ${choice.display_name}`}
-                                >
-                                  <span className="epg-refusal-choice-name">
-                                    {busy ? '…' : choice.display_name}
-                                  </span>
-                                  <span className="epg-refusal-choice-feed">{feed}</span>
-                                </button>
-                              );
-                            })}
-                          </div>
+
+                  {/* Progress bar */}
+                  {automatchRunning && automatchProgress && automatchProgress.total > 0 && (
+                    <div>
+                      <div style={{
+                        height: 6,
+                        background: 'var(--bg-tertiary, rgba(255,255,255,0.05))',
+                        borderRadius: 3,
+                        overflow: 'hidden',
+                      }}>
+                        <div style={{
+                          height: '100%',
+                          width: `${(automatchProgress.matched / automatchProgress.total) * 100}%`,
+                          background: 'var(--accent-primary, #00d4ff)',
+                          borderRadius: 3,
+                          transition: 'width 0.2s ease-out',
+                        }} />
+                      </div>
+                      <div style={{ textAlign: 'center', marginTop: 6, fontSize: '0.8rem', color: 'var(--text-secondary, #888)' }}>
+                        {t('channelsProcessed', { matched: automatchProgress.matched, total: automatchProgress.total })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Results */}
+                  {automatchResults && (
+                    <div style={{
+                      border: '1px solid var(--border-color, rgba(255,255,255,0.1))',
+                      borderRadius: 10,
+                      background: 'var(--bg-tertiary, rgba(255,255,255,0.03))',
+                      overflow: 'hidden',
+                      marginTop: 8,
+                    }}>
+                      {/* Metric Cards Summary */}
+                      <div className="epg-stats-deck" style={{ margin: 0, padding: 12, borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                        <div className="epg-stat-card">
+                          <span className="epg-stat-val epg-signal-success">{automatchResults.matched}</span>
+                          <span className="epg-stat-lbl">{t('matched')}</span>
                         </div>
-                      );
-                    })}
-                  </div>
+                        <div className="epg-stat-card">
+                          <span className="epg-stat-val epg-signal-warning">{automatchResults.ambiguous}</span>
+                          <span className="epg-stat-lbl">{t('ambiguous')}</span>
+                        </div>
+                        <div className="epg-stat-card">
+                          <span className="epg-stat-val">{automatchResults.skipped}</span>
+                          <span className="epg-stat-lbl">{t('skipped')}</span>
+                        </div>
+                        <div className="epg-stat-card">
+                          <span className={`epg-stat-val${automatchResults.errors > 0 ? ' epg-signal-danger' : ''}`}>{automatchResults.errors}</span>
+                          <span className="epg-stat-lbl">{t('errors')}</span>
+                        </div>
+                      </div>
+
+                      {/* Log Toolbar & Filters */}
+                      <div className="epg-log-filters">
+                        <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary, #888)', marginRight: 4 }}>
+                          {t('filter', 'Filter')}:
+                        </span>
+                        {(['all', 'success', 'warning', 'error', 'skipped'] as const).map(flt => (
+                          <button
+                            key={flt}
+                            type="button"
+                            className={`epg-log-filter-pill${automatchLogFilter === flt ? ' active' : ''}`}
+                            onClick={() => setAutomatchLogFilter(flt)}
+                          >
+                            {flt === 'all' ? i18n.t('common:all') : t(flt, flt)}
+                          </button>
+                        ))}
+                        {automatchUndoCount > 0 && (
+                          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+                            {confirmUndoAll ? (
+                              <>
+                                <button
+                                  className="epg-automatch-unmatch epg-automatch-undo-all"
+                                  onClick={() => setConfirmUndoAll(false)}
+                                  disabled={undoingAll}
+                                >
+                                  {i18n.t('common:cancel')}
+                                </button>
+                                <button
+                                  className="epg-automatch-unmatch epg-automatch-undo-all epg-automatch-undo-all-confirm"
+                                  onClick={handleUndoAllMatches}
+                                  disabled={undoingAll}
+                                >
+                                  {undoingAll ? '…' : t('automatchUndoAllConfirm', { count: automatchUndoCount })}
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                className="epg-automatch-unmatch epg-automatch-undo-all"
+                                onClick={() => setConfirmUndoAll(true)}
+                                disabled={unmatchingId !== null || undoingAll}
+                                title={t('automatchUndoAllHint')}
+                              >
+                                {t('automatchUndoAll')}
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {undoAllError && (
+                        <div className="epg-automatch-undo-error">{undoAllError}</div>
+                      )}
+
+                      <div
+                        ref={automatchListRef}
+                        style={{ maxHeight: 280, overflowY: 'auto', padding: '6px 0' }}
+                      >
+                        <VirtualList
+                          scrollRef={automatchListRef}
+                          items={filteredAutomatchDetails}
+                          estimateItemHeight={26}
+                          overscan={10}
+                          getKey={(_, index) => index}
+                          renderItem={(detail) => {
+                            const match = detail.match;
+                            const busy = match ? unmatchingId === match.streamId : false;
+                            const notice = match ? unmatchNotices[match.streamId] : undefined;
+                            const isSuccess = detail.type === 'success' || detail.text.startsWith('✓');
+                            const isWarning = detail.type === 'warning' || detail.text.startsWith('⚠');
+                            const isError = detail.type === 'error' || detail.text.startsWith('✗');
+                            const isSkipped = detail.type === 'skipped';
+                            const hasIcon = isSuccess || isWarning || isError || isSkipped;
+                            const cleanText = detail.text.replace(/^[✓⚠✗]\s*/, '');
+
+                            return (
+                              <div className="epg-automatch-detail">
+                                {hasIcon && (
+                                  <span
+                                    className={
+                                      isSuccess ? 'epg-signal-success-text'
+                                        : isWarning ? 'epg-signal-warning-text'
+                                        : isError ? 'epg-signal-danger-text'
+                                        : 'epg-signal-muted'
+                                    }
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      flexShrink: 0,
+                                      marginTop: 2,
+                                      marginRight: 6,
+                                    }}
+                                  >
+                                    {isSuccess && <CheckSvg size={12} />}
+                                    {isWarning && <WarningSvg size={12} />}
+                                    {(isError || isSkipped) && <CrossSvg size={12} />}
+                                  </span>
+                                )}
+                                <span
+                                  className={
+                                    `epg-automatch-detail-text ${isSuccess ? 'epg-signal-success-text'
+                                      : isWarning ? 'epg-signal-warning-text'
+                                      : 'epg-signal-muted'}`
+                                  }
+                                >
+                                  {cleanText}
+                                </span>
+                                {match && !match.unmatched && (
+                                  <button
+                                    className="epg-automatch-unmatch"
+                                    onClick={() => handleUnmatchMatch(match)}
+                                    disabled={unmatchingId !== null || undoingAll}
+                                    title={t('automatchUnmatchHint')}
+                                  >
+                                    {busy ? '…' : t('automatchUnmatch')}
+                                  </button>
+                                )}
+                                {match?.unmatched && (
+                                  <span className="epg-automatch-unmatched">{t('automatchUnmatched')}</span>
+                                )}
+                                {notice && <span className="epg-automatch-notice">{notice}</span>}
+                              </div>
+                            );
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Ambiguity worklist */}
+                  {automatchRefusals.length > 0 && (
+                    <div className="epg-refusal-panel" style={{ marginTop: 12 }}>
+                      <div className="epg-refusal-header">
+                        <span className="epg-refusal-title">
+                          {t('ambiguousWorklistTitle', { count: automatchRefusals.length })}
+                        </span>
+                        <button
+                          className="epg-refusal-dismiss-all"
+                          onClick={() => setAutomatchRefusals([])}
+                          disabled={resolvingRefusal !== null}
+                        >
+                          {t('ambiguousDismissAll')}
+                        </button>
+                      </div>
+                      <div className="epg-editor-hint" style={{ marginBottom: 8 }}>
+                        {t('ambiguousWorklistHint')}
+                      </div>
+                      <div className="epg-refusal-list">
+                        {automatchRefusals.map(refusal => {
+                          const busy = resolvingRefusal === refusal.streamId;
+                          const hidden = refusal.totalChoices - refusal.choices.length;
+                          return (
+                            <div key={refusal.streamId} className="epg-refusal-row">
+                              <div className="epg-refusal-row-head">
+                                <span className="epg-refusal-channel" title={refusal.channelName}>
+                                  {refusal.channelName}
+                                </span>
+                                <span className="epg-refusal-cleaned">
+                                  {t('ambiguousCleanedAs', { name: refusal.cleanedName })}
+                                  {hidden > 0 ? ` +${hidden}` : ''}
+                                </span>
+                                <button
+                                  className="epg-refusal-dismiss"
+                                  onClick={() => dismissRefusal(refusal.streamId)}
+                                  title={t('ambiguousDismiss')}
+                                  aria-label={t('ambiguousDismiss')}
+                                  disabled={busy}
+                                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                                >
+                                  <CrossSvg size={10} />
+                                </button>
+                              </div>
+                              <div className="epg-refusal-choices">
+                                {refusal.choices.map(choice => {
+                                  const feed = sourceNameMap.get(choice.source_id) || choice.source_id;
+                                  return (
+                                    <button
+                                      key={`${choice.source_id}:${choice.id}`}
+                                      className="epg-refusal-choice"
+                                      onClick={() => handleResolveRefusal(refusal, choice)}
+                                      disabled={busy}
+                                      title={`${feed} — ${choice.display_name}`}
+                                    >
+                                      <span className="epg-refusal-choice-name">
+                                        {busy ? '…' : choice.display_name}
+                                      </span>
+                                      <span className="epg-refusal-choice-feed">{feed}</span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
+              </div>
             </div>
           )}
 
           {/* ═══ MATCHES / FEED LOCKS TAB ═══ */}
           {activeTab === 'matches' && (
             <div className="epg-matches">
+              {/* Top Stats Deck */}
+              <div className="epg-stats-deck">
+                <div className="epg-stat-card">
+                  <span className="epg-stat-val" style={{ color: 'var(--accent-primary, #00d4ff)' }}>
+                    {matchVisibleCount}
+                  </span>
+                  <span className="epg-stat-lbl">{t('matchesMappedCount', 'Mapped Channels')}</span>
+                </div>
+                <div className="epg-stat-card">
+                  <span className={`epg-stat-val${matchVisibleLocked > 0 ? ' epg-signal-warning' : ''}`}>
+                    {matchVisibleLocked}
+                  </span>
+                  <span className="epg-stat-lbl">{t('matchesLocked')}</span>
+                </div>
+                <div className="epg-stat-card">
+                  <span className={`epg-stat-val${matchVisibleElsewhere > 0 ? ' epg-signal-info' : ''}`}>
+                    {matchVisibleElsewhere}
+                  </span>
+                  <span className="epg-stat-lbl">{t('matchesLockedElsewhere')}</span>
+                </div>
+              </div>
+
               <div className="epg-matches-toolbar">
                 <input
                   className="epg-editor-input epg-matches-search"
@@ -3252,7 +3603,7 @@ export function EpgEditorModal({
         <div className="epg-confirm-overlay" onClick={() => setShowResetConfirm(false)}>
           <div className="epg-confirm-modal" onClick={e => e.stopPropagation()}>
             <h3 className="epg-confirm-title">
-              <WarningSvg size={18} style={{ color: '#ff5555' }} />
+              <WarningSvg size={18} style={{ color: 'var(--status-danger, #ef4444)' }} />
               <span>{t('resetChannel')}</span>
             </h3>
             <p className="epg-confirm-desc">

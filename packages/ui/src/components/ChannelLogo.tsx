@@ -4,6 +4,7 @@ import { classifyLogo, getCachedLogoVerdict } from '../utils/logoLuminance';
 import { getLogoContentBox, getCachedLogoContentBox, getCachedLogoDims, LogoContentBox } from '../utils/logoContentBox';
 import { getCachedLogoUrl } from '../services/logoCache';
 import { useSettingsStore } from '../stores/settingsStore';
+import { resolveLogoPadded, type LogoPadding } from '../utils/logoPadding';
 
 interface ChannelLogoProps {
   src?: string | null;
@@ -19,8 +20,12 @@ interface ChannelLogoProps {
    * the global default is Light/Dark. A per-logo `background` prop always wins.
    */
   defaultBackground?: 'auto' | 'light' | 'dark';
-  /** Manual logo padding override. 'default' (or undefined) uses normal tile padding, 'none' removes padding. */
-  padding?: 'default' | 'none';
+  /**
+   * Manual logo padding override. `'default'`/`'padded'` forces standard tile
+   * padding, `'none'` forces a full-bleed tile, and leaving it undefined
+   * follows the global Tile Layout setting — see `utils/logoPadding`.
+   */
+  padding?: LogoPadding;
   /** Display shape override: 'square' or 'rectangle' */
   shape?: 'square' | 'rectangle';
 }
@@ -35,7 +40,8 @@ interface ChannelLogoProps {
  *
  * Pass `background="light"` to always force a light tile (for dark logos the
  * auto-detection gets wrong) or `background="dark"` to always keep the default
- * dark tile. Pass `padding="none"` to remove padding around the image.
+ * dark tile. Pass `padding="none"` to remove padding around the image; leave it
+ * undefined to follow the global Tile Layout setting.
  */
 export const ChannelLogo = memo(function ChannelLogo({
   src,
@@ -45,13 +51,20 @@ export const ChannelLogo = memo(function ChannelLogo({
   lazy = true,
   background = 'auto',
   defaultBackground,
-  padding = 'default',
+  padding,
   shape,
 }: ChannelLogoProps) {
   const logoCacheEnabled = useSettingsStore((s) => s.logoCacheEnabled);
   const logoLightBackgroundDetection = useSettingsStore((s) => s.logoLightBackgroundDetection) ?? true;
   const logoSmartTrim = useSettingsStore((s) => s.logoSmartTrim) ?? false;
   const logoDefaultBackground = useSettingsStore((s) => s.logoDefaultBackground) ?? 'auto';
+  const channelLogoPadding = useSettingsStore((s) => s.channelLogoPadding);
+
+  // Per-channel override wins; only a channel with no explicit choice follows the
+  // global Tile Layout setting. `padding` must NOT default to 'default' here, or
+  // an absent override would read as "explicitly padded" and the setting would
+  // never be consulted.
+  const isPadded = resolveLogoPadded(padding, channelLogoPadding);
   // Per-logo background override (prop, set in the EPG editor) wins; then a
   // per-channel default (per-source override); then the global default setting.
   // 'auto' at any level falls back to luminance detection.
@@ -192,11 +205,28 @@ export const ChannelLogo = memo(function ChannelLogo({
     const tw = container.clientWidth;
     const th = container.clientHeight;
     if (!tw || !th) return;
-    const s = Math.min(tw / cw, th / ch);
+
+    // The tile's own padding (3px square, 2px/5px rectangle, 0 full-bleed) comes
+    // from the stylesheet, so read it instead of mirroring the numbers here — a
+    // hardcoded inset silently drifts whenever the CSS padding changes. The
+    // padded content box is what the trimmed logo has to fill.
+    const cs = typeof getComputedStyle === 'function' ? getComputedStyle(container) : null;
+    const px = (v: string | undefined) => {
+      const n = parseFloat(v || '0');
+      return Number.isFinite(n) ? n : 0;
+    };
+    const padL = px(cs?.paddingLeft);
+    const padR = px(cs?.paddingRight);
+    const padT = px(cs?.paddingTop);
+    const padB = px(cs?.paddingBottom);
+    const contentW = Math.max(1, tw - padL - padR);
+    const contentH = Math.max(1, th - padT - padB);
+
+    const s = Math.min(contentW / cw, contentH / ch);
     const dw = nW * s;
     const dh = nH * s;
-    const x = (tw - cw * s) / 2 - box.l * nW * s;
-    const y = (th - ch * s) / 2 - box.t * nH * s;
+    const x = padL + (contentW - cw * s) / 2 - box.l * nW * s;
+    const y = padT + (contentH - ch * s) / 2 - box.t * nH * s;
     const next: Record<string, string> = {
       '--smart-trim-x': `${x}px`,
       '--smart-trim-y': `${y}px`,
@@ -208,7 +238,9 @@ export const ChannelLogo = memo(function ChannelLogo({
       lastVarsRef.current = key;
       setTrimVars(next);
     }
-  }, [contentBox, src]);
+    // Both deps change the modifier classes — and therefore the computed padding
+    // read above — so the trim has to be recomputed when either flips.
+  }, [contentBox, src, isPadded, shape]);
 
   useLayoutEffect(() => {
     if (!logoSmartTrim || !effectiveSrc || !contentBox) {
@@ -220,7 +252,13 @@ export const ChannelLogo = memo(function ChannelLogo({
     const container = containerRef.current;
     if (!container || typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver(applyTrim);
-    ro.observe(container);
+    // Content box, not border box: the tile's `padding` is animated (See
+    // EpgEditorModal.css / LogoEditorModal.css) and `applyTrim` reads that
+    // padding to inset the trim — so toggling Normal/No Pad used to fire no
+    // resize at all, leaving the trim computed from a half-finished padding
+    // (a slightly shrunken, subtly off-centre logo). Observing the content box
+    // re-trims on every padding step and lands on the final geometry.
+    ro.observe(container, { box: 'content-box' });
     return () => ro.disconnect();
   }, [logoSmartTrim, effectiveSrc, contentBox, loadedTick, applyTrim]);
 
@@ -230,7 +268,7 @@ export const ChannelLogo = memo(function ChannelLogo({
 
   const containerClass = [
     needsLight ? `${className} logo-on-light` : className,
-    padding === 'none' && !smartTrimActive ? 'no-padding' : '',
+    isPadded ? 'logo-padded' : 'no-padding',
     shape === 'rectangle' ? 'logo-shape-rectangle' : '',
     shape === 'square' ? 'logo-shape-square' : '',
     smartTrimActive ? 'logo-smart-trim' : '',

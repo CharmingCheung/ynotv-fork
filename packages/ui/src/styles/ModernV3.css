@@ -2100,8 +2100,12 @@ html.modern-ui-v3[data-theme] .guide-channel-logo.logo-shape-rectangle {
   width: calc(var(--channel-logo-size, 42px) * 1.76);
   height: calc(var(--channel-logo-size, 42px) * 0.904);
   border-radius: var(--channel-logo-radius, 8px);
-  padding: 0;
+  padding: 2px 5px;
   background: transparent;
+}
+
+html.modern-ui-v3[data-theme] .guide-channel-logo.logo-shape-rectangle.logo-padded {
+  padding: 2px 5px !important;
 }
 
 html.modern-ui-v3[data-theme] .guide-channel-logo.logo-shape-rectangle.logo-on-light {
@@ -2114,24 +2118,41 @@ html.modern-ui-v3[data-theme] .guide-channel-logo.logo-shape-square {
   width: var(--channel-logo-size, 42px);
   height: var(--channel-logo-size, 42px);
   border-radius: var(--channel-logo-radius, 8px);
-  padding: 0;
+  padding: 3px;
   background: transparent;
+}
+
+html.modern-ui-v3[data-theme] .guide-channel-logo.logo-shape-square.logo-padded {
+  padding: 3px !important;
 }
 
 html.modern-ui-v3[data-theme] .guide-channel-logo.logo-shape-square.logo-on-light {
   background: var(--guide-logo-onlight-bg, rgba(255, 255, 255, 0.92));
 }
 
+/* Logo padded state for modern UI. `:not(.logo-padded)` keeps this legacy
+   global-class rule from out-specifying (it carries `!important` and five
+   class-level selectors) the rectangle shape's own 2px 5px padding, the EPG
+   editor's 6px logo stage and the logo editor's 4px preview. */
+html.modern-ui-v3[data-theme] .guide-channel-logo.logo-padded,
+html.modern-ui-v3[data-theme].logo-padded-tiles .guide-channel-logo:not(.no-padding):not(.logo-padded) {
+  padding: 3px !important;
+}
+
 /* No-padding overrides for modern UI and rectangle channel logos */
 
-html.modern-ui-v3[data-theme] .guide-channel-logo.no-padding {
+html.modern-ui-v3[data-theme] .guide-channel-logo.no-padding,
+html.modern-ui-v3[data-theme] .guide-channel-logo.logo-shape-rectangle.no-padding,
+html.modern-ui-v3[data-theme] .guide-channel-logo.logo-shape-square.no-padding {
   padding: 0 !important;
 }
 
-html.modern-ui-v3[data-theme] .guide-channel-logo.no-padding img {
+html.modern-ui-v3[data-theme] .guide-channel-logo.no-padding:not(.logo-smart-trim) img,
+html.modern-ui-v3[data-theme] .guide-channel-logo.logo-shape-rectangle.no-padding:not(.logo-smart-trim) img,
+html.modern-ui-v3[data-theme] .guide-channel-logo.logo-shape-square.no-padding:not(.logo-smart-trim) img {
   width: 100% !important;
   height: 100% !important;
-  object-fit: cover !important;
+  object-fit: contain !important;
 }
 
 /* Smart trim: auto-crop baked-in transparent padding so opaque content fills the tile */
@@ -2964,6 +2985,8 @@ html.modern-ui-v3[data-theme] .guide-channel-row.currently-playing .program-bloc
 
 html.modern-ui-v3[data-theme] .guide-channel-logo {
   background: var(--guide-logo-bg, rgba(255, 255, 255, 0.04)) !important;
+  padding: 3px;
+  box-sizing: border-box;
 }
 
 /* On-light logos keep the near-white backing (v2 token, base consumes it) —

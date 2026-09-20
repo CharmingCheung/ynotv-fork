@@ -33,8 +33,34 @@ export async function getChannelOverride(streamId: string): Promise<EpgChannelOv
   return row ?? null;
 }
 
+/**
+ * Write a channel's override row, keeping every field the caller does not name.
+ *
+ * `put` is INSERT OR REPLACE, and the adapter builds its column list from the
+ * object it is handed — a column left out of that object is written as NULL, not
+ * left alone. Only the Channel tab's Save carries a whole row; every other caller
+ * means to change *some* fields (the id a match picked, the feed's icon, the
+ * timeshift), so a bare `put` erased the rest of the row. That is how applying a
+ * match, running Automatch and resolving a refusal each silently dropped a
+ * channel's logo background and tile padding — and with them the settings the
+ * user had picked for that channel.
+ *
+ * So this is the one write path for channel overrides and it merges:
+ *
+ *  - a field the caller omits keeps its stored value;
+ *  - a field the caller passes as `undefined` is cleared, because the key is
+ *    present and therefore wins. That is what the Channel tab relies on to drop a
+ *    feed lock when the TVG-ID is edited by hand, and what
+ *    `releaseChannelFeedPin` relies on to release a pin.
+ *
+ * The read costs one primary-key lookup per write, which is deliberate: a caller
+ * holding a row it captured earlier (an Automatch run preloads its channels) can
+ * be minutes stale, and merging that back would revert a hand edit made while the
+ * run was in progress.
+ */
 export async function upsertChannelOverride(override: EpgChannelOverride): Promise<void> {
-  await db.epgChannelOverrides.put(override);
+  const existing = override.stream_id ? await getChannelOverride(override.stream_id) : null;
+  await db.epgChannelOverrides.put({ ...(existing ?? {}), ...override });
   // Notify live queries immediately:
   // - 'programs': re-runs useCurrentProgram / usePrograms / useProgramsInRange / useAllPrograms
   //   (timeshift change affects all program time display)
@@ -49,7 +75,13 @@ export async function batchUpsertLogoOverrides(
   updates: Array<{
     streamId: string;
     logoBackground?: 'auto' | 'light' | 'dark';
-    logoPadding?: 'default' | 'none';
+    /**
+     * `'default'`/`'none'` records that choice on the channel; `null` clears it, so
+     * the tile follows the global Tile Layout setting again; omitted leaves whatever
+     * is stored. `null` and `undefined` differ on purpose — an editor has to be able
+     * to say "back to the global setting" for a channel that carries a padding.
+     */
+    logoPadding?: 'default' | 'none' | null;
   }>
 ): Promise<void> {
   if (updates.length === 0) return;
@@ -68,8 +100,10 @@ export async function batchUpsertLogoOverrides(
       ? (logoBackground === 'auto' ? undefined : logoBackground)
       : existing?.logo_background;
 
+    // `null` is an explicit "no choice", so it clears rather than reading as a
+    // field this update doesn't mention.
     const nextPad = logoPadding !== undefined
-      ? (logoPadding === 'default' ? undefined : logoPadding)
+      ? (logoPadding ?? undefined)
       : existing?.logo_padding;
 
     const hasOtherOverrides = Boolean(
@@ -844,6 +878,9 @@ async function applyUnmatch(
 
   const restored = buildRestoredOverride(streamId, prior);
   if (restored) {
+    // Deliberately a bare `put`, not `upsertChannelOverride`: an undo writes the
+    // pre-run row *whole*, so the fields the match introduced (the id, the pin)
+    // have to go. Merging would keep exactly the ones being taken back.
     await db.epgChannelOverrides.put(restored);
   } else {
     await db.epgChannelOverrides.delete(streamId);

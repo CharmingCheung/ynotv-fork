@@ -30,8 +30,14 @@ export interface LogoDims {
   h: number;
 }
 
-const STORAGE_KEY = 'ynotv.logo-contentbox.v1';
-const DIMS_STORAGE_KEY = 'ynotv.logo-dims.v1';
+// Bumped from v1: entries written by earlier analysis passes could disagree with
+// the image the app is displaying (the CDN serving different bytes at the same
+// URL, or a box measured from a partially-painted copy). A stored box is a hint
+// that is verified against the loaded image once per session, so a stale entry
+// can only affect the first paint of a session — but bumping the key retires the
+// bad entries outright instead of leaving them to be measured over.
+const STORAGE_KEY = 'ynotv.logo-contentbox.v2';
+const DIMS_STORAGE_KEY = 'ynotv.logo-dims.v2';
 const MAX_PERSISTED = 10000;
 const MAX_CONCURRENT_FETCHES = 8;
 const MAX_ANALYSIS_DIM = 160;
@@ -41,6 +47,8 @@ const SAFETY_MARGIN = 0.02;
 const memoryCache = new LRUCache<string, LogoContentBox | null>({ maxSize: 5000 });
 const dimsMemoryCache = new LRUCache<string, LogoDims>({ maxSize: 5000 });
 const inFlight = new Map<string, Promise<LogoContentBox | null>>();
+/** URLs whose cached box has already been re-measured this session. */
+const boxesVerifiedThisSession = new Set<string>();
 let pendingFetches = 0;
 
 let persisted: Record<string, LogoContentBox | null> = {};
@@ -165,6 +173,39 @@ function setCachedDims(url: string, dims: LogoDims) {
   }
 }
 
+/**
+ * Whether two boxes disagree enough to be worth replacing the cached one.
+ * Anti-aliasing and down-sampling move a box by a pixel or two, which is not a
+ * disagreement; anything larger means one of the two measured a different image
+ * (or a partially decoded one).
+ */
+function boxesMeaningfullyDiffer(a: LogoContentBox, b: LogoContentBox): boolean {
+  const DELTA = 0.02;
+  return (
+    Math.abs(a.l - b.l) > DELTA ||
+    Math.abs(a.t - b.t) > DELTA ||
+    Math.abs(a.r - b.r) > DELTA ||
+    Math.abs(a.b - b.b) > DELTA
+  );
+}
+
+/**
+ * Whether a cached box should be re-measured on this mount.
+ *
+ * Every box is re-measured once per session against the image actually being
+ * displayed, then trusted for the rest of the session. The cache is keyed by URL
+ * and outlives the bytes that produced it, and a wrong box is not cosmetic:
+ * Smart Trim zooms the logo to whatever the box claims is content and offsets it
+ * by where the box says that content starts, so a box covering only part of the
+ * artwork draws the logo oversized, cropped, and off-centre — with the tile's
+ * padding setting invisible under the zoom. Measuring an already-loaded image
+ * costs one small canvas scan, so the box a logo renders with always reflects
+ * the image on screen, not a measurement from an older copy of it.
+ */
+export function shouldRecheckCachedBox(alreadyVerified: boolean): boolean {
+  return !alreadyVerified;
+}
+
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -178,6 +219,26 @@ function loadImage(src: string): Promise<HTMLImageElement> {
  * Compute the bounding box of opaque pixels. Throws on cross-origin tainted
  * canvases (caller falls back to the fetch proxy in that case).
  */
+/**
+ * Measure an image once it is fully decoded, so the scan can never run against
+ * a partially painted copy (which reads as transparent and yields a box that
+ * covers only the decoded part of the logo).
+ */
+async function measureImage(img: HTMLImageElement): Promise<LogoContentBox | null> {
+  if (img.naturalWidth > 0 && typeof img.decode === 'function') {
+    try {
+      await img.decode();
+    } catch {
+      // decode() rejects on broken/aborted images; fall through and try anyway.
+    }
+  }
+  try {
+    return computeContentBox(img);
+  } catch {
+    return null; // cross-origin tainted canvas — caller falls back to the proxy
+  }
+}
+
 function computeContentBox(img: HTMLImageElement): LogoContentBox | null {
   const nW = img.naturalWidth;
   const nH = img.naturalHeight;
@@ -242,7 +303,10 @@ async function analyzeFromUrl(url: string): Promise<{ box: LogoContentBox | null
     const objectUrl = URL.createObjectURL(blob);
     try {
       const img = await loadImage(objectUrl);
-      return { box: computeContentBox(img), w: img.naturalWidth, h: img.naturalHeight };
+      // Measure through the same decoded-image path as the in-page case: a scan
+      // started before the image is fully decoded reads the undecoded part as
+      // transparent and stores a box that covers only what had painted.
+      return { box: await measureImage(img), w: img.naturalWidth, h: img.naturalHeight };
     } finally {
       URL.revokeObjectURL(objectUrl);
     }
@@ -273,6 +337,20 @@ export async function getLogoContentBox(
       if (!existingDims || existingDims.w !== loadedImg.naturalWidth || existingDims.h !== loadedImg.naturalHeight) {
         setCachedDims(url, { w: loadedImg.naturalWidth, h: loadedImg.naturalHeight });
       }
+
+      // A cached box is a hint, not the truth — see shouldRecheckCachedBox.
+      // Re-measure it once per session against the image we are displaying, so a
+      // box recorded from a partial or older copy of the image can't keep
+      // zooming, cropping and offsetting the logo.
+      const alreadyVerified = boxesVerifiedThisSession.has(url);
+      boxesVerifiedThisSession.add(url);
+      if (shouldRecheckCachedBox(alreadyVerified)) {
+        const fresh = await measureImage(loadedImg);
+        if (fresh && (!cached || boxesMeaningfullyDiffer(fresh, cached))) {
+          setCached(url, fresh);
+          return fresh;
+        }
+      }
     }
     return cached;
   }
@@ -286,12 +364,10 @@ export async function getLogoContentBox(
     let h = 0;
 
     if (loadedImg && loadedImg.complete && loadedImg.naturalWidth > 0) {
-      try {
-        box = computeContentBox(loadedImg);
+      box = await measureImage(loadedImg);
+      if (box !== null) {
         w = loadedImg.naturalWidth;
         h = loadedImg.naturalHeight;
-      } catch {
-        box = null; // cross-origin tainted canvas — fall back to proxy
       }
     }
 

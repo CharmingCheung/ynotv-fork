@@ -1701,6 +1701,7 @@ class YnotvDatabase extends SqliteDatabase {
         c.name,
         COALESCE(o.stream_icon,      c.stream_icon)      AS stream_icon,
         o.logo_background                                  AS logo_background,
+        o.logo_padding                                     AS logo_padding,
         COALESCE(o.epg_channel_id,   c.epg_channel_id)   AS epg_channel_id,
         c.channel_num,
         c.is_favorite,

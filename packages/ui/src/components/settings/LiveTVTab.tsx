@@ -207,7 +207,7 @@ export function LiveTVTab({
   onChannelLogoSizeChange = () => {},
   channelLogoRoundEdges = true,
   onChannelLogoRoundEdgesChange = () => {},
-  channelLogoPadding = 'none',
+  channelLogoPadding = 'padded',
   onChannelLogoPaddingChange = () => {},
   logoSmartTrim = false,
   onLogoSmartTrimChange = () => {},

@@ -391,16 +391,28 @@
 .preview-logo-wrapper .guide-channel-logo {
   max-width: 120px;
   height: 48px;
+  padding: 4px;
+}
+
+/* The wrapper pins the preview height, so a square tile has to take its width
+   from that height — without this it kept `--channel-logo-size` for the width
+   and rendered 54x48, i.e. a "Square" choice previewed as a rectangle. */
+.preview-logo-wrapper .guide-channel-logo.logo-shape-square {
+  width: 48px;
+}
+
+.preview-logo-wrapper .guide-channel-logo.logo-padded {
+  padding: 4px !important;
 }
 
 .preview-logo-wrapper .guide-channel-logo.no-padding {
   padding: 0 !important;
 }
 
-.preview-logo-wrapper .guide-channel-logo.no-padding img {
+.preview-logo-wrapper .guide-channel-logo.no-padding:not(.logo-smart-trim) img {
   width: 100% !important;
   height: 100% !important;
-  object-fit: cover !important;
+  object-fit: contain !important;
 }
 
 .status-badge {
@@ -436,6 +448,14 @@
   color: #000;
   font-weight: 700;
 }
+/* The padding row is three options wide (Default / Normal / No Pad) in a card that
+   can be as narrow as 210px. `.segmented-btn` is `flex: 1 0 0%` with `white-space:
+   nowrap` and cannot shrink, so an extra option — or a longer translated label —
+   would spill out of the card instead of moving to a second line. */
+.logo-editor-modal .card-padding-control {
+  flex-wrap: wrap;
+}
+
 .logo-editor-modal .card-padding-control .segmented-btn.active {
   background: #ffc107;
   color: #000;

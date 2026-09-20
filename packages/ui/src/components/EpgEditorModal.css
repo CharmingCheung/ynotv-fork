@@ -24,7 +24,7 @@
 
 .epg-editor-modal {
   width: 92vw;
-  max-width: 980px;
+  max-width: 1040px;
   height: 85vh;
   max-height: 88vh;
   background: var(--glass-settings-bg, var(--bg-secondary, #121225));
@@ -403,7 +403,7 @@ select.epg-editor-input option {
 
 .epg-editor-btn-danger {
   background: rgba(220, 50, 50, 0.15);
-  color: #ff6b6b;
+  color: var(--status-danger-text, #ff6b6b);
   border: 1px solid rgba(220, 50, 50, 0.3);
 }
 
@@ -437,7 +437,7 @@ select.epg-editor-input option {
   gap: 8px;
   font-size: 0.92rem;
   font-weight: 600;
-  color: #ff6b6b;
+  color: var(--status-danger-text, #ff6b6b);
   margin-bottom: 4px;
 }
 
@@ -554,6 +554,17 @@ select.epg-editor-input option {
   box-shadow: 0 0 12px rgba(0, 212, 255, 0.15);
 }
 
+.epg-program-row.is-current {
+  border-color: rgba(0, 212, 255, 0.45);
+  background: rgba(0, 212, 255, 0.05);
+  box-shadow: 0 0 14px rgba(0, 212, 255, 0.12), inset 3px 0 0 var(--accent-primary, #00d4ff);
+}
+
+.epg-program-row.is-current:hover {
+  border-color: var(--accent-primary, #00d4ff);
+  background: rgba(0, 212, 255, 0.08);
+}
+
 .epg-program-time {
   font-size: 0.78rem;
   color: var(--text-secondary, rgba(255, 255, 255, 0.65));
@@ -594,7 +605,7 @@ select.epg-editor-input option {
 
 .epg-badge-modified {
   background: rgba(255, 170, 68, 0.15);
-  color: #ffaa44;
+  color: var(--status-warning-text, #ffaa44);
   border: 1px solid rgba(255, 170, 68, 0.3);
 }
 
@@ -606,8 +617,37 @@ select.epg-editor-input option {
 
 .epg-badge-deleted {
   background: rgba(220, 50, 50, 0.15);
-  color: #ff6666;
+  color: var(--status-danger-text, #ff6b6b);
   border: 1px solid rgba(220, 50, 50, 0.3);
+}
+
+.epg-badge-live {
+  background: rgba(0, 212, 255, 0.16);
+  color: var(--accent-primary, #00d4ff);
+  border: 1px solid rgba(0, 212, 255, 0.35);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.epg-live-pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-primary, #00d4ff);
+  box-shadow: 0 0 6px var(--accent-primary, #00d4ff);
+  animation: epgPulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes epgPulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
 }
 
 .epg-program-actions {
@@ -639,7 +679,7 @@ select.epg-editor-input option {
 }
 
 .epg-program-action-btn.danger {
-  color: #ff6b6b;
+  color: var(--status-danger-text, #ff6b6b);
   border-color: rgba(220, 50, 50, 0.25);
   background: rgba(220, 50, 50, 0.06);
 }
@@ -651,7 +691,7 @@ select.epg-editor-input option {
 }
 
 .epg-program-action-btn.restore {
-  color: #4caf50;
+  color: var(--status-success-text, #4caf50);
   border-color: rgba(76, 175, 80, 0.25);
   background: rgba(76, 175, 80, 0.06);
 }
@@ -1172,7 +1212,7 @@ select.epg-editor-input option {
 }
 
 .epg-matches-chip.elsewhere {
-  color: #ffaa44;
+  color: var(--status-warning-text, #ffaa44);
   border-color: rgba(255, 170, 68, 0.35);
   background: rgba(255, 170, 68, 0.1);
 }
@@ -1225,7 +1265,7 @@ select.epg-editor-input option {
 .epg-editor-saved-notice {
   font-size: 0.82rem;
   font-weight: 500;
-  color: #4caf50;
+  color: var(--status-success-text, #4caf50);
   margin-right: auto;
   display: flex;
   align-items: center;
@@ -1386,7 +1426,7 @@ select.epg-editor-input option {
 .epg-refusal-title {
   font-size: 0.88rem;
   font-weight: 600;
-  color: #ffaa44;
+  color: var(--status-warning-text, #ffaa44);
 }
 
 .epg-refusal-dismiss-all {
@@ -1627,7 +1667,7 @@ select.epg-editor-input option {
 }
 
 .epg-automatch-undo-all-confirm {
-  color: #ff6b6b;
+  color: var(--status-danger-text, #ff6b6b);
   border-color: rgba(220, 50, 50, 0.5);
   background: rgba(220, 50, 50, 0.12);
 }
@@ -1641,7 +1681,7 @@ select.epg-editor-input option {
 .epg-automatch-undo-error {
   padding: 8px 14px;
   font-size: 0.78rem;
-  color: #ff6b6b;
+  color: var(--status-danger-text, #ff6b6b);
   border-bottom: 1px solid rgba(220, 50, 50, 0.2);
   background: rgba(220, 50, 50, 0.05);
 }
@@ -1656,7 +1696,7 @@ select.epg-editor-input option {
 .epg-automatch-notice {
   flex: 0 0 auto;
   font-size: 0.72rem;
-  color: #ffaa44;
+  color: var(--status-warning-text, #ffaa44);
 }
 
 /* ── Reset Confirmation Dialog ── */
@@ -1716,3 +1756,444 @@ select.epg-editor-input option {
   gap: 10px;
   margin-top: 6px;
 }
+
+/* ── Modern Card Sections ── */
+.epg-editor-card {
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+  padding: 18px 20px;
+  margin-bottom: 18px;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.epg-editor-card:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.epg-editor-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 14px;
+  gap: 12px;
+}
+
+.epg-editor-card-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary, #fff);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.epg-editor-card-title svg {
+  color: var(--accent-primary, #00d4ff);
+}
+
+.epg-editor-card-desc {
+  margin: 4px 0 0 0;
+  font-size: 0.8rem;
+  color: var(--text-secondary, rgba(255, 255, 255, 0.65));
+  line-height: 1.4;
+}
+
+.epg-editor-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ── Tab Badges ── */
+.epg-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 6px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-secondary, rgba(255, 255, 255, 0.8));
+  line-height: 1.3;
+}
+
+.epg-editor-tab.active .epg-tab-badge {
+  background: rgba(0, 0, 0, 0.2);
+  color: #04121a;
+}
+
+.epg-tab-badge-warning {
+  background: rgba(245, 158, 11, 0.2) !important;
+  color: var(--status-warning, #f59e0b) !important;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+/* ── Badges ── */
+.epg-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+.epg-badge-success {
+  background: rgba(34, 197, 94, 0.12);
+  color: var(--status-success, #22c55e);
+  border: 1px solid rgba(34, 197, 94, 0.28);
+}
+
+.epg-badge-warning {
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--status-warning, #f59e0b);
+  border: 1px solid rgba(245, 158, 11, 0.28);
+}
+
+.epg-badge-info {
+  background: rgba(0, 212, 255, 0.12);
+  color: var(--accent-primary, #00d4ff);
+  border: 1px solid rgba(0, 212, 255, 0.28);
+}
+
+.epg-badge-muted {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary, rgba(255, 255, 255, 0.7));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* ── Logo Studio ── */
+.epg-logo-grid {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 760px) {
+  .epg-logo-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.epg-logo-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+}
+
+.epg-logo-stage-box {
+  width: 100%;
+  height: 140px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 10px;
+  box-sizing: border-box;
+}
+
+.epg-logo-stage-box .guide-channel-logo {
+  width: 68px;
+  height: 68px;
+  border-radius: 12px;
+  padding: 6px;
+  box-sizing: border-box;
+  transition: padding 0.15s ease, background 0.15s ease;
+}
+
+.epg-logo-stage-box .guide-channel-logo.logo-shape-rectangle {
+  width: 116px;
+  height: 62px;
+  padding: 4px 8px;
+}
+
+.epg-logo-stage-box .guide-channel-logo.logo-padded {
+  padding: 6px !important;
+}
+
+.epg-logo-stage-box .guide-channel-logo.logo-shape-rectangle.logo-padded {
+  padding: 4px 8px !important;
+}
+
+.epg-logo-stage-box .guide-channel-logo.no-padding,
+.epg-logo-stage-box .guide-channel-logo.logo-shape-rectangle.no-padding {
+  padding: 0 !important;
+}
+
+/* A smart-trimmed preview tile sizes and positions its own image; only the
+   untrimmed case falls back to filling the tile. */
+.epg-logo-stage-box .guide-channel-logo:not(.logo-smart-trim) img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain !important;
+}
+
+.epg-logo-stage-controls {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Both controls are three options wide now (background: Default/Light/Dark,
+   framing: Default/Normal/No Pad) and the stage column is only 200px, so the row
+   has to wrap: `.segmented-btn` is `flex: 1 0 0%` with `white-space: nowrap` and
+   cannot shrink, so a longer translated label would spill out of the column and
+   over the fields beside it instead of moving to a second line. */
+.epg-logo-stage-controls .card-segmented-control {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+
+.epg-logo-stage-controls .segmented-btn {
+  flex: 1 0 auto;
+}
+
+.epg-quick-select-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.epg-quick-select-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-primary, #fff);
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+
+.epg-quick-select-chip img {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  border-radius: 3px;
+}
+
+.epg-quick-select-chip:hover {
+  border-color: var(--accent-primary, #00d4ff);
+  background: rgba(0, 212, 255, 0.08);
+}
+
+.epg-quick-select-chip.active {
+  border-color: var(--accent-primary, #00d4ff);
+  background: rgba(0, 212, 255, 0.15);
+  color: var(--accent-primary, #00d4ff);
+}
+
+/* ── Timeshift Presets ── */
+.epg-timeshift-deck {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.epg-preset-pill {
+  padding: 5px 11px;
+  border-radius: 7px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary, rgba(255, 255, 255, 0.8));
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+
+.epg-preset-pill:hover {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.epg-preset-pill.active {
+  border-color: var(--accent-primary, #00d4ff);
+  background: rgba(0, 212, 255, 0.12);
+  color: var(--accent-primary, #00d4ff);
+  font-weight: 600;
+}
+
+/* ── Stats Deck ── */
+.epg-stats-deck {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.epg-stat-card {
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  transition: border-color 0.15s ease;
+}
+
+.epg-stat-card:hover {
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.epg-stat-val {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--text-primary, #fff);
+  line-height: 1.2;
+}
+
+.epg-stat-lbl {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary, rgba(255, 255, 255, 0.65));
+  font-weight: 600;
+}
+
+/* ── Score Badge ── */
+.epg-score-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
+.epg-score-badge.high {
+  background: rgba(34, 197, 94, 0.15);
+  color: var(--status-success, #22c55e);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.epg-score-badge.medium {
+  background: rgba(0, 212, 255, 0.15);
+  color: var(--accent-primary, #00d4ff);
+  border: 1px solid rgba(0, 212, 255, 0.3);
+}
+
+.epg-score-badge.low {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--status-warning, #f59e0b);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.epg-score-badge.poor {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary, #888);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Signal colours for status text, glyphs and stat numbers.
+ *
+ * The dark guide's neon set (`--status-*-text` = its softer shade, `--status-*`
+ * = the saturated one) lands on 1.7-4.0:1 once the light theme paints a card
+ * under it, so every consumer goes through the token and the light theme
+ * redefines the same names with contrast-checked values. Dark is unchanged:
+ * each rule keeps its old literal as the fallback. */
+.epg-signal-success {
+  color: var(--status-success, #22c55e);
+}
+
+.epg-signal-warning {
+  color: var(--status-warning, #f59e0b);
+}
+
+.epg-signal-danger {
+  color: var(--status-danger, #ef4444);
+}
+
+.epg-signal-info {
+  color: var(--status-info, #a855f7);
+}
+
+.epg-signal-success-text {
+  color: var(--status-success-text, #4caf50);
+}
+
+.epg-signal-warning-text {
+  color: var(--status-warning-text, #ffaa44);
+}
+
+.epg-signal-danger-text {
+  color: var(--status-danger-text, #ff6b6b);
+}
+
+/* Neutral companion for the same rows, so a stripped glyph or a plain log line
+   keeps the muted tone it used to get from its inline style. */
+.epg-signal-muted {
+  color: var(--text-secondary, #888);
+}
+
+/* ── Search Deck ── */
+.epg-search-deck {
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ── Log Filters ── */
+.epg-log-filters {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: rgba(0, 0, 0, 0.15);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  overflow-x: auto;
+}
+
+.epg-log-filter-pill {
+  padding: 3px 9px;
+  border-radius: 6px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary, rgba(255, 255, 255, 0.7));
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+
+.epg-log-filter-pill:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.epg-log-filter-pill.active {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.15);
+  font-weight: 600;
+}
+
