@@ -21,7 +21,7 @@ export function useWindowManager(): WindowManagerState {
 
     const updateWindowState = async () => {
       const [maximized, fullscreen] = await Promise.all([
-        appWindow.isMaximized(),
+        Bridge.isMaximized(),
         appWindow.isFullscreen(),
       ]);
       if (!disposed) {

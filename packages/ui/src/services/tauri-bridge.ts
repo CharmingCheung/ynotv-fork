@@ -542,7 +542,7 @@ export const Bridge = {
         const isFullscreen = await appWindow.isFullscreen();
 
         if (!isFullscreen) {
-            fullscreenRestoreMaximized = await appWindow.isMaximized();
+            fullscreenRestoreMaximized = await invoke<boolean>('get_window_is_maximized');
             try {
                 await invoke('mpv_toggle_fullscreen', { restoreToMaximized: false });
             } catch (e) {
@@ -578,7 +578,7 @@ export const Bridge = {
         }
 
         if (fullscreen) {
-            fullscreenRestoreMaximized = await appWindow.isMaximized();
+            fullscreenRestoreMaximized = await invoke<boolean>('get_window_is_maximized');
             try {
                 await invoke('mpv_toggle_fullscreen', { restoreToMaximized: false });
             } catch (e) {
@@ -607,15 +607,14 @@ export const Bridge = {
 
         if (!fullscreen) {
             await delay(50);
-            if (await appWindow.isMaximized()) {
+            if (await invoke<boolean>('get_window_is_maximized')) {
                 await appWindow.unmaximize();
             }
         }
     },
 
     async isMaximized() {
-        const appWindow = getCurrentWindow();
-        return appWindow.isMaximized();
+        return invoke<boolean>('get_window_is_maximized');
     },
 
     getSubtitleTrackId(): number | null {
@@ -973,7 +972,7 @@ export const Bridge = {
     async toggleMaximize() {
         console.log('[Bridge] toggleMaximize called');
         const appWindow = getCurrentWindow();
-        const isMaximized = await appWindow.isMaximized();
+        const isMaximized = await invoke<boolean>('get_window_is_maximized');
         if (isMaximized) {
             return appWindow.unmaximize();
         } else {

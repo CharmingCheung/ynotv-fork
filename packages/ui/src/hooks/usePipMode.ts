@@ -81,7 +81,7 @@ export function usePipMode(aspectMode: AspectRatioMode) {
     try {
       const w = getCurrentWindow();
       const [maximized, innerSize, outerSize, pos, onTop, sf] = await Promise.all([
-        w.isMaximized(),
+        Bridge.isMaximized(),
         w.innerSize(),
         w.outerSize(),
         w.outerPosition(),

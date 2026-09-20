@@ -80,28 +80,45 @@ case "$OS" in
       exit 1
     fi
 
-    echo "URL: $MPV_URL"
-    TEMP_DIR=$(mktemp -d)
-    curl -L -o "$TEMP_DIR/mpv.tar.gz" "$MPV_URL"
-    
-    tar -xzf "$TEMP_DIR/mpv.tar.gz" -C "$TEMP_DIR"
-    
-    # Extract binary from .app bundle
-    MPV_APP=$(find "$TEMP_DIR" -maxdepth 2 -name "*.app" -type d | head -1)
-    if [ -n "$MPV_APP" ]; then
-        cp "$MPV_APP/Contents/MacOS/mpv" "$TAURI_BIN_DIR/mpv-$TARGET"
-        chmod +x "$TAURI_BIN_DIR/mpv-$TARGET"
-        echo "mpv for macOS setup at $TAURI_BIN_DIR/mpv-$TARGET"
+    MPV_TARGET="$TAURI_BIN_DIR/mpv-$TARGET"
+    MPV_LIB_TARGET="$TAURI_BIN_DIR/mpv-lib"
+    if [ -x "$MPV_TARGET" ] && [ -d "$MPV_LIB_TARGET" ]; then
+        echo "mpv for macOS is already prepared at $MPV_TARGET"
     else
-        echo "Failed to find mpv.app in download"
-        exit 1
+        echo "URL: $MPV_URL"
+        TEMP_DIR=$(mktemp -d)
+        trap 'rm -rf "$TEMP_DIR"' EXIT
+        curl -fL -o "$TEMP_DIR/mpv.tar.gz" "$MPV_URL"
+
+        tar -xzf "$TEMP_DIR/mpv.tar.gz" -C "$TEMP_DIR"
+
+        # The standalone mpv executable uses libraries located at
+        # @executable_path/lib, so both pieces must be included in the app.
+        MPV_APP=$(find "$TEMP_DIR" -maxdepth 2 -name "*.app" -type d | head -1)
+        if [ -n "$MPV_APP" ] && [ -d "$MPV_APP/Contents/MacOS/lib" ]; then
+            cp "$MPV_APP/Contents/MacOS/mpv" "$MPV_TARGET"
+            rm -rf "$MPV_LIB_TARGET"
+            cp -R "$MPV_APP/Contents/MacOS/lib" "$MPV_LIB_TARGET"
+            chmod +x "$MPV_TARGET"
+            echo "mpv for macOS setup at $MPV_TARGET"
+        else
+            echo "Failed to find a complete mpv.app in download"
+            exit 1
+        fi
+        rm -rf "$TEMP_DIR"
+        trap - EXIT
     fi
-    rm -rf "$TEMP_DIR"
 
     # Download latest yt-dlp explicitly
-    echo "Downloading yt-dlp for macOS..."
-    YTDLP_URL="https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos"
-    curl -L -o "$TAURI_BIN_DIR/yt-dlp-$TARGET" "$YTDLP_URL" && chmod +x "$TAURI_BIN_DIR/yt-dlp-$TARGET" || echo "Warning: Failed to download yt-dlp"
+    YTDLP_TARGET="$TAURI_BIN_DIR/yt-dlp-$TARGET"
+    if [ -x "$YTDLP_TARGET" ]; then
+        echo "yt-dlp for macOS is already prepared at $YTDLP_TARGET"
+    else
+        echo "Downloading yt-dlp for macOS..."
+        YTDLP_URL="https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos"
+        curl -fL -o "$YTDLP_TARGET" "$YTDLP_URL"
+        chmod +x "$YTDLP_TARGET"
+    fi
     ;;
 
   Linux)

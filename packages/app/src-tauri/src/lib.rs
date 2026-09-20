@@ -4675,6 +4675,50 @@ fn window_state_path<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<std
         .map(|d| d.join("window_state.json"))
 }
 
+/// Query the native zoom state without going through tao's macOS
+/// `is_maximized` implementation. For borderless/titlebar-overlay windows tao
+/// temporarily changes the NSWindow style mask to perform this query. Calling
+/// it from a Resized/Moved handler therefore emits another window event and can
+/// trap the main thread in an event loop.
+#[cfg(target_os = "macos")]
+fn window_is_maximized<R: tauri::Runtime>(window: &tauri::Window<R>) -> bool {
+    let Ok(ns_window_ptr) = window.ns_window() else {
+        return false;
+    };
+    unsafe {
+        let ns_window = &*(ns_window_ptr as *const objc2_app_kit::NSWindow);
+        ns_window.isZoomed()
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn window_is_maximized<R: tauri::Runtime>(window: &tauri::Window<R>) -> bool {
+    window.is_maximized().unwrap_or(false)
+}
+
+/// Safe replacement for the built-in JS `isMaximized` command on macOS.
+/// The built-in tao query mutates the style mask of our borderless window and
+/// recursively produces resize events.
+#[tauri::command]
+async fn get_window_is_maximized(app: AppHandle) -> Result<bool, String> {
+    let window = app
+        .get_window("main")
+        .ok_or_else(|| "main window not found".to_string())?;
+    #[cfg(target_os = "macos")]
+    {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        app.run_on_main_thread(move || {
+            let _ = tx.send(window_is_maximized(&window));
+        })
+        .map_err(|e| e.to_string())?;
+        rx.await.map_err(|_| "maximized-state query cancelled".to_string())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        window.is_maximized().map_err(|e| e.to_string())
+    }
+}
+
 pub(crate) fn save_window_state<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     if let Some(window) = app.get_window("main") {
         let is_fullscreen = window.is_fullscreen().unwrap_or(false);
@@ -4682,7 +4726,7 @@ pub(crate) fn save_window_state<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
             let tracker = app.state::<WindowStateTracker>();
             tracker.last_non_fullscreen_maximized.lock().map(|g| *g).unwrap_or(false)
         } else {
-            window.is_maximized().unwrap_or(false)
+            window_is_maximized(&window)
         };
         
         let dont_save_size = should_skip_saving_window_size(app);
@@ -5365,7 +5409,7 @@ pub fn run() {
                 }
                 tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Moved(_) => {
                     if !window.is_fullscreen().unwrap_or(false) {
-                        let maximized = window.is_maximized().unwrap_or(false);
+                        let maximized = window_is_maximized(window);
                         let tracker = window.state::<WindowStateTracker>();
                         if let Ok(mut guard) = tracker.last_non_fullscreen_maximized.lock() {
                             *guard = maximized;
@@ -5485,6 +5529,7 @@ pub fn run() {
             cache_entire_epg_db,
             // DVR commands
             init_dvr,
+            get_window_is_maximized,
             schedule_recording,
             cancel_recording,
             get_active_recordings,

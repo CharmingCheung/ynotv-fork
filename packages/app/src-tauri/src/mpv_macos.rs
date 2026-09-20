@@ -483,7 +483,7 @@ pub async fn sync_window<R: Runtime>(
     // Kill and relaunch
     kill_mpv_internal(app);
     tokio::time::sleep(Duration::from_millis(100)).await;
-    launch_mpv(app, x, y, width, height).await?;
+    launch_mpv(app, x, y, width, height, Vec::new()).await?;
 
     // Restore the URL if there was one
     if let Some(url) = current_url {

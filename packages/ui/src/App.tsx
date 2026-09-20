@@ -5561,7 +5561,7 @@ function useTmdbPresencePoster(
 
         const appWindow = getCurrentWindow();
         const [isMaximized, isFullscreen, monitor, scaleFactor] = await Promise.all([
-          appWindow.isMaximized(),
+          Bridge.isMaximized(),
           appWindow.isFullscreen(),
           currentMonitor(),
           appWindow.scaleFactor(),

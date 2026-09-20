@@ -1,0 +1,9 @@
+{
+  "bundle": {
+    "macOS": {
+      "files": {
+        "MacOS/lib": "bin/mpv-lib"
+      }
+    }
+  }
+}

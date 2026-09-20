@@ -9,10 +9,11 @@
     "email": "tbeezy@users.noreply.github.com"
   },
   "scripts": {
-    "dev": "concurrently \"pnpm --filter @ynotv/ui dev\" \"wait-on http://localhost:5173 && pnpm --filter @ynotv/app tauri dev\"",
+    "dev": "pnpm --filter @ynotv/app tauri dev",
     "dev:clean": "node scripts/kill-dev.js && pnpm dev",
     "kill-port": "node scripts/kill-dev.js",
     "build": "node scripts/check-jellyfin-init-script.mjs && pnpm -r build",
+    "build:macos": "bash scripts/download-mpv-tauri.sh && node packages/app/scripts/download-ffmpeg.js && pnpm tauri build --bundles dmg --ci --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'",
     "css:audit": "node scripts/check-globals.mjs && node scripts/audit-tokens.mjs && node scripts/check-modern-scoped.mjs && node scripts/check-de-stack.mjs && node scripts/check-css.mjs packages/ui/src",
     "typecheck": "pnpm css:audit && node scripts/check-jellyfin-init-script.mjs && pnpm -r typecheck",
     "setup:libmpv": "powershell -ExecutionPolicy Bypass -File packages/app/src-tauri/setup-libmpv.ps1",

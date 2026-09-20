@@ -12,7 +12,7 @@ pub mod stream_resolver;
 pub mod thumbnail;
 
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tracing::{info, error};
 use tracing_subscriber;
 
@@ -39,6 +39,7 @@ pub struct DvrState {
     pub recorder: Arc<RecordingManager>,
     pub cleanup: Arc<CleanupManager>,
     pub playing_stream: Arc<RwLock<PlayingStream>>,
+    background_tasks_started: Arc<Mutex<bool>>,
 }
 
 // SAFETY: DvrState is only accessed from the Tokio runtime and all internal
@@ -100,6 +101,7 @@ impl DvrState {
             recorder,
             cleanup,
             playing_stream: Arc::new(RwLock::new(PlayingStream::default())),
+            background_tasks_started: Arc::new(Mutex::new(false)),
         };
 
         info!("DVR system initialized successfully");
@@ -108,6 +110,15 @@ impl DvrState {
 
     /// Start all background tasks (scheduler, cleanup, etc.)
     pub async fn start_background_tasks(&self) -> anyhow::Result<()> {
+        // React StrictMode deliberately mounts effects twice in development.
+        // Serialize the whole startup sequence so duplicate init_dvr calls do
+        // not create extra cleanup and TVMaze workers.
+        let mut started = self.background_tasks_started.lock().await;
+        if *started {
+            info!("DVR background tasks already started; skipping duplicate request");
+            return Ok(());
+        }
+
         info!("Starting DVR background tasks...");
 
         // Start scheduler
@@ -128,6 +139,7 @@ impl DvrState {
         });
         info!("TVMaze background sync task started");
 
+        *started = true;
         info!("All DVR background tasks started");
         Ok(())
     }

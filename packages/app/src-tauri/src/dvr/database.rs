@@ -351,7 +351,7 @@ impl DvrDatabase {
         }
 
         // Allow WAL file to grow large before checkpointing
-        if let Err(e) = conn.execute("PRAGMA wal_autocheckpoint = 10000", []) {
+        if let Err(e) = conn.pragma_update(None, "wal_autocheckpoint", 10000) {
             println!("[DVR DB] Warning: Could not set wal_autocheckpoint: {}", e);
         }
 

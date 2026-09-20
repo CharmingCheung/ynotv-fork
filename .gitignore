@@ -51,6 +51,9 @@ thoughts/
 
 # FFmpeg binaries (auto-downloaded during build)
 **/bin/ffmpeg*
+**/bin/mpv-*
+**/bin/mpv-lib/
+**/bin/yt-dlp-*
 **/bin/*.7z
 **/bin/*.tar.xz
 

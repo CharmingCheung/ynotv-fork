@@ -94,6 +94,10 @@ A feature-rich, open source IPTV player for Windows built on [Tauri v2](https://
 - Visual Studio 2022 with C++ build tools
 - Windows 10 SDK
 
+**macOS additional requirements:**
+- Xcode Command Line Tools (`xcode-select --install`)
+- Homebrew packages: `brew install mpv ffmpeg pkg-config`
+
 ### Instructions
 
 **1. Clone the repository**
@@ -136,6 +140,13 @@ This starts both the Vite UI dev server and the Tauri app concurrently.
 
 ```bash
 pnpm tauri build
+```
+
+On Apple Silicon macOS, the following command prepares all native sidecars and
+builds a DMG in one step:
+
+```bash
+pnpm build:macos
 ```
 
 Build output is located at:
