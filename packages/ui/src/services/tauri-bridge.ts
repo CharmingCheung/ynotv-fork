@@ -36,11 +36,7 @@ function enqueueWrite<T>(task: () => Promise<T>): Promise<T> {
     return run;
 }
 
-// Window sync state for macOS hole punch
 type UnlistenFn = () => void;
-let windowSyncListeners: { move?: UnlistenFn; resize?: UnlistenFn; focus?: UnlistenFn; close?: UnlistenFn } = {};
-let syncDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-let focusSyncTimer: ReturnType<typeof setTimeout> | null = null;
 let fullscreenRestoreMaximized: boolean | null = null;
 let activeSubtitleTrackId: number | null = null;
 
@@ -120,107 +116,6 @@ export function registerOnAppClose(callback: () => void | Promise<void>) {
  */
 export function unregisterOnAppClose() {
     onAppCloseCallback = null;
-}
-
-/**
- * Initialize window position syncing for macOS hole punch mode.
- * This keeps the MPV window positioned behind the Tauri window.
- * Only runs on macOS - Windows uses embedded MPV so no sync needed.
- */
-export async function initWindowSync() {
-    // Only enable on macOS - Windows uses embedded mode
-    const isMacOS = navigator.platform.toLowerCase().includes('mac');
-    if (!isMacOS) {
-        console.log('[WindowSync] Not macOS, skipping window sync');
-        return;
-    }
-
-    console.log('[WindowSync] Initializing macOS window sync for MPV hole punch');
-    stopWindowSync();
-
-    const appWindow = getCurrentWindow();
-
-    // Debounced sync function to avoid excessive IPC calls
-    const debouncedSync = () => {
-        if (syncDebounceTimer) {
-            clearTimeout(syncDebounceTimer);
-        }
-        syncDebounceTimer = setTimeout(() => {
-            console.log('[WindowSync] Syncing MPV window position');
-            invoke('mpv_sync_window').catch(err => {
-                console.error('[WindowSync] Failed to sync window:', err);
-            });
-        }, 150); // 150ms debounce
-    };
-
-    // Listen for window move events
-    try {
-        windowSyncListeners.move = await appWindow.onMoved(debouncedSync);
-        console.log('[WindowSync] Move listener attached');
-    } catch (e) {
-        console.error('[WindowSync] Failed to attach move listener:', e);
-    }
-
-    // Listen for window resize events
-    try {
-        windowSyncListeners.resize = await appWindow.onResized(debouncedSync);
-        console.log('[WindowSync] Resize listener attached');
-    } catch (e) {
-        console.error('[WindowSync] Failed to attach resize listener:', e);
-    }
-
-    // Listen for focus changes to re-assert window ordering
-    try {
-        windowSyncListeners.focus = await appWindow.onFocusChanged(({ payload: focused }) => {
-            if (focused) {
-                console.log('[WindowSync] Window focused, re-syncing MPV');
-                // Small delay to let macOS settle window ordering
-                if (focusSyncTimer) {
-                    clearTimeout(focusSyncTimer);
-                }
-                focusSyncTimer = setTimeout(() => {
-                    focusSyncTimer = null;
-                    invoke('mpv_sync_window').catch(err => {
-                        console.error('[WindowSync] Failed to sync on focus:', err);
-                    });
-                }, 50);
-            }
-        });
-        console.log('[WindowSync] Focus listener attached');
-    } catch (e) {
-        console.error('[WindowSync] Failed to attach focus listener:', e);
-    }
-}
-
-/**
- * Stop window sync listeners
- */
-export function stopWindowSync() {
-    console.log('[WindowSync] Stopping window sync');
-    if (windowSyncListeners.move) {
-        windowSyncListeners.move();
-        windowSyncListeners.move = undefined;
-    }
-    if (windowSyncListeners.resize) {
-        windowSyncListeners.resize();
-        windowSyncListeners.resize = undefined;
-    }
-    if (windowSyncListeners.focus) {
-        windowSyncListeners.focus();
-        windowSyncListeners.focus = undefined;
-    }
-    if (windowSyncListeners.close) {
-        windowSyncListeners.close();
-        windowSyncListeners.close = undefined;
-    }
-    if (syncDebounceTimer) {
-        clearTimeout(syncDebounceTimer);
-        syncDebounceTimer = null;
-    }
-    if (focusSyncTimer) {
-        clearTimeout(focusSyncTimer);
-        focusSyncTimer = null;
-    }
 }
 
 let isCasting = false;
@@ -340,16 +235,16 @@ export const Bridge = {
             }
         } catch (e) {}
         console.log('[Bridge.initMpv] Invoking init_mpv with args:', args);
-        const result = await invoke('init_mpv', { args });
-        // On macOS, also start window sync for hole punch mode
-        const isMacOS = navigator.platform.toLowerCase().includes('mac');
-        if (isMacOS) {
-            await initWindowSync();
-        }
-        return result;
+        // macOS now renders libmpv in an NSOpenGLView embedded in the Tauri
+        // window. The old sidecar "hole punch" move/resize listeners must not
+        // run here: mpv_sync_window expands that embedded view to the full
+        // content area and races the Guide preview's own geometry updates.
+        return invoke('init_mpv', { args });
     },
 
-    // Window sync for macOS hole punch mode
+    // Explicitly restore the embedded macOS surface to the full window when a
+    // caller leaves a preview view. This is intentionally not a global window
+    // move/resize listener; preview components own their active geometry.
     async syncWindow() {
         const isMacOS = navigator.platform.toLowerCase().includes('mac');
         if (isMacOS) {
