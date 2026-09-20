@@ -203,6 +203,7 @@ export function parseM3U(content: string, sourceId: string): M3UParseResult {
   let epgUrl: string | null = null;
   let headerCatchup: HeaderCatchupDefaults = { tvArchive: false };
   let currentMetadata: ExtInfMetadata | null = null;
+  let currentKodiProps: Record<string, string> = {};
   let channelCounter = 0;
 
   // Track seen stream_ids to handle duplicates (e.g., multiple channels with same tvg-id)
@@ -224,6 +225,20 @@ export function parseM3U(content: string, sourceId: string): M3UParseResult {
     // Parse EXTINF line
     if (line.startsWith('#EXTINF:')) {
       currentMetadata = parseExtInf(line, headerCatchup);
+      currentKodiProps = {};
+      continue;
+    }
+
+    // KODIPROP directives belong to the current EXTINF item up to its URL.
+    // Preserve unknown keys so future inputstream properties survive import.
+    if (currentMetadata && line.toUpperCase().startsWith('#KODIPROP:')) {
+      const property = line.substring('#KODIPROP:'.length);
+      const separator = property.indexOf('=');
+      if (separator > 0) {
+        const key = property.substring(0, separator).trim().toLowerCase();
+        const value = property.substring(separator + 1).trim();
+        if (key) currentKodiProps[key] = value;
+      }
       continue;
     }
 
@@ -277,10 +292,12 @@ export function parseM3U(content: string, sourceId: string): M3UParseResult {
         catchup_type: currentMetadata.catchupType,
         catchup_source: currentMetadata.catchupSource,
         catchup_days: currentMetadata.catchupDays,
+        ...(Object.keys(currentKodiProps).length > 0 && { kodi_props: { ...currentKodiProps } }),
       };
 
       channels.push(channel);
       currentMetadata = null;
+      currentKodiProps = {};
     }
   }
 

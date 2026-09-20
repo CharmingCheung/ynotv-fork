@@ -36,6 +36,7 @@ export interface BulkChannel {
   name: string;
   channel_num?: number;
   provider_order?: number;
+  kodi_props?: string | null;
   is_favorite?: boolean;
   enabled?: boolean;
   stream_type?: string;

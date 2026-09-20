@@ -26,6 +26,7 @@ import { logInfo, logWarn, logError } from '../utils/logger';
 import { toSubSourceLang, fromSubSourceLang, LANG_MAP } from '../services/subsource';
 import { snapshotPlaylistProgress } from '../utils/playlistPlayback';
 import i18n, { translateNativeError } from '../i18n';
+import { routeNativeDash, type NativeDashPlaybackConfig } from '../services/native-dash';
 
 /**
  * Push Nuvio watch progress for the given item, building the entry from the
@@ -226,7 +227,8 @@ async function tryLoadWithFallbacks(
   primaryUrl: string,
   isLive: boolean,
   userAgent?: string,
-  onError?: (msg: string) => void
+  onError?: (msg: string) => void,
+  nativeDash?: NativeDashPlaybackConfig,
 ): Promise<{ success: boolean; url: string; error?: string }> {
   logInfo('[Playback] Setting User-Agent:', userAgent || '(using default)');
 
@@ -239,11 +241,18 @@ async function tryLoadWithFallbacks(
   }
 
   logInfo('[Playback] Loading URL:', primaryUrl);
-  const result = await Bridge.loadVideo(primaryUrl, userAgent);
+  const result = await Bridge.loadVideo(primaryUrl, userAgent, nativeDash);
 
   if (result.success) {
     logInfo('[Playback] Successfully loaded:', primaryUrl);
     return { success: true, url: primaryUrl };
+  }
+
+  // Native DASH is a single manifest/config transaction. URL-shape fallbacks
+  // are for ordinary IPTV URLs and must never bypass this explicit route.
+  if (nativeDash) {
+    const errorMsg = translateNativeError((result as any).error) || i18n.t('player:unknownError');
+    return { success: false, url: primaryUrl, error: errorMsg };
   }
 
   const errorMsg = translateNativeError((result as any).error) || i18n.t('player:unknownError');
@@ -1098,11 +1107,17 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
         Bridge.setCastMetadata(channel.name, 'Live TV');
       }
 
+      const nativeDashRoute = routeNativeDash(resolved.url, channel.kodi_props);
+      if (nativeDashRoute.kind === 'error') {
+        setError(nativeDashRoute.error);
+        return false;
+      }
       const result = await tryLoadWithFallbacks(
         resolved.url,
         true,
         resolved.userAgent,
-        (msg) => setError(msg)
+        (msg) => setError(msg),
+        nativeDashRoute.kind === 'native' ? nativeDashRoute.config : undefined
       );
 
       if (!result.success) {

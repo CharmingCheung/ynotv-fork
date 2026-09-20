@@ -197,6 +197,7 @@ pub async fn sync_xtream_source(
             catchup_type: None,
             catchup_source: None,
             catchup_days: None,
+            kodi_props: None,
         });
     }
 
@@ -419,9 +420,42 @@ pub(crate) fn extract_m3u_attr(text: &str, keys: &[&str]) -> String {
     "".to_string()
 }
 
+fn parse_kodi_property(line: &str) -> Option<(String, String)> {
+    const PREFIX: &str = "#KODIPROP:";
+    if !line
+        .get(..PREFIX.len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(PREFIX))
+    {
+        return None;
+    }
+    let property = &line[PREFIX.len()..];
+    let separator = property.find('=')?;
+    let key = property[..separator].trim().to_ascii_lowercase();
+    if key.is_empty() {
+        return None;
+    }
+    Some((key, property[separator + 1..].trim().to_string()))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{create_m3u_category_id, extract_m3u_attr};
+    use super::{create_m3u_category_id, extract_m3u_attr, parse_kodi_property};
+
+    #[test]
+    fn parses_kodi_properties_without_requiring_inputstream_marker() {
+        assert_eq!(
+            parse_kodi_property("#KODIPROP:InputStream.Adaptive.Manifest_Type=MPD"),
+            Some((
+                "inputstream.adaptive.manifest_type".to_string(),
+                "MPD".to_string()
+            ))
+        );
+        assert_eq!(
+            parse_kodi_property("#kodiprop:future.property=kept=value"),
+            Some(("future.property".to_string(), "kept=value".to_string()))
+        );
+        assert_eq!(parse_kodi_property("#KODIPROP:=ignored"), None);
+    }
 
     #[test]
     fn creates_distinct_ids_for_cyrillic_m3u_groups() {
@@ -760,6 +794,7 @@ pub async fn sync_m3u_source(
     let mut seen_ids = HashSet::new();
 
     let mut current_extinf: Option<String> = None;
+    let mut current_kodi_props: HashMap<String, String> = HashMap::new();
     let mut channel_counter = 0;
     let mut epg_url: Option<String> = None;
     let mut header_catchup_type: Option<String> = None;
@@ -803,7 +838,15 @@ pub async fn sync_m3u_source(
 
         if line.starts_with("#EXTINF:") {
             current_extinf = Some(line.to_string());
+            current_kodi_props.clear();
             continue;
+        }
+
+        if current_extinf.is_some() {
+            if let Some((key, value)) = parse_kodi_property(line) {
+                current_kodi_props.insert(key, value);
+                continue;
+            }
         }
 
         if line.starts_with('#') {
@@ -812,6 +855,13 @@ pub async fn sync_m3u_source(
 
         if let Some(extinf) = current_extinf.take() {
             if line.starts_with("http://") || line.starts_with("https://") || line.starts_with("rtmp://") {
+                let kodi_props = if current_kodi_props.is_empty() {
+                    None
+                } else {
+                    Some(serde_json::to_string(&current_kodi_props)
+                        .map_err(|_| "Failed to preserve M3U KODIPROP metadata".to_string())?)
+                };
+                current_kodi_props.clear();
                 channel_counter += 1;
 
                 let duration_str = extinf[8..].split_whitespace().next().unwrap_or("-1").replace(",", "");
@@ -903,6 +953,7 @@ pub async fn sync_m3u_source(
                     catchup_type,
                     catchup_source,
                     catchup_days,
+                    kodi_props,
                 });
             }
         }
@@ -918,9 +969,14 @@ pub async fn sync_m3u_source(
     for b in &bulk_channels {
         parsed_channel_ids.push(b.stream_id.clone());
     }
+    let kodi_property_channels = bulk_channels
+        .iter()
+        .filter(|channel| channel.kodi_props.is_some())
+        .count();
     let result_chans = db_bulk_ops::bulk_upsert_channels(&state.db, bulk_channels).map_err(|e| e.to_string())?;
 
     info!("[M3U Sync] Competed successfully: {} categories, {} channels", result_cats.inserted + result_cats.updated, result_chans.inserted + result_chans.updated);
+    info!("[M3U Sync] Preserved KODIPROP metadata for {} channels", kodi_property_channels);
 
     Ok(M3uSyncResult {
         categories: result_cats,

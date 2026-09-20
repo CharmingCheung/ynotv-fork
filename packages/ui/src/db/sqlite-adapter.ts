@@ -124,7 +124,7 @@ const BOOLEAN_FIELDS: Record<string, string[]> = {
 // JSON fields that are stored as serialized strings but should be parsed objects
 const JSON_FIELDS: Record<string, string[]> = {
     'categories': ['filter_words'],
-    'channels': ['category_ids'],
+    'channels': ['category_ids', 'kodi_props'],
     'vodMovies': ['category_ids'],
     'vodSeries': ['category_ids'],
     'local_entries': ['localArt'],
@@ -1121,4 +1121,3 @@ export class SqliteDatabase {
         await db.execute(`PRAGMA wal_checkpoint(${mode})`);
     }
 }
-

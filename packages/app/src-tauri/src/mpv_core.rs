@@ -388,6 +388,7 @@ fn spawn_status_monitor<R: Runtime>(
 
             // End-of-file & stream ended events
             if eof_reached && !last_eof_reached {
+                crate::native_dash::note_eof();
                 let _ = app.emit("mpv-end-file", json!({
                     "reason": "eof",
                     "position": position,
@@ -575,6 +576,19 @@ pub async fn load_file<R: Runtime>(
     Ok(())
 }
 
+pub async fn load_native_dash_packet_source<R: Runtime>(
+    app: &AppHandle<R>, path: &std::path::Path,
+) -> Result<(), String> {
+    let state = app.state::<MpvCoreState>();
+    let mpv = { state.mpv.lock().unwrap().clone() }
+        .ok_or("Native DASH requires initialized in-process libmpv")?;
+    let path = path.to_str().ok_or("Native DASH packet path is invalid")?;
+    mpv.command("loadfile", &[path, "replace", "-1", "demuxer=rustdash"])
+        .map_err(|e| format!("Native DASH custom demux load failed: {:?}", e))?;
+    *state.current_url.lock().unwrap() = Some(path.to_string());
+    Ok(())
+}
+
 pub async fn play<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     let state = app.state::<MpvCoreState>();
     let mpv = {
@@ -606,6 +620,7 @@ pub async fn resume<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
 }
 
 pub async fn stop<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    crate::native_dash::cancel_active();
     let state = app.state::<MpvCoreState>();
     let mpv = {
         let guard = state.mpv.lock().unwrap();

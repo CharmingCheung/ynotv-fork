@@ -16,8 +16,20 @@ fn main() {
     println!("cargo:rerun-if-changed=icons/icon.ico");
     println!("cargo:rerun-if-changed=icons/icon.png");
 
-
     if target_os == "macos" {
+        // C5 development builds may point at the C2/C3 patched libmpv. Merely
+        // setting DYLD_LIBRARY_PATH is insufficient when Homebrew's absolute
+        // install name was recorded at link time, so prefer this directory for
+        // both link lookup and runtime rpath.
+        println!("cargo:rerun-if-env-changed=YNOTV_NATIVE_DASH_LIBMPV_DIR");
+        let native_dash_libmpv = std::env::var_os("YNOTV_NATIVE_DASH_LIBMPV_DIR")
+            .map(PathBuf::from)
+            .filter(|dir| dir.join("libmpv.2.dylib").is_file());
+        if let Some(dir) = &native_dash_libmpv {
+            println!("cargo:rustc-link-search=native={}", dir.display());
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", dir.display());
+        }
+
         let mut prefixes: Vec<String> = Vec::new();
         if let Ok(p) = std::env::var("HOMEBREW_PREFIX") {
             if !p.is_empty() {
@@ -51,4 +63,3 @@ fn main() {
 
     tauri_build::build()
 }
-

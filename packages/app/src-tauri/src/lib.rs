@@ -327,9 +327,9 @@ mod raw_hid_gamepad;
 mod web_server;
 mod jellyfin_web;
 mod icon_switcher;
-// Pure, experimental DASH time/index model. It is intentionally not wired to
-// Tauri commands or either playback engine.
+// Exact DASH time/index model shared by the C0 tests and experimental C5 session.
 mod dash_timeline;
+mod native_dash;
 
 #[tauri::command]
 fn get_connected_gamepads() -> Vec<gamepad::GamepadInfo> {
@@ -1428,7 +1428,21 @@ async fn mpv_load<R: Runtime>(
     app: AppHandle<R>,
     url: String,
     user_agent: Option<String>,
+    native_dash: Option<native_dash::NativeDashPlaybackConfig>,
 ) -> Result<(), String> {
+    native_dash::cancel_active();
+    if let Some(config) = native_dash {
+        #[cfg(target_os = "windows")]
+        if get_player_engine(&app).await != PlayerEngine::LibMpv {
+            return Err("Native DASH custom demux adapter is unavailable in Windows sidecar playback mode".into());
+        }
+        if config.manifest_url != url {
+            return Err("Native DASH manifest configuration mismatch".into());
+        }
+        apply_quality_profile_on_load(&app, PlayerEngine::LibMpv).await;
+        let packet_source = native_dash::prepare(config).await?;
+        return mpv_core::load_native_dash_packet_source(&app, &packet_source).await;
+    }
     let force_hls = content_is_hls_manifest(&url, user_agent.as_deref()).await;
     if force_hls {
         log::info!("[MPV] Content probe identified extensionless HLS; forcing hls demuxer for {}", url);
@@ -1523,6 +1537,7 @@ async fn mpv_resume<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
 
 #[tauri::command]
 async fn mpv_stop<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+    native_dash::cancel_active();
     #[cfg(target_os = "macos")]
     {
         mpv_core::stop(&app).await
@@ -5889,6 +5904,7 @@ async fn db_health(app: AppHandle) -> DbHealth {
 /// prevent the exit and show a dialog so the user can either keep the app open
 /// (and keep recording) or stop the recording and quit.
 fn handle_exit_requested(app_handle: &tauri::AppHandle, api: tauri::ExitRequestApi) {
+    native_dash::cancel_active();
     // Flush the SQLite WAL back into the main DB before exiting so the next
     // launch doesn't have to recover a large WAL (which blocked startup).
     checkpoint_databases(app_handle);

@@ -2431,6 +2431,7 @@ async function _doSyncSourceImpl(source: Source, onProgress?: (msg: string) => v
       catchup_type: ch.catchup_type ?? null,
       catchup_source: ch.catchup_source ?? null,
       catchup_days: ch.catchup_days ?? null,
+      kodi_props: ch.kodi_props ? JSON.stringify(ch.kodi_props) : null,
     });
 
     // Convert to BulkCategory format
