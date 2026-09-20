@@ -56,8 +56,11 @@ Everything specific to the proof is isolated under
 | `packet_producer.c` | demux the local fixture once with public libavformat APIs and serialize configurations/packets |
 | `build-producer.sh` | compile the producer |
 | `mpv-patch/demux_rustdash.c` | new mpv demuxer implementation |
+| `mpv-patch/rdp_endian.h` | portable little-endian integer decoding shared with the unit test |
 | `mpv-patch/register.patch` | register the demuxer and add it to the Meson source list |
 | `apply-to-mpv.sh` | revision-gated patch application helper |
+| `make-regression-fixture.py` | derive the negative-timestamp/no-timestamp seek fixture |
+| `tests/test_rdp_endian.c` | signed i32/i64 and `RDP_NOPTS` decoding vectors |
 | `run-tests.sh` | software, output, seek, hwdec, A/V sync, EOF, and backpressure checks |
 | `verify_results.py` | assertions over the captured results |
 | `README.md` | short entry point |
@@ -67,15 +70,16 @@ ignored. Nothing imports this experiment into ynoTV.
 
 ## mpv files changed and patch size
 
-The mpv checkout has only three changed files:
+The mpv checkout has only four changed files:
 
 | mpv file | Change |
 |---|---|
-| `demux/demux_rustdash.c` | new, 290 lines |
+| `demux/demux_rustdash.c` | new, 303 lines |
+| `demux/rdp_endian.h` | new, 29 lines |
 | `demux/demux.c` | two added registry lines |
 | `meson.build` | one added source-list line |
 
-The mpv patch surface is **293 inserted lines, zero deleted lines, three files**.
+The mpv patch surface is **335 inserted lines, zero deleted lines, four files**.
 No decoder, filter, player, stream implementation, public client API, or output
 driver was changed.
 
@@ -135,6 +139,12 @@ exchange, side-data model, language/role metadata, encryption metadata,
 integrity checksum, live state, or runtime configuration record. Those
 omissions are why this is not a proposed production ABI.
 
+Signed fields are decoded by splitting the unsigned bit pattern into its
+non-negative and negative ranges. The negative range is reconstructed with
+representable signed arithmetic; the adapter does not depend on an
+out-of-range unsigned-to-signed C conversion. Unit vectors cover negative
+i32/i64 values, both signed minima, and the `INT64_MIN` `RDP_NOPTS` sentinel.
+
 ## Producer and fixture
 
 The input was the synthetic clear C1 fixture:
@@ -163,6 +173,12 @@ audio_first_pts=0 audio_last_pts=147200
 There were 75 video and 142 audio packets. Every video packet had distinct PTS
 and DTS, so the adapter was exercised with actual decode/presentation
 reordering rather than an all-I/P-frame shortcut.
+
+The corrective regression fixture is derived deterministically from that file.
+It moves an audio packet carrying `RDP_NOPTS` for both PTS and DTS to packet 0,
+then gives the first video random-access packet PTS `-512` (-0.040 s) and DTS
+`-1024` (-0.080 s) at time base 1/12800. Its SHA-256 is
+`bee2439b7efb1f7adfdbf3270c5cdb0e97644d6b2325dae472d94ec20d6d12c2`.
 
 ## How tracks are created
 
@@ -208,6 +224,12 @@ It returns that normal packet to mpv. From that point onward the existing
 demux queues, H.264/AAC decoders, filter graph, A/V synchronization, hwdec, and
 output drivers are unchanged.
 
+The cursor advances only after `*out` receives the completed packet. Allocation
+failure leaves the cursor in place for retry; payload seek/read failure also
+leaves it in place and emits an explicit error with packet index, offset, and
+size instead of silently consuming the indexed packet. Packets belonging to
+unselected tracks are intentionally skipped.
+
 ## PTS/DTS and B-frame result
 
 Timestamps stay as signed integers with their rational time base until the
@@ -246,6 +268,15 @@ playback restart complete @ 2.000000, audio=playing, video=playing
 Thus the controlled fixture seek decoded preroll from the preceding random
 access point and presented the requested 2.000 s position with both tracks
 running.
+
+The target-zero regression selected packet 1, whose keyframe PTS is negative:
+
+```text
+experimental seek target=0.000 keyframe=-0.040 packet=1
+```
+
+The candidate search now tracks whether a keyframe was found instead of using
+zero as the initial best timestamp, and ignores keyframes without a PTS.
 
 mpv's `queue_seek()` clears reader state and switches to a fresh cache range
 before the low-level callback. Player seek handling flushes decoder state. A
@@ -320,6 +351,10 @@ the ordinary null audio clock. Across 85 captured status samples, reported
 Both audio and video were explicitly in the `playing` state at playback
 restart, and both drained normally at EOF.
 
+The verifier parses all 85 captured `A-V` values and independently checks their
+minimum and maximum; it no longer treats one matching status line as evidence
+for the reported range.
+
 This is a reasonable controlled-fixture result, not a long-duration drift
 measurement. The fixture is approximately three seconds and uses generated
 content rather than a clap/flash perceptual sync target.
@@ -353,6 +388,11 @@ Its queue limit is checked between whole packets, so one packet may cross the
 threshold before reading stops. The observed bound is therefore the configured
 limit plus at most one packet, not an exact byte ceiling. No unbounded adapter
 or mpv packet accumulation was required.
+
+The verifier checks every byte observation in this log: each cache
+`total-bytes` value and the sum of all per-stream bytes in each queue-overflow
+diagnostic. The observed values were 29,056 and 33,440. Their maximum must not
+exceed the 32,768-byte limit plus the fixture's 7,091-byte maximum packet.
 
 The offset index is O(packet count), which is acceptable for this preloaded
 fixture but is not a live design. A production live producer would need a
@@ -527,8 +567,13 @@ cd experiments/mpv-packet-demux-adapter
 The script expands to these material tests:
 
 ```sh
+cc -std=c11 -Wall -Wextra -Werror tests/test_rdp_endian.c \
+  -o /tmp/rdp-endian-test
+/tmp/rdp-endian-test
+
 ./build-producer.sh
 ./packet_producer ../ffmpeg-mov-packet-lab/fixtures/clear-av-full.mp4 fixture.rdp
+python3 make-regression-fixture.py fixture.rdp regression-fixture.rdp
 
 mpv -v --no-config --demuxer=rustdash --hwdec=no \
   --vo=null --ao=null --video-sync=audio fixture.rdp
@@ -541,6 +586,9 @@ ffprobe -v error -count_frames -show_entries \
 
 mpv -v --no-config --demuxer=rustdash --hwdec=no \
   --vo=null --ao=null --start=2 --frames=10 fixture.rdp
+
+mpv -v --no-config --demuxer=rustdash --hwdec=no \
+  --vo=null --ao=null --aid=no --start=0 --frames=10 regression-fixture.rdp
 
 mpv -v --no-config --demuxer=rustdash --hwdec=videotoolbox-copy \
   --vo=null --ao=null --frames=20 fixture.rdp
@@ -605,7 +653,7 @@ Can a small custom mpv demux adapter serve as the packet sink for the native DAS
 YES
 
 Evidence:
-A 293-line mpv patch created two stable tracks from external codec/extradata
+A 335-line mpv patch created two stable tracks from external codec/extradata
 configuration and fed 217 externally supplied H.264/AAC packets into unchanged
 mpv decode, synchronization, hwdec, and output code. All 75 reordered B-frame
 video packets decoded; software output contained 75 frames and decoded audio;

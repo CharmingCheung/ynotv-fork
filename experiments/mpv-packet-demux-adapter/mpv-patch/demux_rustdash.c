@@ -8,6 +8,7 @@
 #include "common/common.h"
 #include "demux.h"
 #include "packet.h"
+#include "rdp_endian.h"
 #include "stheader.h"
 #include "stream/stream.h"
 
@@ -63,17 +64,16 @@ static bool get_u32(struct stream *s, uint32_t *value)
     uint8_t b[4];
     if (!read_exact(s, b, sizeof(b)))
         return false;
-    *value = (uint32_t)b[0] | (uint32_t)b[1] << 8 |
-             (uint32_t)b[2] << 16 | (uint32_t)b[3] << 24;
+    *value = rdp_read_le_u32(b);
     return true;
 }
 
 static bool get_i32(struct stream *s, int32_t *value)
 {
-    uint32_t u;
-    if (!get_u32(s, &u))
+    uint8_t b[4];
+    if (!read_exact(s, b, sizeof(b)))
         return false;
-    *value = (int32_t)u;
+    *value = rdp_read_le_i32(b);
     return true;
 }
 
@@ -82,11 +82,7 @@ static bool get_i64(struct stream *s, int64_t *value)
     uint8_t b[8];
     if (!read_exact(s, b, sizeof(b)))
         return false;
-    uint64_t u = (uint64_t)b[0] | (uint64_t)b[1] << 8 |
-                 (uint64_t)b[2] << 16 | (uint64_t)b[3] << 24 |
-                 (uint64_t)b[4] << 32 | (uint64_t)b[5] << 40 |
-                 (uint64_t)b[6] << 48 | (uint64_t)b[7] << 56;
-    *value = (int64_t)u;
+    *value = rdp_read_le_i64(b);
     return true;
 }
 
@@ -227,16 +223,29 @@ static bool rustdash_read_packet(struct demuxer *demuxer, struct demux_packet **
 {
     struct priv *p = demuxer->priv;
     while (p->cursor < p->num_packets) {
-        struct rdp_packet_index *src = &p->packets[p->cursor++];
+        struct rdp_packet_index *src = &p->packets[p->cursor];
         struct rdp_track *track = find_track(p, src->track);
-        if (!demux_stream_is_selected(track->sh))
+        if (!demux_stream_is_selected(track->sh)) {
+            p->cursor++;
             continue;
+        }
         struct demux_packet *packet = new_demux_packet(demuxer->packet_pool,
                                                         src->payload_size);
-        if (!packet)
+        if (!packet) {
+            MP_ERR(demuxer, "could not allocate packet %d (%u bytes)\n",
+                   p->cursor, src->payload_size);
             return true;
-        if (!stream_seek(demuxer->stream, src->payload_offset) ||
-            !read_exact(demuxer->stream, packet->buffer, src->payload_size)) {
+        }
+        if (!stream_seek(demuxer->stream, src->payload_offset)) {
+            MP_ERR(demuxer, "could not seek to payload for packet %d at offset %" PRId64 "\n",
+                   p->cursor, src->payload_offset);
+            free_demux_packet(packet);
+            return false;
+        }
+        if (!read_exact(demuxer->stream, packet->buffer, src->payload_size)) {
+            MP_ERR(demuxer, "could not read payload for packet %d at offset %" PRId64
+                   " (%u bytes)\n", p->cursor, src->payload_offset,
+                   src->payload_size);
             free_demux_packet(packet);
             return false;
         }
@@ -247,6 +256,7 @@ static bool rustdash_read_packet(struct demuxer *demuxer, struct demux_packet **
         packet->keyframe = src->flags & RDP_FLAG_KEYFRAME;
         packet->pos = src->payload_offset;
         *out = packet;
+        p->cursor++;
         return true;
     }
     MP_INFO(demuxer, "experimental producer final EOF\n");
@@ -259,15 +269,18 @@ static void rustdash_seek(struct demuxer *demuxer, double seek_pts, int flags)
     double target = flags & SEEK_FACTOR ? seek_pts * demuxer->duration : seek_pts;
     int chosen = 0;
     double chosen_pts = 0;
+    bool found = false;
     for (int n = 0; n < p->num_packets; n++) {
         struct rdp_packet_index *packet = &p->packets[n];
         struct rdp_track *track = find_track(p, packet->track);
         if (track->type != RDP_TRACK_VIDEO || !(packet->flags & RDP_FLAG_KEYFRAME))
             continue;
         double pts = to_seconds(packet->pts, packet->tb_num, packet->tb_den);
-        if (pts <= target && pts >= chosen_pts) {
+        if (pts != MP_NOPTS_VALUE && pts <= target &&
+            (!found || pts >= chosen_pts)) {
             chosen = n;
             chosen_pts = pts;
+            found = true;
         }
     }
     p->cursor = chosen;

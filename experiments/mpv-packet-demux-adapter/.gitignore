@@ -1,5 +1,6 @@
 packet_producer
 fixture.rdp
+regression-fixture.rdp
 mpv-work/
 results/*.log
 results/*.json

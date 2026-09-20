@@ -20,6 +20,7 @@ if [ -e "$mpv_src/demux/demux_rustdash.c" ]; then
 fi
 
 cp "$script_dir/mpv-patch/demux_rustdash.c" "$mpv_src/demux/demux_rustdash.c"
+cp "$script_dir/mpv-patch/rdp_endian.h" "$mpv_src/demux/rdp_endian.h"
 git -C "$mpv_src" apply "$script_dir/mpv-patch/register.patch"
 git -C "$mpv_src" diff --check
 echo "experimental mpv adapter applied to $mpv_src"

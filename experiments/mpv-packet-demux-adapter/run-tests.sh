@@ -11,6 +11,7 @@ mpv_bin=$1
 extra_dylib=${2-}
 fixture_source="$script_dir/../ffmpeg-mov-packet-lab/fixtures/clear-av-full.mp4"
 fixture="$script_dir/fixture.rdp"
+regression_fixture="$script_dir/regression-fixture.rdp"
 results="$script_dir/results"
 
 mkdir -p "$results"
@@ -19,8 +20,14 @@ if [ -n "$extra_dylib" ]; then
 fi
 
 cd "$script_dir"
+endian_test=$(mktemp "${TMPDIR:-/tmp}/rdp-endian-test.XXXXXX")
+trap 'rm -f "$endian_test"' EXIT HUP INT TERM
+cc -std=c11 -Wall -Wextra -Werror tests/test_rdp_endian.c -o "$endian_test"
+"$endian_test"
 ./build-producer.sh
 ./packet_producer "$fixture_source" "$fixture" > "$results/producer.log"
+python3 ./make-regression-fixture.py "$fixture" "$regression_fixture" \
+  > "$results/regression-fixture.log"
 "$mpv_bin" --version > "$results/version.log"
 
 "$mpv_bin" -v --no-config --demuxer=rustdash --hwdec=no \
@@ -41,6 +48,10 @@ ffprobe -v error -count_frames \
   --vo=null --ao=null --start=2 --frames=10 \
   --term-playing-msg='SEEK_PRESENTED=${time-pos}' \
   "$fixture" > "$results/seek.log" 2>&1
+
+"$mpv_bin" -v --no-config --demuxer=rustdash --hwdec=no \
+  --vo=null --ao=null --aid=no --start=0 --frames=10 \
+  "$regression_fixture" > "$results/negative-seek.log" 2>&1
 
 "$mpv_bin" -v --no-config --demuxer=rustdash --hwdec=videotoolbox-copy \
   --vo=null --ao=null --frames=20 \

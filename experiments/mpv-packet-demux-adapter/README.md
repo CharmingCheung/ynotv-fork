@@ -5,8 +5,8 @@ ynoTV playback. `packet_producer` uses libavformat once to turn the synthetic C1
 H.264/AAC fixture into the experimental `RDPKT001` packet file. The patched mpv
 demuxer reads that file contract directly; it never receives or parses MP4.
 
-The mpv patch is intentionally represented as one new source file plus a
-three-line registration patch. Apply it only to mpv commit
+The mpv patch is intentionally represented as one new source file, one small
+endian helper header, and a three-line registration patch. Apply it only to mpv commit
 `cfd818bcaef262f82596f49444ee80073fa6d49a`:
 
 ```sh
