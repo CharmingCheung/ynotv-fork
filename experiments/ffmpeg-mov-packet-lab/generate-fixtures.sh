@@ -42,22 +42,17 @@ if command -v mp4encrypt >/dev/null 2>&1; then
     --property "1:KID:${CENC_TEST_KID}" \
     --pssh 1077efecc0b24d02ace33c1e52e2fb4b: \
     "$FIXTURES/rep-a-full.mp4" "$FIXTURES/cenc-full.mp4" >/dev/null 2>&1
+  : >"$FIXTURES/cenc-with-pssh.available"
 else
-  ffmpeg -hide_banner -loglevel quiet -y \
-    -f lavfi -i "testsrc2=size=320x180:rate=25:duration=2" \
-    -an -c:v libx264 -preset medium -pix_fmt yuv420p -profile:v high \
-    -b:v 300k -maxrate 300k -bufsize 600k \
-    -g 25 -keyint_min 25 -sc_threshold 0 -bf 2 \
-    -movflags +dash+frag_keyframe+empty_moov+default_base_moof \
-    -frag_duration 1000000 \
-    -encryption_scheme cenc-aes-ctr \
-    -encryption_key "$CENC_TEST_KEY" \
-    -encryption_kid "$CENC_TEST_KID" \
-    "$FIXTURES/cenc-full.mp4"
+  rm -f "$FIXTURES/cenc-with-pssh.available" "$FIXTURES/cenc-full.mp4"
+  printf '%s\n' \
+    'SKIP: full CENC+PSSH fixture requires Bento4 mp4encrypt' >&2
 fi
 unset CENC_TEST_KEY
 
 python3 "$SCRIPT_DIR/split_fmp4.py" "$FIXTURES/rep-a-full.mp4" "$FIXTURES/rep-a"
 python3 "$SCRIPT_DIR/split_fmp4.py" "$FIXTURES/rep-b-full.mp4" "$FIXTURES/rep-b"
 python3 "$SCRIPT_DIR/split_fmp4.py" "$FIXTURES/clear-av-full.mp4" "$FIXTURES/clear-av"
-python3 "$SCRIPT_DIR/split_fmp4.py" "$FIXTURES/cenc-full.mp4" "$FIXTURES/cenc"
+if [ -f "$FIXTURES/cenc-with-pssh.available" ]; then
+  python3 "$SCRIPT_DIR/split_fmp4.py" "$FIXTURES/cenc-full.mp4" "$FIXTURES/cenc"
+fi

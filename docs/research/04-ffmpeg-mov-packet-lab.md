@@ -30,19 +30,24 @@ with `ffprobe` reading the original unsplit fMP4. A fresh context also opened a
 later independent fragment directly. CENC packet and initialization side data
 were available through public FFmpeg APIs.
 
-Two constraints prevent an unqualified result:
+Three constraints prevent an unqualified result:
 
 1. Appending a different representation's init to an existing context caused
    MOV to report `Found duplicated MOOV Atom. Skipped it`. It emitted the new
    representation's packets while retaining the old width, level, and
    extradata. A new codec/config generation therefore requires a fresh MOV
    context in the tested build.
-2. Returning `AVERROR(EAGAIN)` at a fragment boundary during stream discovery
-   was not surfaced as a stable resumable demux state. The callback subsequently
-   entered the next fragment, but `av_read_frame()` returned EOF after only the
-   already-buffered first fragment. Temporary starvation therefore cannot be
-   inferred from `av_read_frame()` EOF in this setup; the controlled input must
-   retain its own availability/end/error state.
+2. Without `avformat_find_stream_info()`, a strictly init-only post-open
+   snapshot contained codec ID, dimensions, audio rate/channel count,
+   time bases, extradata, and CENC initialization side data, but not H.264
+   profile/level or decoded pixel/sample-format and audio-layout detail.
+3. Returning `AVERROR(EAGAIN)` at the A1/A2 fragment boundary without calling
+   `avformat_find_stream_info()` was still not surfaced to the caller. One
+   `av_read_frame()` invocation made three callback reads that returned EAGAIN,
+   then returned `AVERROR_EOF`. A2 remained unavailable and was never read.
+   This is conclusion B: resumable EAGAIN still does not work reliably. A
+   future controlled MOV producer likely needs a blocking/cancellable AVIO
+   source rather than EAGAIN-based starvation signaling.
 
 ## Exact toolchain
 
@@ -92,10 +97,10 @@ All executable code is isolated under `experiments/ffmpeg-mov-packet-lab/`:
 | File | Purpose |
 |---|---|
 | `packet_lab.c` | custom AVIO, MOV open/discovery, stream/packet/side-data dump, and terminal-state classification |
-| `generate-fixtures.sh` | generate synthetic clear representations, clear H.264/AAC, and CENC input |
+| `generate-fixtures.sh` | generate synthetic clear representations and clear H.264/AAC; generate full CENC+PSSH only when Bento4 `mp4encrypt` is available |
 | `split_fmp4.py` | split top-level MP4 boxes into one init and discrete `moof`/`mdat` fragments |
 | `build.sh` | compile against the installed public FFmpeg libraries |
-| `run-experiments.sh` | execute cases A-D, CENC, the starvation probe, and the `ffprobe` reference |
+| `run-experiments.sh` | execute cases A-D, init-only snapshots, conditional CENC+PSSH, both starvation probes, and the `ffprobe` reference |
 | `verify_results.py` | assert the observations recorded in this report |
 | `.gitignore` | exclude the executable, generated media, and captured results |
 | `README.md` | short local entry point |
@@ -131,11 +136,18 @@ The clear source files use these material FFmpeg options:
 -frag_duration 1000000
 ```
 
-The audio fixture additionally uses `-c:a aac -b:a 96k`. The CENC fixture uses
-`mp4encrypt --method MPEG-CENC`, a fixed synthetic KID and IV seed, and a common
-PSSH system ID. The fixed synthetic content key exists only in the fixture
-script and is deliberately suppressed from command output and experiment logs.
-It is never passed to `packet_lab`.
+The audio fixture additionally uses `-c:a aac -b:a 96k`. The full CENC+PSSH
+fixture requires Bento4 `mp4encrypt`; it uses `--method MPEG-CENC`, a fixed
+synthetic KID and IV seed, and a common PSSH system ID. The fixed synthetic
+content key exists only in the fixture script and is deliberately suppressed
+from command output and experiment logs. It is never passed to `packet_lab`.
+
+There is deliberately no fallback encrypted fixture. If `mp4encrypt` is not on
+`PATH`, generation prints a CENC+PSSH skip, removes the capability marker, and
+the runner records `CENC_PSSH status=skipped reason=mp4encrypt-unavailable`.
+The verifier then skips only the CENC+PSSH assertions. This prevents an FFmpeg
+fallback with different PSSH content from being checked against Bento4-specific
+expectations.
 
 `split_fmp4.py` parses MP4 top-level box sizes, writes boxes through `moov` to
 `init.mp4`, and groups each subsequent `moof` through `mdat` as one `.m4s`.
@@ -148,7 +160,7 @@ them as one non-seekable `AVIOContext`. The read callback records when a piece
 is exhausted and advances to the next discrete piece. Once the caller-provided
 piece list is exhausted, it returns `AVERROR_EOF`.
 
-The open/read sequence uses public APIs:
+The normal open/read sequence uses public APIs:
 
 ```text
 av_find_input_format("mov")
@@ -158,6 +170,12 @@ avformat_open_input(... explicitly selected MOV input format ...)
 avformat_find_stream_info()
 av_read_frame()
 ```
+
+The corrective modes omit `avformat_find_stream_info()`. The init-only mode
+holds every media fragment unavailable until after it prints the post-open
+`AVStream`/`AVCodecParameters` snapshot. The A1/A2 starvation mode starts with
+init+A1 available, keeps A2 unavailable, and records the result of every
+caller-visible `av_read_frame()` invocation.
 
 The lab keeps all timestamp fields as FFmpeg integers plus the exact rational
 `AVStream.time_base`; it performs no `f64` conversion. It records codec ID/name,
@@ -173,6 +191,40 @@ read from `AVCodecParameters.coded_side_data` and decoded with
 
 The MOV demuxer was selected explicitly. No manifest or URL was supplied, and
 the FFmpeg DASH demuxer was not involved.
+
+## Init-only snapshot without stream discovery
+
+The strict sequence was:
+
+```text
+avformat_open_input()
+inspect AVStream / AVCodecParameters
+release media input
+av_read_frame()
+```
+
+At the end of the init piece, the controlled callback continued to report
+EAGAIN until `avformat_open_input()` returned. This ensures no media-fragment
+bytes were supplied before the snapshot. Relative to the existing normal runs,
+the snapshot contained:
+
+| Required field | Init-only result | Normal `find_stream_info` result |
+|---|---|---|
+| codec ID | H.264 `27`; AAC `86018` | identical |
+| H.264 profile / level | unknown (`-99 / -99`) | High `100`, level `12` |
+| width / height | `320x180` | identical |
+| audio configuration | AAC, 48 kHz, one channel, 5-byte AudioSpecificConfig; channel order unspecified, sample format unknown | same codec/rate/count/extradata; mono native order, planar-float sample format |
+| time base | video `1/12800`, audio `1/48000` | identical |
+| extradata | complete 46-byte AVC config and 5-byte AAC config | byte-identical |
+| encryption initialization side data | 36-byte common-system record, system ID `1077efecc0b24d02ace33c1e52e2fb4b` | byte-identical parsed record |
+
+Thus the init does supply the essential encoded configurations and CENC init
+side data, but it does not populate every requested codec-parameter field via
+public `AVCodecParameters`. In particular, profile/level are not available in
+the immediate snapshot. Also, after the init-end EAGAIN was consumed during
+open, clearing `AVIOContext.error`/`eof_reached` and releasing media did not
+resume packet reads: the first `av_read_frame()` returned EOF with zero packets.
+That init-only gate is a field-inspection control, not a viable feed strategy.
 
 ## Observed clear H.264/AAC output
 
@@ -362,26 +414,43 @@ The normal runs show that a physical fragment ending is not a demux EOF when
 the callback can immediately advance to another fragment. It is an input-layer
 event; MOV reads across it and continues emitting packets.
 
-The explicit starvation probe returned `AVERROR(EAGAIN)` once between media
-fragments 1 and 2. That happened while `avformat_find_stream_info()` was reading
-ahead. FFmpeg consumed the condition internally, entered the next piece on a
-later callback, but ultimately exposed only the 25 buffered packets from
-fragment 1 and returned `AVERROR_EOF`. It did not provide a dependable
-`av_read_frame() == EAGAIN` state that the caller could resume in this run.
+The original starvation probe returned `AVERROR(EAGAIN)` once between media
+fragments 1 and 2 while `avformat_find_stream_info()` was reading ahead. It did
+not establish a caller-visible retry boundary.
+
+The corrective probe did not call `avformat_find_stream_info()`. Init+A1 were
+available; A2 remained unavailable until and unless `av_read_frame()` returned
+EAGAIN. Calls 0 through 24 each returned one A1 packet. Those 25 packet records
+exactly matched packets 0 through 24 of the uninterrupted normal run, so there
+was no duplication or loss within A1. On call 25, the observable sequence was:
+
+```text
+AVIO callback -> AVERROR(EAGAIN)
+AVIO callback -> AVERROR(EAGAIN)
+AVIO callback -> AVERROR(EAGAIN)
+av_read_frame -> AVERROR_EOF
+```
+
+Because the caller saw EOF rather than EAGAIN, it did not make A2 available and
+could not retry. No A2 packet was extracted. Therefore the experiment cannot
+demonstrate resumption without duplication/loss; it demonstrates that the
+desired caller boundary was not produced even when stream discovery was
+omitted.
 
 The future boundary must consequently keep these three results distinct rather
 than map every lack of bytes to EOF:
 
 | State | Evidence-backed meaning |
 |---|---|
-| fragment temporarily exhausted | the controlled source expects another fragment but it is not available yet; this is source/scheduler state and the tested EAGAIN path cannot safely be inferred later from MOV EOF |
+| fragment temporarily exhausted | the controlled source expects another fragment but it is not available yet; this is source/scheduler state, and both tested EAGAIN paths became caller-visible MOV EOF rather than a retry result |
 | representation/input ended | the source declares that no more pieces exist and the already supplied MOV packets have drained; normal runs ended with `AVERROR_EOF` |
 | fatal demux error | a negative FFmpeg result other than the explicitly recognized retry/end conditions, retained with its exact error code/message |
 
-For a synchronous MOV read, the safe behavior demonstrated here is to make the
-next complete fragment immediately readable. Whether a blocking/cancellable
-AVIO callback or another wake-up mechanism is suitable for a live producer was
-not tested and remains open.
+Conclusion B applies: resumable EAGAIN still does not work reliably. For a
+synchronous MOV read, the safe behavior demonstrated here is to make the next
+complete fragment immediately readable. A future producer likely needs a
+blocking/cancellable AVIO source rather than EAGAIN-based starvation signaling;
+the blocking/cancellation mechanism itself was not implemented or tested.
 
 ## Packet information a future boundary must preserve
 
@@ -404,8 +473,9 @@ the preceding phase.
 
 ## Failures and unknowns
 
-1. The EAGAIN experiment did not establish a resumable temporary-starvation
-   contract. It established that the naive callback behavior is unsafe.
+1. Neither EAGAIN experiment established a resumable temporary-starvation
+   contract. Omitting `avformat_find_stream_info()` did not change the
+   caller-visible EOF result at the A1/A2 boundary.
 2. Reusing one MOV context across a second init is invalid for the tested
    configuration change because the second `moov` is skipped.
 3. Only independent, keyframe-starting fragments were used for fresh-context
@@ -423,6 +493,9 @@ the preceding phase.
    outside scope.
 8. `AVFormatContext.duration` was not stable as fragments became available and
    must not be treated as the representation timeline.
+9. The init-only snapshot did not populate H.264 profile/level, pixel/sample
+   format, or resolved audio channel order. Calling code must not assume all
+   normal post-discovery fields are immediately present.
 
 ## Exact commands and tests run
 
@@ -439,11 +512,12 @@ cd /Users/charming/IdeaProjects/ynotv/experiments/ffmpeg-mov-packet-lab
 Verifier result:
 
 ```text
-PASS: packet output, B-frames, fresh seek, init switch, CENC, and EAGAIN observations
+PASS: packet output, init-only stream fields, B-frames, fresh seek, init switch, CENC capability, and no-stream-info EAGAIN observation
 ```
 
 `run-experiments.sh` executes the exact input sequences described in cases A-D,
-the clear A/V and CENC cases, and:
+the init-only field snapshots, the no-stream-info A1/EAGAIN/A2 probe, the clear
+A/V and conditional CENC+PSSH cases, and:
 
 ```sh
 ffprobe -v error -select_streams v:0 \
@@ -489,5 +563,5 @@ Can FFmpeg MOV provide the packet-level media boundary needed by the future nati
 PARTIAL
 
 Evidence:
-FFmpeg MOV reliably emitted exact integer-timestamped AVPackets, codec parameters/extradata, keyframe flags, compressed payloads, and CENC/PSSH metadata from controlled init+fragment input. Same-init continuation and fresh-context access to a later independent fragment matched the unsplit reference exactly. A changed init must use a fresh MOV context because reuse skipped the new moov and retained stale codec parameters. The naive AVIO EAGAIN starvation probe was not a stable resumable state, so temporary exhaustion versus final end must remain explicit in the surrounding controlled-input contract and needs a further blocking/wake-up experiment.
+FFmpeg MOV reliably emitted exact integer-timestamped AVPackets, codec parameters/extradata, keyframe flags, compressed payloads, and CENC/PSSH metadata from controlled init+fragment input. Same-init continuation and fresh-context access to a later independent fragment matched the unsplit reference exactly. A changed init must use a fresh MOV context because reuse skipped the new moov and retained stale codec parameters. The init alone exposed encoded configuration and encryption init data but not every normal post-discovery codec field. Most importantly, with `avformat_find_stream_info()` omitted, repeated callback EAGAIN at the A1/A2 boundary still became caller-visible `av_read_frame()` EOF. Conclusion B applies: the future controlled MOV producer likely needs a blocking/cancellable AVIO source rather than EAGAIN-based starvation signaling.
 ```

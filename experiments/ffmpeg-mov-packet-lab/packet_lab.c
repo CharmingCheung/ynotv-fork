@@ -29,6 +29,10 @@ typedef struct InputState {
     int current_piece;
     int announced_piece;
     int eagain_at_boundary;
+    int resumable_starvation;
+    int init_only_gate;
+    int controlled_availability;
+    int available_pieces;
 } InputState;
 
 static void print_error(const char *operation, int error)
@@ -88,6 +92,19 @@ static int read_packet(void *opaque, uint8_t *buffer, int buffer_size)
         if (remaining == 0) {
             fprintf(stderr, "INPUT boundary=fragment-exhausted piece=%d\n",
                     input->current_piece);
+            if (input->controlled_availability &&
+                input->current_piece + 1 >= input->available_pieces &&
+                input->available_pieces < input->piece_count) {
+                if (!piece->sent_eagain) {
+                    piece->sent_eagain = 1;
+                    fprintf(stderr, "INPUT status=%s code=%d "
+                                    "available_pieces=%d\n",
+                            input->current_piece == 0 ? "init-only-boundary" :
+                            "temporarily-exhausted",
+                            AVERROR(EAGAIN), input->available_pieces);
+                }
+                return AVERROR(EAGAIN);
+            }
             if (input->eagain_at_boundary && input->current_piece > 0 &&
                 !piece->sent_eagain) {
                 piece->sent_eagain = 1;
@@ -169,12 +186,13 @@ static void print_stream(const AVFormatContext *format, unsigned int index)
     printf("STREAM index=%u type=%s codec=%s codec_id=%d codec_tag=0x%08x "
            "profile=%d level=%d bit_rate=%" PRId64 " format=%d "
            "width=%d height=%d sample_rate=%d channels=%d channel_layout=%s "
-           "time_base=%d/%d extradata_size=%d extradata=",
+           "channel_order=%d time_base=%d/%d extradata_size=%d extradata=",
            index, av_get_media_type_string(par->codec_type),
            avcodec_get_name(par->codec_id), par->codec_id, par->codec_tag,
            par->profile, par->level, par->bit_rate, par->format,
            par->width, par->height, par->sample_rate, par->ch_layout.nb_channels,
-           channel_layout, stream->time_base.num, stream->time_base.den,
+           channel_layout, par->ch_layout.order, stream->time_base.num,
+           stream->time_base.den,
            par->extradata_size);
     print_hex(par->extradata, (size_t)par->extradata_size);
     putchar('\n');
@@ -225,7 +243,7 @@ static void print_packet_encryption(const AVPacket *packet, int packet_index)
     av_encryption_info_free(info);
 }
 
-static int inspect(InputState *input)
+static int inspect(InputState *input, int find_stream_info)
 {
     AVFormatContext *format = avformat_alloc_context();
     AVIOContext *avio = NULL;
@@ -235,6 +253,7 @@ static int inspect(InputState *input)
     struct AVHashContext *hash = NULL;
     int result;
     int packet_index = 0;
+    int read_call = 0;
     unsigned int stream_index;
 
     if (!format || !mov)
@@ -255,49 +274,92 @@ static int inspect(InputState *input)
         print_error("avformat_open_input", result);
         goto failure;
     }
-    result = avformat_find_stream_info(format, NULL);
-    if (result < 0) {
-        print_error("avformat_find_stream_info", result);
-        goto failure;
+    if (find_stream_info) {
+        result = avformat_find_stream_info(format, NULL);
+        if (result < 0) {
+            print_error("avformat_find_stream_info", result);
+            goto failure;
+        }
+        if (input->eagain_at_boundary && format->pb->error == AVERROR(EAGAIN)) {
+            fprintf(stderr, "AVIO action=clear-consumed-eagain-after-stream-info\n");
+            format->pb->error = 0;
+            format->pb->eof_reached = 0;
+        }
     }
-    if (input->eagain_at_boundary && format->pb->error == AVERROR(EAGAIN)) {
-        fprintf(stderr, "AVIO action=clear-consumed-eagain-after-stream-info\n");
-        format->pb->error = 0;
-        format->pb->eof_reached = 0;
-    }
+    printf("STREAM_SNAPSHOT phase=%s\n",
+           find_stream_info ? "post-find-stream-info" : "post-open");
     printf("FORMAT name=%s streams=%u duration=%" PRId64 " seekable=%d\n",
            format->iformat->name, format->nb_streams, format->duration,
            format->pb ? format->pb->seekable : 0);
     for (stream_index = 0; stream_index < format->nb_streams; stream_index++)
         print_stream(format, stream_index);
+    if (input->init_only_gate) {
+        input->available_pieces = input->resumable_starvation ? 2 :
+                                  input->piece_count;
+        fprintf(stderr, "INPUT action=release-after-post-open-snapshot "
+                        "available_pieces=%d\n",
+                input->available_pieces);
+        format->pb->error = 0;
+        format->pb->eof_reached = 0;
+    }
 
     packet = av_packet_alloc();
     if (!packet || av_hash_alloc(&hash, "sha256") < 0)
         goto failure;
-    while ((result = av_read_frame(format, packet)) >= 0) {
-        const AVStream *stream = format->streams[packet->stream_index];
-        int side_index;
-        uint8_t data_hash[AV_HASH_MAX_SIZE * 2 + 1];
-        av_hash_init(hash);
-        av_hash_update(hash, packet->data, (size_t)packet->size);
-        av_hash_final_hex(hash, data_hash, sizeof(data_hash));
-        printf("PACKET n=%d stream=%d type=%s pts=%" PRId64 " dts=%" PRId64
-               " duration=%" PRId64 " time_base=%d/%d keyframe=%d size=%d"
-               " sha256=%s side_data=%d\n",
-               packet_index, packet->stream_index,
-               av_get_media_type_string(stream->codecpar->codec_type),
-               packet->pts, packet->dts, packet->duration,
-               stream->time_base.num, stream->time_base.den,
-               !!(packet->flags & AV_PKT_FLAG_KEY), packet->size,
-               data_hash, packet->side_data_elems);
-        for (side_index = 0; side_index < packet->side_data_elems; side_index++) {
-            const AVPacketSideData *side = &packet->side_data[side_index];
-            printf("PACKET_SIDE_DATA packet=%d type=%s size=%zu\n",
-                   packet_index, av_packet_side_data_name(side->type), side->size);
+    for (;;) {
+        result = av_read_frame(format, packet);
+        if (input->resumable_starvation) {
+            if (result >= 0)
+                printf("READ_CALL n=%d result=packet packet=%d\n", read_call,
+                       packet_index);
+            else
+                printf("READ_CALL n=%d result=%s code=%d packets=%d\n",
+                       read_call,
+                       result == AVERROR(EAGAIN) ? "eagain" :
+                       result == AVERROR_EOF ? "eof" : "error",
+                       result, packet_index);
+            read_call++;
         }
-        print_packet_encryption(packet, packet_index);
-        packet_index++;
-        av_packet_unref(packet);
+        if (result == AVERROR(EAGAIN) && input->resumable_starvation) {
+            input->available_pieces++;
+            fprintf(stderr, "INPUT action=make-next-fragment-available "
+                            "available_pieces=%d\n",
+                    input->available_pieces);
+            format->pb->error = 0;
+            format->pb->eof_reached = 0;
+            fprintf(stderr, "AVIO action=clear-eagain-and-retry-read-frame\n");
+            continue;
+        }
+        if (result < 0)
+            break;
+        {
+            const AVStream *stream = format->streams[packet->stream_index];
+            int side_index;
+            uint8_t data_hash[AV_HASH_MAX_SIZE * 2 + 1];
+            av_hash_init(hash);
+            av_hash_update(hash, packet->data, (size_t)packet->size);
+            av_hash_final_hex(hash, data_hash, sizeof(data_hash));
+            printf("PACKET n=%d stream=%d type=%s pts=%" PRId64
+                   " dts=%" PRId64 " duration=%" PRId64
+                   " time_base=%d/%d keyframe=%d size=%d"
+                   " sha256=%s side_data=%d\n",
+                   packet_index, packet->stream_index,
+                   av_get_media_type_string(stream->codecpar->codec_type),
+                   packet->pts, packet->dts, packet->duration,
+                   stream->time_base.num, stream->time_base.den,
+                   !!(packet->flags & AV_PKT_FLAG_KEY), packet->size,
+                   data_hash, packet->side_data_elems);
+            for (side_index = 0; side_index < packet->side_data_elems;
+                 side_index++) {
+                const AVPacketSideData *side = &packet->side_data[side_index];
+                printf("PACKET_SIDE_DATA packet=%d type=%s size=%zu\n",
+                       packet_index, av_packet_side_data_name(side->type),
+                       side->size);
+            }
+            print_packet_encryption(packet, packet_index);
+            packet_index++;
+            av_packet_unref(packet);
+        }
     }
     if (result == AVERROR(EAGAIN))
         printf("DEMUX status=fragment-temporarily-exhausted packets=%d\n",
@@ -335,19 +397,34 @@ int main(int argc, char **argv)
     int index;
     int result;
     int first_path = 1;
+    int find_stream_info = 1;
     setvbuf(stdout, NULL, _IOLBF, 0);
     setvbuf(stderr, NULL, _IOLBF, 0);
-    if (argc > 1 && strcmp(argv[1], "--eagain-at-boundary") == 0) {
-        input.eagain_at_boundary = 1;
+    while (first_path < argc && argv[first_path][0] == '-') {
+        if (strcmp(argv[first_path], "--eagain-at-boundary") == 0)
+            input.eagain_at_boundary = 1;
+        else if (strcmp(argv[first_path], "--no-stream-info") == 0)
+            find_stream_info = 0;
+        else if (strcmp(argv[first_path], "--resumable-starvation") == 0)
+            input.resumable_starvation = 1;
+        else if (strcmp(argv[first_path], "--init-only-gate") == 0)
+            input.init_only_gate = 1;
+        else
+            break;
         first_path++;
     }
     if (argc - first_path < 2) {
-        fprintf(stderr, "usage: %s [--eagain-at-boundary] INIT.mp4 "
+        fprintf(stderr, "usage: %s [--no-stream-info] [--eagain-at-boundary] "
+                        "[--resumable-starvation] [--init-only-gate] INIT.mp4 "
                         "SEGMENT.m4s [SEGMENT.m4s ...]\n",
                 argv[0]);
         return 64;
     }
     input.piece_count = argc - first_path;
+    input.controlled_availability = input.resumable_starvation ||
+                                    input.init_only_gate;
+    input.available_pieces = input.init_only_gate ? 1 :
+                             input.resumable_starvation ? 2 : input.piece_count;
     input.pieces = av_calloc((size_t)input.piece_count, sizeof(*input.pieces));
     if (!input.pieces)
         return 1;
@@ -357,7 +434,7 @@ int main(int argc, char **argv)
             goto done;
         }
     }
-    result = inspect(&input);
+    result = inspect(&input, find_stream_info);
 
 done:
     for (index = 0; index < input.piece_count; index++)
