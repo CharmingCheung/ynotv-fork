@@ -12,9 +12,10 @@ This phase answers only the two packet-boundary questions left by C2:
    configuration B (640x360) through mpv's internal segmented-packet path?
 
 Both answers are positive in the pinned experimental build. Delayed playback,
-seek interruption, stop, quit, session destruction, software decode,
-VideoToolbox-copy, and direct VideoToolbox completed without a deadlock or a
-new user-visible track.
+seek interruption, stop (including with a non-empty adapter FIFO), quit,
+session destruction, disabled-audio filtering, software decode,
+VideoToolbox-copy, and direct VideoToolbox completed without a deadlock, retry
+burst, or new user-visible track.
 
 This remains an isolated experiment under
 `experiments/mpv-packet-demux-adapter/`. It adds no MPD parsing, DASH
@@ -42,7 +43,7 @@ The C2 directory was extended with:
 | File | Purpose |
 |---|---|
 | `generation_producer.c` | serializes two H.264 codec generations on one stable video track |
-| `live_control_test.py` | issues seek, stop, and quit while the consumer is blocked |
+| `live_control_test.py` | issues seek/stop/quit, stops with a non-empty FIFO, and induces a producer read failure |
 | `session_destroy.c` | calls `mpv_terminate_destroy()` while the consumer is blocked |
 | `run-live-generation-tests.sh` | reproduces delayed-live, cancellation, generation, and output-failure tests |
 | `verify_live_generation.py` | asserts the recorded outcomes |
@@ -104,11 +105,15 @@ condition variable:
 
 All condition waits recheck their predicate in a loop. There is no timed poll
 in the dequeue path and no `read_packet() == true, packet == NULL` retry loop
-during ordinary starvation. The only empty successful return is the single
-seek-interruption handoff needed to let mpv execute its queued low-level seek.
+during ordinary starvation or track filtering. Unselected packets are consumed
+inside the same `read_packet()` call until a selected packet, a real wait, seek
+interruption, cancellation, fatal failure, or final EOF is reached. Empty
+successful returns are reserved for seek interruption and cancellation.
 
 Temporary starvation therefore remains a blocking state. Only a drained queue
-plus `producer_done` returns `false` from `read_packet()` and becomes final EOF.
+plus `producer_done` takes the normal final-EOF path. Producer failure takes a
+separate terminal branch and emits an explicit fatal diagnostic; the private
+boolean callback limitation is described below.
 
 ### Maximum queue size
 
@@ -159,6 +164,11 @@ The adapter registers a callback on `demuxer->cancel`, mpv's existing playback
 cancellation object. Stop, quit, or `mpv_terminate_destroy()` triggers it. The
 callback sets `stopping`, broadcasts the queue condition, and does no mpv core
 call while the cancellation lock may be held.
+
+`read_packet()` checks `stopping` before inspecting or dequeuing the FIFO, so
+already queued producer packets cannot outrun cancellation. The regression
+waited for the producer to block on a full eight-packet FIFO, issued `stop`, and
+recorded `queued_at_cancel=8`; shutdown delivered none of those queued packets.
 
 The blocked consumer returns immediately. During demux close the adapter:
 
@@ -346,18 +356,18 @@ demux.c            2
 meson.build        1
 ```
 
-This phase's complete mpv patch changes five files with **639 insertions, zero
+This phase's complete mpv patch changes five files with **692 insertions, zero
 deletions** relative to unmodified pinned mpv:
 
 ```text
-demux_rustdash.c 601
+demux_rustdash.c 654
 rdp_endian.h      29
 demux.c            5
 demux.h            3
 meson.build        1
 ```
 
-The change from C2 is therefore **+304 inserted lines and +1 mpv file**. No
+The change from C2 is therefore **+357 inserted lines and +1 mpv file**. No
 decoder, video output, player reload path, public client API, or ynoTV file was
 modified. Producer/test harness code is excluded from the mpv patch count.
 
@@ -389,14 +399,15 @@ The new suite was:
 Its verifier result after the final output-failure check was:
 
 ```text
-PASS: bounded live waits/cancellation and software/VideoToolbox generation transition
+PASS: bounded live waits/cancellation, packet filtering/failure, and software/VideoToolbox generation transition
 ```
 
 That suite covers delayed groups A/B/final, normal EOF, FIFO bounds, seek while
-blocked, stop while blocked, quit while blocked, `mpv_terminate_destroy()`
-while blocked, software generation change, VideoToolbox-copy generation change,
-direct VideoToolbox generation change, stable track count, and the lavc output
-limitation below.
+blocked, stop while blocked, stop with a non-empty FIFO, quit while blocked,
+`mpv_terminate_destroy()` while blocked, disabled-audio filtering without empty
+retry returns, explicit producer-failure diagnostics, software generation
+change, VideoToolbox-copy generation change, direct VideoToolbox generation
+change, stable track count, and the lavc output limitation below.
 
 The pinned mpv regression suite was rerun after the final patch:
 
@@ -427,8 +438,17 @@ to a fresh detached worktree at the pinned commit.
 5. The seek test forced a low-level seek by disabling mpv's seekable demux
    cache. Cached seeks use existing buffered packets and were not a cancellation
    target in this phase.
-6. Producer read errors are terminal. Retry/backoff, reconnect, network
-   timeouts, and representation scheduling are deliberately undefined.
+6. Producer read errors are terminal and distinct inside the adapter: they log
+   `fatal producer error`, never log the normal `experimental producer final
+   EOF` marker, and discard queued payloads rather than delivering beyond the
+   failure. The pinned private `demuxer_desc.read_packet` API returns only
+   boolean success/EOF; its demux core converts every `false` return to stream
+   EOF. There is no established runtime fatal-error channel to propagate a
+   third state. This is the same limitation used by the pinned lavf demuxer,
+   which logs a fatal read error and returns `false`. Consequently the adapter
+   cannot make downstream mpv distinguish fatal producer failure from EOF
+   without a broader private demux API change. Retry/backoff, reconnect,
+   network timeouts, and representation scheduling remain undefined.
 7. Only one video track changes generation. Atomic audio+video generation
    changes, timescale changes, codec changes, and discontinuous timestamps are
    untested.

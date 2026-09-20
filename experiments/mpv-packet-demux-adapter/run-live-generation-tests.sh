@@ -14,6 +14,7 @@ fixtures="$script_dir/../ffmpeg-mov-packet-lab/fixtures"
 results="$script_dir/results"
 live_fixture="$script_dir/fixture.rdp"
 generation_fixture="$script_dir/generation-fixture.rdp"
+failure_fixture="$script_dir/producer-failure-fixture.rdp"
 
 mkdir -p "$results"
 if [ -n "$extra_dylib" ]; then
@@ -34,7 +35,7 @@ RUSTDASH_DELAY_MS=1500 "$mpv_bin" -v --no-config --demuxer=rustdash \
 end=$(date +%s)
 echo "WALL_SECONDS=$((end - start))" > "$results/live-delay-time.log"
 
-for mode in seek stop quit; do
+for mode in seek stop quit queued-stop; do
   if [ -n "$extra_dylib" ]; then
     python3 live_control_test.py "$mode" "$mpv_bin" "$live_fixture" \
       "$results/cancel-$mode.log" --dylib-dir "$extra_dylib"
@@ -43,6 +44,20 @@ for mode in seek stop quit; do
       "$results/cancel-$mode.log"
   fi
 done
+
+"$mpv_bin" -v --no-config --demuxer=rustdash --demuxer-seekable-cache=no \
+  --cache=no --hwdec=no --vo=null --ao=null --aid=no \
+  "$live_fixture" > "$results/audio-disabled.log" 2>&1
+
+cp "$live_fixture" "$failure_fixture"
+if [ -n "$extra_dylib" ]; then
+  python3 live_control_test.py producer-fail "$mpv_bin" "$failure_fixture" \
+    "$results/producer-failure.log" --dylib-dir "$extra_dylib"
+else
+  python3 live_control_test.py producer-fail "$mpv_bin" "$failure_fixture" \
+    "$results/producer-failure.log"
+fi
+rm -f "$failure_fixture"
 
 cc -std=c11 -Wall -Wextra -Werror -I"$mpv_source/include" session_destroy.c \
   -L"$(dirname -- "$mpv_bin")" -lmpv -o "$results/session_destroy"

@@ -28,6 +28,24 @@ for mode in ("seek", "stop", "quit"):
     assert "producer waiting group=1 delay_ms=10000" in log
     assert "bounded producer shutdown" in log
 
+queued_stop = read("cancel-queued-stop.log")
+queued = re.search(r"queued_at_cancel=(\d+)", queued_stop)
+assert queued and int(queued.group(1)) > 0
+assert "bounded producer shutdown" in queued_stop
+
+audio_disabled = read("audio-disabled.log")
+skip_stats = re.search(r"skipped_unselected=(\d+) empty_successes=(\d+)",
+                       audio_disabled)
+assert skip_stats and int(skip_stats.group(1)) > 0
+assert int(skip_stats.group(2)) == 0
+assert "experimental producer final EOF" in audio_disabled
+assert "finished playback, success" in audio_disabled
+
+producer_failure = read("producer-failure.log")
+assert "producer failed reading packet" in producer_failure
+assert "fatal producer error; mpv's boolean demux API" in producer_failure
+assert "experimental producer final EOF" not in producer_failure
+
 destroy = read("cancel-destroy.log")
 elapsed = float(re.search(r"DESTROY_RETURNED_SECONDS=([0-9.]+)", destroy).group(1))
 assert elapsed < 2.0
@@ -54,4 +72,5 @@ for name, hwdec, format_a, format_b in (
 assert "EXPECTED_LAVC_RESOLUTION_CHANGE_FAILURE" in read("generation-encode-status.log")
 assert "resolution changes not supported" in read("generation-encode.log")
 
-print("PASS: bounded live waits/cancellation and software/VideoToolbox generation transition")
+print("PASS: bounded live waits/cancellation, packet filtering/failure, and "
+      "software/VideoToolbox generation transition")

@@ -83,6 +83,7 @@ struct priv {
     bool producer_started;
     mp_mutex lock;
     mp_cond wakeup;
+    bool sync_initialized;
     struct rdp_ready_packet *queue[RDP_QUEUE_PACKETS];
     int queue_head;
     int queue_count;
@@ -96,8 +97,12 @@ struct priv {
     bool stopping;
     bool producer_done;
     bool producer_failed;
+    bool producer_failure_reported;
     int delay_ms;
     int waits;
+    int skipped_unselected;
+    int empty_successes;
+    int queued_at_cancel;
 };
 
 static bool read_exact(struct stream *s, void *dst, size_t size)
@@ -322,26 +327,37 @@ static MP_THREAD_VOID producer_thread(void *ctx)
         uint64_t epoch = p->epoch;
         if (!wait_for_group_delay_locked(p, packet->group, epoch))
             continue;
-        while (!p->stopping && !p->interrupted && p->epoch == epoch &&
-               (p->queue_count == RDP_QUEUE_PACKETS ||
-                p->queue_bytes + packet->payload_size > RDP_QUEUE_BYTES))
+        bool queue_full = p->queue_count == RDP_QUEUE_PACKETS ||
+                          p->queue_bytes + packet->payload_size > RDP_QUEUE_BYTES;
+        if (queue_full) {
+            MP_INFO(p->demuxer, "producer blocked queue_count=%d queue_bytes=%zu\n",
+                    p->queue_count, p->queue_bytes);
+        }
+        while (!p->stopping && !p->interrupted && p->epoch == epoch && queue_full) {
             mp_cond_wait(&p->wakeup, &p->lock);
+            queue_full = p->queue_count == RDP_QUEUE_PACKETS ||
+                         p->queue_bytes + packet->payload_size > RDP_QUEUE_BYTES;
+        }
         if (p->stopping || p->interrupted || p->epoch != epoch)
             continue;
 
         mp_mutex_unlock(&p->lock);
+        errno = 0;
         struct rdp_ready_packet *ready = calloc(1, sizeof(*ready));
         if (ready)
             ready->payload = malloc(packet->payload_size);
-        bool read_ok = ready && ready->payload &&
-            fseeko(p->source, packet->payload_offset, SEEK_SET) == 0 &&
+        bool seek_ok = ready && ready->payload &&
+                       fseeko(p->source, packet->payload_offset, SEEK_SET) == 0;
+        bool read_ok = seek_ok &&
             fread(ready->payload, 1, packet->payload_size, p->source) == packet->payload_size;
         mp_mutex_lock(&p->lock);
         if (!read_ok) {
+            const char *reason = errno ? strerror(errno) :
+                                 "unexpected end of producer source";
             free_ready(ready);
             p->producer_failed = true;
             MP_ERR(p->demuxer, "producer failed reading packet %d: %s\n",
-                   index, strerror(errno));
+                   index, reason);
             mp_cond_broadcast(&p->wakeup);
             break;
         }
@@ -368,6 +384,7 @@ static void cancel_wait(void *ctx)
     struct priv *p = ctx;
     mp_mutex_lock(&p->lock);
     p->stopping = true;
+    p->queued_at_cancel = p->queue_count;
     mp_cond_broadcast(&p->wakeup);
     mp_mutex_unlock(&p->lock);
 }
@@ -440,11 +457,17 @@ static int rustdash_open(struct demuxer *demuxer, enum demux_check check)
     }
     mp_mutex_init(&p->lock);
     mp_cond_init(&p->wakeup);
+    p->sync_initialized = true;
     p->delay_ms = read_delay_ms();
     p->producer_group = p->packets[0].group;
     mp_cancel_set_cb(demuxer->cancel, cancel_wait, p);
     if (mp_thread_create(&p->producer_thread, producer_thread, p)) {
         mp_cancel_set_cb(demuxer->cancel, NULL, NULL);
+        fclose(p->source);
+        p->source = NULL;
+        mp_cond_destroy(&p->wakeup);
+        mp_mutex_destroy(&p->lock);
+        p->sync_initialized = false;
         return -1;
     }
     p->producer_started = true;
@@ -463,62 +486,83 @@ static bool rustdash_read_packet(struct demuxer *demuxer, struct demux_packet **
 {
     struct priv *p = demuxer->priv;
     mp_mutex_lock(&p->lock);
-    while (!p->queue_count && !p->producer_done && !p->producer_failed &&
-           !p->stopping && !p->interrupted) {
-        p->waits++;
-        MP_VERBOSE(demuxer, "consumer blocked wait=%d epoch=%" PRIu64 "\n",
-                   p->waits, p->epoch);
-        mp_cond_wait(&p->wakeup, &p->lock);
-    }
-    if (p->interrupted) {
-        mp_mutex_unlock(&p->lock);
-        return true;
-    }
-    if (!p->queue_count) {
-        bool final_eof = p->producer_done && !p->producer_failed && !p->stopping;
-        mp_mutex_unlock(&p->lock);
-        if (final_eof)
+    while (true) {
+        while (!p->queue_count && !p->producer_done && !p->producer_failed &&
+               !p->stopping && !p->interrupted) {
+            p->waits++;
+            MP_VERBOSE(demuxer, "consumer blocked wait=%d epoch=%" PRIu64 "\n",
+                       p->waits, p->epoch);
+            mp_cond_wait(&p->wakeup, &p->lock);
+        }
+        if (p->stopping || p->interrupted) {
+            p->empty_successes++;
+            mp_mutex_unlock(&p->lock);
+            return true;
+        }
+        if (p->producer_failed) {
+            bool report = !p->producer_failure_reported;
+            p->producer_failure_reported = true;
+            mp_mutex_unlock(&p->lock);
+            if (report) {
+                MP_ERR(demuxer, "fatal producer error; mpv's boolean demux API "
+                       "will represent this terminal failure as EOF\n");
+            }
+            return false;
+        }
+        if (!p->queue_count) {
+            mp_mutex_unlock(&p->lock);
             MP_INFO(demuxer, "experimental producer final EOF\n");
-        return false;
-    }
-    struct rdp_ready_packet *ready = p->queue[p->queue_head];
-    p->queue[p->queue_head] = NULL;
-    p->queue_head = (p->queue_head + 1) % RDP_QUEUE_PACKETS;
-    p->queue_count--;
-    struct rdp_packet_index *src = &p->packets[ready->index];
-    p->queue_bytes -= src->payload_size;
-    mp_cond_broadcast(&p->wakeup);
-    mp_mutex_unlock(&p->lock);
+            return false;
+        }
+        struct rdp_ready_packet *ready = p->queue[p->queue_head];
+        p->queue[p->queue_head] = NULL;
+        p->queue_head = (p->queue_head + 1) % RDP_QUEUE_PACKETS;
+        p->queue_count--;
+        struct rdp_packet_index *src = &p->packets[ready->index];
+        p->queue_bytes -= src->payload_size;
+        mp_cond_broadcast(&p->wakeup);
+        mp_mutex_unlock(&p->lock);
 
-    struct rdp_track *track = find_track(p, src->track);
-    struct rdp_generation *generation =
-        find_generation(p, src->track, src->generation);
-    if (!demux_stream_is_selected(track->sh)) {
+        struct rdp_track *track = find_track(p, src->track);
+        struct rdp_generation *generation =
+            find_generation(p, src->track, src->generation);
+        if (!demux_stream_is_selected(track->sh)) {
+            free_ready(ready);
+            mp_mutex_lock(&p->lock);
+            p->skipped_unselected++;
+            continue;
+        }
+        struct demux_packet *packet = new_demux_packet(demuxer->packet_pool,
+                                                        src->payload_size);
+        if (!packet) {
+            MP_ERR(demuxer, "could not allocate packet %d (%u bytes)\n",
+                   ready->index, src->payload_size);
+            free_ready(ready);
+            return false;
+        }
+        memcpy(packet->buffer, ready->payload, src->payload_size);
+        packet->stream = track->sh->index;
+        packet->pts = to_seconds(src->pts, src->tb_num, src->tb_den);
+        packet->dts = to_seconds(src->dts, src->tb_num, src->tb_den);
+        packet->duration = to_seconds(src->duration, src->tb_num, src->tb_den);
+        packet->keyframe = src->flags & RDP_FLAG_KEYFRAME;
+        packet->pos = src->payload_offset;
+        if (p->generation_fixture) {
+            packet->segmented = true;
+            packet->codec = generation->codec;
+        }
         free_ready(ready);
+        mp_mutex_lock(&p->lock);
+        if (p->stopping || p->interrupted) {
+            p->empty_successes++;
+            mp_mutex_unlock(&p->lock);
+            talloc_free(packet);
+            return true;
+        }
+        *out = packet;
+        mp_mutex_unlock(&p->lock);
         return true;
     }
-    struct demux_packet *packet = new_demux_packet(demuxer->packet_pool,
-                                                    src->payload_size);
-    if (!packet) {
-        MP_ERR(demuxer, "could not allocate packet %d (%u bytes)\n",
-               ready->index, src->payload_size);
-        free_ready(ready);
-        return false;
-    }
-    memcpy(packet->buffer, ready->payload, src->payload_size);
-    packet->stream = track->sh->index;
-    packet->pts = to_seconds(src->pts, src->tb_num, src->tb_den);
-    packet->dts = to_seconds(src->dts, src->tb_num, src->tb_den);
-    packet->duration = to_seconds(src->duration, src->tb_num, src->tb_den);
-    packet->keyframe = src->flags & RDP_FLAG_KEYFRAME;
-    packet->pos = src->payload_offset;
-    if (p->generation_fixture) {
-        packet->segmented = true;
-        packet->codec = generation->codec;
-    }
-    *out = packet;
-    free_ready(ready);
-    return true;
 }
 
 static void rustdash_interrupt(struct demuxer *demuxer)
@@ -558,7 +602,6 @@ static void rustdash_seek(struct demuxer *demuxer, double seek_pts, int flags)
     p->producer_cursor = chosen;
     p->producer_group = p->packets[chosen].group;
     p->producer_done = false;
-    p->producer_failed = false;
     p->interrupted = false;
     p->epoch++;
     uint64_t epoch = p->epoch;
@@ -572,6 +615,13 @@ static void rustdash_close(struct demuxer *demuxer)
 {
     struct priv *p = demuxer->priv;
     mp_cancel_set_cb(demuxer->cancel, NULL, NULL);
+    if (!p)
+        return;
+    if (!p->sync_initialized) {
+        if (p->source)
+            fclose(p->source);
+        return;
+    }
     mp_mutex_lock(&p->lock);
     p->stopping = true;
     mp_cond_broadcast(&p->wakeup);
@@ -582,12 +632,15 @@ static void rustdash_close(struct demuxer *demuxer)
     clear_queue_locked(p);
     mp_mutex_unlock(&p->lock);
     MP_INFO(demuxer, "bounded producer shutdown waits=%d max_packets=%d "
-            "max_bytes=%zu\n", p->waits, p->max_queue_count,
-            p->max_queue_bytes);
+            "max_bytes=%zu skipped_unselected=%d empty_successes=%d "
+            "queued_at_cancel=%d\n",
+            p->waits, p->max_queue_count, p->max_queue_bytes,
+            p->skipped_unselected, p->empty_successes, p->queued_at_cancel);
     if (p->source)
         fclose(p->source);
     mp_cond_destroy(&p->wakeup);
     mp_mutex_destroy(&p->lock);
+    p->sync_initialized = false;
 }
 
 const struct demuxer_desc demuxer_desc_rustdash = {
