@@ -44,6 +44,17 @@ let focusSyncTimer: ReturnType<typeof setTimeout> | null = null;
 let fullscreenRestoreMaximized: boolean | null = null;
 let activeSubtitleTrackId: number | null = null;
 
+export const MANUAL_SUBTITLE_SELECTION_EVENT = 'ynotv-manual-subtitle-selection';
+
+function notifyManualSubtitleSelection(id: number | null) {
+    // Notify playback orchestration before the MPV command is sent. This lets it
+    // cancel subtitle auto-selection synchronously, so an in-flight settling
+    // poll cannot overwrite the user's choice with the configured default/off.
+    window.dispatchEvent(new CustomEvent(MANUAL_SUBTITLE_SELECTION_EVENT, {
+        detail: { id },
+    }));
+}
+
 function delay(ms: number) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -429,7 +440,7 @@ export const Bridge = {
         }
         try {
             activeSubtitleTrackId = null;
-            await invoke('mpv_load', { url });
+            await invoke('mpv_load', { url, userAgent });
             return { success: true };
         } catch (e: any) {
             return { success: false, error: typeof e === 'string' ? e : translateNativeError(e.message) || i18n.t('player:unknownError') };
@@ -515,6 +526,7 @@ export const Bridge = {
     },
 
     async cycleSubtitle() {
+        notifyManualSubtitleSelection(null);
         return invoke('mpv_cycle_sub');
     },
 
@@ -630,8 +642,11 @@ export const Bridge = {
         return invoke('mpv_set_audio', { id });
     },
 
-    async setSubtitleTrack(id: number) {
+    async setSubtitleTrack(id: number, options?: { userInitiated?: boolean }) {
         activeSubtitleTrackId = id;
+        if (options?.userInitiated) {
+            notifyManualSubtitleSelection(id);
+        }
         const res = await invoke('mpv_set_subtitle', { id });
         if (id > 0) {
             // Force rendering on. A user-supplied --sub-visibility=no in custom

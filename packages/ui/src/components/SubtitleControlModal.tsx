@@ -607,7 +607,7 @@ export function SubtitleControlModal({
   const handleSelect = async (trackId: number) => {
     logSub('select', `selecting track #${trackId}`);
     try {
-      await Bridge.setSubtitleTrack(trackId);
+      await Bridge.setSubtitleTrack(trackId, { userInitiated: true });
       setSelectedId(trackId);
       await debugLogSubTracks(`after setSubtitleTrack(${trackId})`);
       await debugLogSubState('after select');
@@ -620,7 +620,7 @@ export function SubtitleControlModal({
   const handleDisable = async () => {
     logSub('select', 'disabling subtitles (sid=0)');
     try {
-      await Bridge.setSubtitleTrack(0);
+      await Bridge.setSubtitleTrack(0, { userInitiated: true });
       setSelectedId(0);
       await debugLogSubState('after disable');
     } catch (e) {
@@ -671,7 +671,7 @@ export function SubtitleControlModal({
 
     if (found) {
       logSub('load', `match found -> track #${found.id}, selecting via setSubtitleTrack`);
-      await Bridge.setSubtitleTrack(found.id).catch((e) => logSub('load', `ERROR setSubtitleTrack(${found.id}): ${e}`));
+      await Bridge.setSubtitleTrack(found.id, { userInitiated: true }).catch((e) => logSub('load', `ERROR setSubtitleTrack(${found.id}): ${e}`));
       await debugLogSubTracks('after external track selection');
       await debugLogSubState('after external selection');
     } else {

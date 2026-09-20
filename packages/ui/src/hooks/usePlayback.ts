@@ -5,9 +5,16 @@ import { listen } from '@tauri-apps/api/event';
 import type { StoredChannel } from '../db';
 import { getFailoverCandidatesAfter, getPrimaryChannelForGroup } from '../services/failover-groups';
 import type { VodPlayInfo } from '../types/media';
-import { Bridge, registerOnAppClose, unregisterOnAppClose, resolveSubAssOverride } from '../services/tauri-bridge';
+import {
+  Bridge,
+  MANUAL_SUBTITLE_SELECTION_EVENT,
+  registerOnAppClose,
+  unregisterOnAppClose,
+  resolveSubAssOverride,
+} from '../services/tauri-bridge';
 import { resolvePlayUrl } from '../services/stream-resolver';
 import { addToRecentChannels } from '../utils/recentChannels';
+import { didLiveTimelineRebase, effectiveLiveStallThreshold, isLikelyHlsStream } from '../utils/playbackHealth';
 import { db, recordVodWatch, updateVodWatchProgress, getVodWatchProgress, recordEpisodeWatch, getEpisodeProgress, updateDvrRecordingProgress } from '../db';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useDownloadStore } from '../stores/downloadStore';
@@ -743,10 +750,16 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
   const lastHealthForwardBytesRef = useRef<number | null>(null);
   const lastHealthActivityTimeRef = useRef<number>(Date.now());
   const bufferStarvedSinceRef = useRef<number | null>(null);
+  const terminalStateSinceRef = useRef<number | null>(null);
   const healthCheckInFlightRef = useRef(false);
   const healthLoadGraceUntilRef = useRef(0);
   const hasAutoSelectedSubRef = useRef(false);
   const hasAutoSelectedAudioRef = useRef(false);
+  // Once the user picks a subtitle (including Off), that choice is authoritative
+  // for the rest of the current stream. Without this guard, the initial
+  // track-settling poll can re-apply the configured default a moment later.
+  const hasManualSubtitleSelectionRef = useRef(false);
+  const manualSubtitleTrackIdRef = useRef<number | null>(null);
   // Sticky: once auto-selection has completed at least once for a stream, later
   // track-count changes (e.g. the user manually adding a subtitle mid-playback)
   // must NOT reset the auto-select state and fight the manual selection.
@@ -767,6 +780,21 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
   const intentionallyStoppedRef = useRef(false);
   // Tracks whether we're currently playing a stalker_portal VOD over HLS (.m3u8).
   const isStalkerVodRef = useRef(false);
+
+  useEffect(() => {
+    const handleManualSubtitleSelection = (event: Event) => {
+      const detail = (event as CustomEvent<{ id?: number | null }>).detail;
+      hasManualSubtitleSelectionRef.current = true;
+      if (detail && 'id' in detail) {
+        manualSubtitleTrackIdRef.current = typeof detail.id === 'number' ? detail.id : null;
+      }
+      hasAutoSelectedSubRef.current = true;
+      subAutoSelectEverCompletedRef.current = true;
+    };
+
+    window.addEventListener(MANUAL_SUBTITLE_SELECTION_EVENT, handleManualSubtitleSelection);
+    return () => window.removeEventListener(MANUAL_SUBTITLE_SELECTION_EVENT, handleManualSubtitleSelection);
+  }, []);
   // Cleanup autoSelectTimer on unmount
   useEffect(() => {
     return () => {
@@ -815,6 +843,7 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
     lastHealthForwardBytesRef.current = null;
     lastHealthActivityTimeRef.current = now;
     bufferStarvedSinceRef.current = null;
+    terminalStateSinceRef.current = null;
     healthCheckInFlightRef.current = false;
     healthLoadGraceUntilRef.current = now + graceMs;
   }, []);
@@ -1541,6 +1570,16 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
           logInfo('[Retry] Ignoring mpv-stream-ended event (event-based reconnect disabled)');
           return;
         }
+        if (
+          stallDetectionEnabledRef.current &&
+          isLikelyHlsStream(currentChannelRef.current?.direct_url)
+        ) {
+          // A live HLS demuxer can briefly report EOF while waiting for the
+          // playlist to advance. Let the cache-aware watchdog confirm a real
+          // outage instead of replacing a stream that is still downloading.
+          logInfo('[Retry] Deferring HLS stream-ended event to cache-aware watchdog');
+          return;
+        }
         logInfo('[Retry] Received mpv-stream-ended event');
         if (await maybeRetryTrailerStream()) {
           return;
@@ -1759,7 +1798,9 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
         const cacheDuration = cacheDurationProp
           ?? (cacheStart !== null && cacheEnd !== null ? Math.max(0, cacheEnd - cacheStart) : null);
 
-        const positionAdvanced = sampledPosition > lastHealthPositionRef.current + 0.25;
+        const previousHealthPosition = lastHealthPositionRef.current;
+        const timelineRebased = didLiveTimelineRebase(sampledPosition, previousHealthPosition);
+        const positionAdvanced = sampledPosition > previousHealthPosition + 0.25;
         const cacheEndAdvanced = cacheEnd !== null && (
           lastHealthCacheEndRef.current === null ||
           cacheEnd > lastHealthCacheEndRef.current + 0.25
@@ -1772,9 +1813,9 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
         const cacheHasPlayableData = cacheDuration !== null && cacheDuration > 1.5;
         const cacheIsGrowing = cacheEndAdvanced || readerAdvanced || forwardBytesAdvanced;
         const buffering = pausedForCache || (bufferingState !== null && bufferingState < 100);
-        const madeProgress = positionAdvanced || cacheIsGrowing;
+        const madeProgress = positionAdvanced || cacheIsGrowing || timelineRebased;
 
-        if (positionAdvanced) {
+        if (positionAdvanced || timelineRebased) {
           lastHealthPositionRef.current = sampledPosition;
           lastPositionRef.current = sampledPosition;
         }
@@ -1793,24 +1834,39 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
           lastHealthActivityTimeRef.current = now;
           lastPositionTimeRef.current = now;
           bufferStarvedSinceRef.current = null;
+          terminalStateSinceRef.current = null;
+          if (timelineRebased) {
+            logInfo(`[Health] Live timeline rebased from ${previousHealthPosition.toFixed(2)}s to ${sampledPosition.toFixed(2)}s; resetting watchdog baseline`);
+          }
         }
 
         if (!recoveryArmedRef.current) {
           return;
         }
 
-        if (eofReached || ((coreIdle || idleActive) && !madeProgress)) {
-          logWarn('[Health] MPV reported idle/eof during live playback, triggering failover/retry');
-          handleStreamDied();
-          return;
+        const effectiveStallThresholdMs = effectiveLiveStallThreshold(
+          stallThresholdMsRef.current,
+          currentChannelRef.current?.direct_url,
+        );
+        const terminalSignal = eofReached || coreIdle || idleActive;
+        const terminalContradictedByActiveHls = cacheIsGrowing || cacheHasPlayableData || madeProgress;
+        if (terminalSignal && !terminalContradictedByActiveHls) {
+          terminalStateSinceRef.current ??= now;
+          if (now - terminalStateSinceRef.current >= effectiveStallThresholdMs) {
+            logWarn('[Health] MPV remained idle/eof with no cache activity, triggering failover/retry');
+            handleStreamDied();
+            return;
+          }
+        } else {
+          terminalStateSinceRef.current = null;
         }
 
         if (buffering && !cacheIsGrowing && !cacheHasPlayableData) {
           bufferStarvedSinceRef.current ??= now;
           const starvedFor = now - bufferStarvedSinceRef.current;
           const starvationThreshold = Math.min(
-            Math.max(MIN_BUFFER_STARVATION_MS, stallThresholdMsRef.current / 2),
-            stallThresholdMsRef.current
+            Math.max(MIN_BUFFER_STARVATION_MS, effectiveStallThresholdMs / 2),
+            effectiveStallThresholdMs
           );
           if (starvedFor >= starvationThreshold) {
             logWarn(`[Health] MPV buffer starved for ${starvedFor}ms, triggering failover/retry`);
@@ -1822,7 +1878,7 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
         }
 
         const stalledFor = now - lastHealthActivityTimeRef.current;
-        if (stalledFor >= stallThresholdMsRef.current) {
+        if (stalledFor >= effectiveStallThresholdMs) {
           logWarn(`[Health] No playback or cache progress for ${stalledFor}ms, triggering failover/retry`);
           handleStreamDied();
         }
@@ -1851,6 +1907,8 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
     }
     hasAutoSelectedSubRef.current = false;
     hasAutoSelectedAudioRef.current = false;
+    hasManualSubtitleSelectionRef.current = false;
+    manualSubtitleTrackIdRef.current = null;
     subAutoSelectEverCompletedRef.current = false;
     lastSubTracksCountRef.current = 0;
     lastAudioTracksCountRef.current = 0;
@@ -1882,6 +1940,7 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
     retryFailedDuringLoadRef.current = false;
     streamFailureHandlingRef.current = false;
     bufferStarvedSinceRef.current = null;
+    terminalStateSinceRef.current = null;
     healthCheckInFlightRef.current = false;
     recoveryArmedRef.current = autoSwitched;
     userPausedRef.current = false;
@@ -1970,11 +2029,12 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
 
   const applyJellyfinSubtitleSelection = useCallback(
     async (vod: VodPlayInfo, resolvedExternalUrls?: Map<string, string>): Promise<boolean> => {
-      if (vod.source_id !== 'jellyfin') return false;
+      if (vod.source_id !== 'jellyfin' || hasManualSubtitleSelectionRef.current) return false;
 
       const targetSubId = vod.jellyfinSubtitleStreamId;
       if (targetSubId === -1) {
         logInfo('[Jellyfin] Subtitle explicitly set to None (-1). Disabling subtitles in MPV.');
+        if (hasManualSubtitleSelectionRef.current) return false;
         await Bridge.setSubtitleTrack(0).catch(() => {});
         return true;
       }
@@ -2011,6 +2071,7 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
 
         if (match?.id != null) {
           logInfo(`[Jellyfin] Selected external subtitle track ${match.id} (${pickedMeta.title || pickedMeta.lang || 'external'})`);
+          if (hasManualSubtitleSelectionRef.current) return false;
           await Bridge.setSubtitleTrack(match.id).catch(() => {});
           return true;
         }
@@ -2040,6 +2101,7 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
           const matchByRel = embeddedSubTracks[relIndex - 1];
           if (matchByRel?.id != null) {
             logInfo(`[Jellyfin] Selected embedded subtitle track by relative index: track ${matchByRel.id} (relIndex ${relIndex}, stream ${targetSubId})`);
+            if (hasManualSubtitleSelectionRef.current) return false;
             await Bridge.setSubtitleTrack(matchByRel.id).catch(() => {});
             return true;
           }
@@ -2056,6 +2118,7 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
           });
           if (match?.id != null) {
             logInfo(`[Jellyfin] Selected embedded subtitle track by metadata match: track ${match.id} (${wantLang || wantTitle})`);
+            if (hasManualSubtitleSelectionRef.current) return false;
             await Bridge.setSubtitleTrack(match.id).catch(() => {});
             return true;
           }
@@ -2066,6 +2129,7 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
           const directMatch = embeddedSubTracks[targetSubId - 1];
           if (directMatch?.id != null) {
             logInfo(`[Jellyfin] Selected embedded subtitle track by direct index fallback: track ${directMatch.id} (relIndex ${targetSubId})`);
+            if (hasManualSubtitleSelectionRef.current) return false;
             await Bridge.setSubtitleTrack(directMatch.id).catch(() => {});
             return true;
           }
@@ -2154,6 +2218,8 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
   );
 
   const autoSelectSubtitle = useCallback(async (providedSubTracks?: any[]) => {
+    if (hasManualSubtitleSelectionRef.current) return;
+
     // Jellyfin supplies the authoritative selected/default subtitle.
     if (vodInfoRef.current?.source_id === 'jellyfin') {
       const currentVod = vodInfoRef.current;
@@ -2176,7 +2242,9 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
 
     if (rawDefaultLanguage === 'off') {
       logInfo(`[Playback] Subtitle language set to off. Disabling subtitles. (found ${subTracks.length} tracks, attempt ${autoSelectAttemptsRef.current})`);
-      await Bridge.setSubtitleTrack(0);
+      if (!hasManualSubtitleSelectionRef.current) {
+        await Bridge.setSubtitleTrack(0);
+      }
       if (subTracks.length > 0 || autoSelectAttemptsRef.current >= 5) {
         hasAutoSelectedSubRef.current = true;
         subAutoSelectEverCompletedRef.current = true;
@@ -2217,6 +2285,7 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
 
       const bestTrack = candidates[0];
       logInfo(`[Playback] Auto-selecting subtitle track: ${bestTrack.id} language: ${defaultLanguage} external: ${bestTrack.external} title: ${bestTrack.title}`);
+      if (hasManualSubtitleSelectionRef.current) return;
       await Bridge.setSubtitleTrack(bestTrack.id);
       hasAutoSelectedSubRef.current = true;
       subAutoSelectEverCompletedRef.current = true;
@@ -2239,6 +2308,7 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
 
       if (fallback) {
         logInfo(`[Playback] No ${defaultLanguage} match (${subTracks.length} tracks); falling back to embedded subtitle track: ${fallback.id} title: ${fallback.title}`);
+        if (hasManualSubtitleSelectionRef.current) return;
         await Bridge.setSubtitleTrack(fallback.id);
       } else {
         // Apply full subtitle settings so any active MPV subtitle (e.g. auto-selected CC/ASS track) gets proper sizing, scaling & ASS overrides.
@@ -2262,6 +2332,7 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
     if (!Bridge.isTauri) return;
 
     let unlistenRestart: (() => void) | null = null;
+    let unlistenFileLoaded: (() => void) | null = null;
     let disposed = false;
 
     import('@tauri-apps/api/event').then(({ listen }) => {
@@ -2298,11 +2369,44 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
         if (disposed) fn();
         else unlistenRestart = fn;
       });
+
+      listen('mpv-file-loaded', async () => {
+        const requestedId = manualSubtitleTrackIdRef.current;
+        if (!hasManualSubtitleSelectionRef.current || requestedId === null || requestedId <= 0) return;
+
+        // The native file-loaded handler deliberately starts with sid=no to
+        // prevent mpv from auto-enabling several CC services at once. During a
+        // recovery reload, however, the user's explicit choice must win. Wait
+        // briefly for the replacement HLS track list, then restore only a
+        // subtitle track with the same id.
+        for (let attempt = 0; attempt < 10; attempt += 1) {
+          if (
+            disposed ||
+            !hasManualSubtitleSelectionRef.current ||
+            manualSubtitleTrackIdRef.current !== requestedId
+          ) return;
+
+          const trackList = await Bridge.getTrackList().catch(() => []);
+          const trackStillExists = (trackList as any[]).some(
+            (track: any) => track.type === 'sub' && track.id === requestedId,
+          );
+          if (trackStillExists) {
+            logInfo(`[Subtitle] Restoring manually selected track ${requestedId} after file reload`);
+            await Bridge.setSubtitleTrack(requestedId).catch(() => {});
+            return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      }).then((fn) => {
+        if (disposed) fn();
+        else unlistenFileLoaded = fn;
+      });
     });
 
     return () => {
       disposed = true;
       unlistenRestart?.();
+      unlistenFileLoaded?.();
     };
   }, [autoSelectSubtitle]);
 
@@ -2379,7 +2483,10 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
           // During the initial settling window (first 15 attempts / ~7.5s),
           // ANY track count change MUST reset auto-select so the final track set
           // is evaluated with the correct track IDs.
-          if (!subAutoSelectEverCompletedRef.current || autoSelectAttemptsRef.current < 15) {
+          if (
+            !hasManualSubtitleSelectionRef.current &&
+            (!subAutoSelectEverCompletedRef.current || autoSelectAttemptsRef.current < 15)
+          ) {
             hasAutoSelectedSubRef.current = false;
           }
         }
@@ -2392,6 +2499,7 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
           vodInfoRef.current.jellyfinSubtitleStreamId != null &&
           subTracks.length > 0 &&
           !subTracks.some((t: any) => t.selected) &&
+          !hasManualSubtitleSelectionRef.current &&
           autoSelectAttemptsRef.current < 15
         ) {
           hasAutoSelectedSubRef.current = false;
@@ -2403,7 +2511,7 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
           lastAudioTracksCountRef.current = audioTracks.length;
         }
 
-        if (!hasAutoSelectedSubRef.current) {
+        if (!hasManualSubtitleSelectionRef.current && !hasAutoSelectedSubRef.current) {
           await autoSelectSubtitle(subTracks);
         }
         if (!hasAutoSelectedAudioRef.current) {
@@ -2801,6 +2909,8 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
       
       hasAutoSelectedSubRef.current = false;
       hasAutoSelectedAudioRef.current = false;
+      hasManualSubtitleSelectionRef.current = false;
+      manualSubtitleTrackIdRef.current = null;
       subAutoSelectEverCompletedRef.current = false;
       lastSubTracksCountRef.current = 0;
       lastAudioTracksCountRef.current = 0;
@@ -3080,6 +3190,8 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
     }
     hasAutoSelectedSubRef.current = false;
     hasAutoSelectedAudioRef.current = false;
+    hasManualSubtitleSelectionRef.current = false;
+    manualSubtitleTrackIdRef.current = null;
     subAutoSelectEverCompletedRef.current = false;
     lastSubTracksCountRef.current = 0;
     lastAudioTracksCountRef.current = 0;
@@ -3096,6 +3208,7 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
     retryFailedDuringLoadRef.current = false;
     streamFailureHandlingRef.current = false;
     bufferStarvedSinceRef.current = null;
+    terminalStateSinceRef.current = null;
     healthCheckInFlightRef.current = false;
     recoveryArmedRef.current = false;
     userPausedRef.current = false;

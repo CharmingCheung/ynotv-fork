@@ -887,9 +887,23 @@ pub async fn init_mpv_with_params<R: Runtime>(
     spawn_mpv(&app, &state, custom_params).await
 }
 
-pub async fn load_file<R: Runtime>(app: &AppHandle<R>, url: String) -> Result<(), String> {
+pub async fn load_file<R: Runtime>(
+    app: &AppHandle<R>,
+    url: String,
+    force_hls: bool,
+) -> Result<(), String> {
     let state = app.state::<MpvState>();
-    send_command_internal(&state, "loadfile", vec![Value::String(url)]).await.map(|_| ())
+    let args = if force_hls {
+        vec![
+            Value::String(url),
+            json!("replace"),
+            json!(-1),
+            json!({ "demuxer-lavf-format": "hls" }),
+        ]
+    } else {
+        vec![Value::String(url)]
+    };
+    send_command_internal(&state, "loadfile", args).await.map(|_| ())
 }
 
 pub async fn play<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {

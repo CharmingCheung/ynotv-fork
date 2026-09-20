@@ -201,7 +201,7 @@ export function TrackSelectionModal({ isOpen, type, onClose, channel }: TrackSel
       if (type === 'audio') {
         await Bridge.setAudioTrack(trackId);
       } else {
-        await Bridge.setSubtitleTrack(trackId);
+        await Bridge.setSubtitleTrack(trackId, { userInitiated: true });
       }
       setSelectedId(trackId);
       onClose();
@@ -216,7 +216,7 @@ export function TrackSelectionModal({ isOpen, type, onClose, channel }: TrackSel
       if (type === 'audio') {
         await Bridge.setAudioTrack(0);
       } else {
-        await Bridge.setSubtitleTrack(0);
+        await Bridge.setSubtitleTrack(0, { userInitiated: true });
       }
       setSelectedId(0);
       setSelectedCcId(null);
@@ -228,7 +228,7 @@ export function TrackSelectionModal({ isOpen, type, onClose, channel }: TrackSel
 
   const handleSelectCc = async (trackId: number) => {
     try {
-      await Bridge.setSubtitleTrack(trackId);
+      await Bridge.setSubtitleTrack(trackId, { userInitiated: true });
       setSelectedCcId(trackId);
       setSelectedId(null); // Clear regular subtitle selection
       onClose();

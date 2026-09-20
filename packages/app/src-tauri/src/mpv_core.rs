@@ -537,7 +537,11 @@ pub async fn get_log<R: Runtime>(app: &AppHandle<R>, tail: usize) -> Result<Valu
     }))
 }
 
-pub async fn load_file<R: Runtime>(app: &AppHandle<R>, url: String) -> Result<(), String> {
+pub async fn load_file<R: Runtime>(
+    app: &AppHandle<R>,
+    url: String,
+    force_hls: bool,
+) -> Result<(), String> {
     let state = app.state::<MpvCoreState>();
     let mpv = {
         let guard = state.mpv.lock().unwrap();
@@ -555,8 +559,16 @@ pub async fn load_file<R: Runtime>(app: &AppHandle<R>, url: String) -> Result<()
         }
     };
 
-    mpv.command("loadfile", &[&url])
-        .map_err(|e| format!("loadfile error: {:?}", e))?;
+    if force_hls {
+        mpv.command(
+            "loadfile",
+            &[&url, "replace", "-1", "demuxer-lavf-format=hls"],
+        )
+        .map_err(|e| format!("loadfile hls error: {:?}", e))?;
+    } else {
+        mpv.command("loadfile", &[&url])
+            .map_err(|e| format!("loadfile error: {:?}", e))?;
+    }
 
     let mut current = state.current_url.lock().unwrap();
     *current = Some(url);

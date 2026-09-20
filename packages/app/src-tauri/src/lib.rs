@@ -1291,13 +1291,150 @@ async fn init_mpv<R: Runtime>(app: AppHandle<R>, args: Vec<String>) -> Result<()
     }
 }
 
+fn has_typed_hls_extension(url: &str) -> bool {
+    url::Url::parse(url)
+        .ok()
+        .and_then(|parsed| {
+            std::path::Path::new(parsed.path())
+                .extension()
+                .map(|ext| ext.to_string_lossy().to_ascii_lowercase())
+        })
+        .is_some_and(|ext| ext == "m3u8")
+}
+
+fn has_known_direct_media_extension(url: &str) -> bool {
+    url::Url::parse(url)
+        .ok()
+        .and_then(|parsed| {
+            std::path::Path::new(parsed.path())
+                .extension()
+                .map(|ext| ext.to_string_lossy().to_ascii_lowercase())
+        })
+        .is_some_and(|ext| {
+            matches!(
+                ext.as_str(),
+                "ts" | "m2ts" | "mp4" | "m4v" | "mkv" | "avi" | "mov" | "webm"
+                    | "mpg" | "mpeg" | "flv" | "mp3" | "aac" | "m4a" | "flac" | "wav"
+            )
+        })
+}
+
+fn bytes_are_hls_manifest(body: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(body);
+    let normalized = text.trim_start_matches('\u{feff}').trim_start();
+    normalized.starts_with("#EXTM3U") && normalized.contains("#EXT-X-")
+}
+
+async fn content_is_hls_manifest(url: &str, user_agent: Option<&str>) -> bool {
+    use futures_util::StreamExt;
+
+    static CONFIRMED_HLS: std::sync::OnceLock<Mutex<std::collections::HashSet<String>>> =
+        std::sync::OnceLock::new();
+
+    if has_typed_hls_extension(url) || has_known_direct_media_extension(url) {
+        return false;
+    }
+    let confirmed = CONFIRMED_HLS.get_or_init(|| Mutex::new(std::collections::HashSet::new()));
+    if confirmed.lock().map(|urls| urls.contains(url)).unwrap_or(false) {
+        return true;
+    }
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false;
+    };
+    if parsed.scheme() != "http" && parsed.scheme() != "https" {
+        return false;
+    }
+
+    // Ambiguous extensionless media URLs can point at unbounded MPEG-TS data,
+    // so inspect at most 64 KiB and drop the response as soon as the format is
+    // known. This avoids downloading a stream just to identify its demuxer.
+    let Ok(client) = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+    else {
+        return false;
+    };
+
+    let mut request = client
+        .get(url)
+        .header(reqwest::header::RANGE, "bytes=0-65535");
+    if let Some(ua) = user_agent.map(str::trim).filter(|ua| !ua.is_empty()) {
+        request = request.header(reqwest::header::USER_AGENT, ua);
+    }
+
+    let Ok(response) = request.send().await else {
+        return false;
+    };
+    if !response.status().is_success() {
+        return false;
+    }
+
+    let mut body = Vec::with_capacity(4096);
+    let mut stream = response.bytes_stream();
+    while let Some(item) = stream.next().await {
+        let Ok(chunk) = item else {
+            return false;
+        };
+        let remaining = 65_536usize.saturating_sub(body.len());
+        body.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+        if body.len() >= 65_536 {
+            break;
+        }
+        // HLS manifests are text and normally fit in the first response chunk.
+        if body.windows(7).any(|window| window == b"#EXT-X-") {
+            break;
+        }
+    }
+
+    let is_hls = bytes_are_hls_manifest(&body);
+    if is_hls {
+        if let Ok(mut urls) = confirmed.lock() {
+            urls.insert(url.to_string());
+        }
+    }
+    is_hls
+}
+
+#[cfg(test)]
+mod hls_content_probe_tests {
+    use super::{bytes_are_hls_manifest, has_known_direct_media_extension, has_typed_hls_extension};
+
+    #[test]
+    fn recognizes_hls_by_content_not_url_shape() {
+        assert!(bytes_are_hls_manifest(
+            b"\xef\xbb\xbf  #EXTM3U\n#EXT-X-TARGETDURATION:8\n#EXTINF:8,\nsegment.jpg\n"
+        ));
+        assert!(!bytes_are_hls_manifest(b"#EXTM3U\nmovie-one.ts\nmovie-two.ts\n"));
+        assert!(!bytes_are_hls_manifest(b"not a playlist"));
+    }
+
+    #[test]
+    fn only_m3u8_is_unambiguous_without_a_probe() {
+        assert!(has_typed_hls_extension("https://example.test/live/index.m3u8?token=1"));
+        assert!(!has_typed_hls_extension("https://example.test/live/index"));
+        assert!(!has_typed_hls_extension("https://example.test/live/index.m3u"));
+        assert!(has_known_direct_media_extension("https://example.test/live/channel.ts?token=1"));
+        assert!(!has_known_direct_media_extension("https://example.test/live/index"));
+        assert!(!has_known_direct_media_extension("https://example.test/live/manifest.php?id=1"));
+    }
+}
+
 #[tauri::command]
-async fn mpv_load<R: Runtime>(app: AppHandle<R>, url: String) -> Result<(), String> {
+async fn mpv_load<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    user_agent: Option<String>,
+) -> Result<(), String> {
+    let force_hls = content_is_hls_manifest(&url, user_agent.as_deref()).await;
+    if force_hls {
+        log::info!("[MPV] Content probe identified extensionless HLS; forcing hls demuxer for {}", url);
+    }
     #[cfg(target_os = "macos")]
     {
         apply_quality_profile_on_load(&app, PlayerEngine::LibMpv).await;
         let _ = mpv_core::set_property(&app, "audio-delay".to_string(), serde_json::json!(0.0)).await;
-        mpv_core::load_file(&app, url).await
+        mpv_core::load_file(&app, url, force_hls).await
     }
     #[cfg(target_os = "windows")]
     {
@@ -1306,18 +1443,18 @@ async fn mpv_load<R: Runtime>(app: AppHandle<R>, url: String) -> Result<(), Stri
         if engine == PlayerEngine::LibMpv {
             apply_quality_profile_on_load(&app, PlayerEngine::LibMpv).await;
             let _ = mpv_core::set_property(&app, "audio-delay".to_string(), serde_json::json!(0.0)).await;
-            mpv_core::load_file(&app, url).await
+            mpv_core::load_file(&app, url, force_hls).await
         } else {
             apply_quality_profile_on_load(&app, PlayerEngine::Sidecar).await;
             let _ = mpv_windows::set_property(&app, "audio-delay".to_string(), serde_json::json!(0.0)).await;
-            mpv_windows::load_file(&app, url).await
+            mpv_windows::load_file(&app, url, force_hls).await
         }
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         apply_quality_profile_on_load(&app, PlayerEngine::LibMpv).await;
         let _ = mpv_set_property(app.clone(), "audio-delay".to_string(), serde_json::json!(0.0)).await;
-        mpv_core::load_file(&app, url).await
+        mpv_core::load_file(&app, url, force_hls).await
     }
 }
 
