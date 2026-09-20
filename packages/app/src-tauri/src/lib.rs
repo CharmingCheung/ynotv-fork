@@ -327,6 +327,9 @@ mod raw_hid_gamepad;
 mod web_server;
 mod jellyfin_web;
 mod icon_switcher;
+// Pure, experimental DASH time/index model. It is intentionally not wired to
+// Tauri commands or either playback engine.
+mod dash_timeline;
 
 #[tauri::command]
 fn get_connected_gamepads() -> Vec<gamepad::GamepadInfo> {
