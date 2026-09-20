@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 
 // Auto-sync check interval: 10 minutes
 const AUTO_SYNC_CHECK_INTERVAL_MS = 10 * 60 * 1000;
+const IS_MACOS = typeof navigator !== 'undefined'
+  && navigator.platform.toLowerCase().includes('mac');
 
 // The phone remote uses short layout names ('single'/'split'/'quad'/'triple');
 // translate them to the app's LayoutMode before switching.
@@ -5868,6 +5870,34 @@ function useTmdbPresencePoster(
       {/* Custom title bar for frameless window */}
       <div className={`title-bar${showControls ? ' visible' : ''}${pipMode ? ' pip-mode' : ''}${(currentChannel && activeView === 'none') ? ' video-active' : ''} active-view-${activeView}`} data-tauri-drag-region>
         <div className="title-bar-left-group" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {IS_MACOS && (
+            <div className="macos-window-controls" role="group" aria-label="Window controls">
+              <button
+                className="macos-window-control close"
+                onClick={handleClose}
+                title={i18n.t('common:close')}
+                aria-label={i18n.t('common:close')}
+              >
+                <span aria-hidden="true">×</span>
+              </button>
+              <button
+                className="macos-window-control minimize"
+                onClick={handleMinimize}
+                title={i18n.t('common:minimize')}
+                aria-label={i18n.t('common:minimize')}
+              >
+                <span aria-hidden="true">−</span>
+              </button>
+              <button
+                className="macos-window-control maximize"
+                onClick={handleMaximize}
+                title={isMaximized || isFullscreen ? i18n.t('common:restoreDown') : i18n.t('common:maximize')}
+                aria-label={isMaximized || isFullscreen ? i18n.t('common:restoreDown') : i18n.t('common:maximize')}
+              >
+                <span aria-hidden="true">+</span>
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="title-bar-spacer"></div>
@@ -6220,33 +6250,35 @@ function useTmdbPresencePoster(
           </svg>
         </button>
 
-        <div className="window-controls">
-          <button onClick={handleMinimize} title={i18n.t('common:minimize')} aria-label={i18n.t('common:minimize')}>
-            <svg className="window-control-icon" viewBox="0 0 12 12" aria-hidden="true">
-              <path d="M1 6.5h10" />
-            </svg>
-          </button>
-          <button
-            onClick={handleMaximize}
-            title={isMaximized || isFullscreen ? i18n.t('common:restoreDown') : i18n.t('common:maximize')}
-            aria-label={isMaximized || isFullscreen ? i18n.t('common:restoreDown') : i18n.t('common:maximize')}
-          >
-            {isMaximized || isFullscreen ? (
+        {!IS_MACOS && (
+          <div className="window-controls">
+            <button onClick={handleMinimize} title={i18n.t('common:minimize')} aria-label={i18n.t('common:minimize')}>
               <svg className="window-control-icon" viewBox="0 0 12 12" aria-hidden="true">
-                <path d="M3.5 3.5h7v7h-7zM1.5 8.5v-7h7" />
+                <path d="M1 6.5h10" />
               </svg>
-            ) : (
+            </button>
+            <button
+              onClick={handleMaximize}
+              title={isMaximized || isFullscreen ? i18n.t('common:restoreDown') : i18n.t('common:maximize')}
+              aria-label={isMaximized || isFullscreen ? i18n.t('common:restoreDown') : i18n.t('common:maximize')}
+            >
+              {isMaximized || isFullscreen ? (
+                <svg className="window-control-icon" viewBox="0 0 12 12" aria-hidden="true">
+                  <path d="M3.5 3.5h7v7h-7zM1.5 8.5v-7h7" />
+                </svg>
+              ) : (
+                <svg className="window-control-icon" viewBox="0 0 12 12" aria-hidden="true">
+                  <rect x="1.5" y="1.5" width="9" height="9" />
+                </svg>
+              )}
+            </button>
+            <button onClick={handleClose} className="close" title={i18n.t('common:close')} aria-label={i18n.t('common:close')}>
               <svg className="window-control-icon" viewBox="0 0 12 12" aria-hidden="true">
-                <rect x="1.5" y="1.5" width="9" height="9" />
+                <path d="m1.5 1.5 9 9m0-9-9 9" />
               </svg>
-            )}
-          </button>
-          <button onClick={handleClose} className="close" title={i18n.t('common:close')} aria-label={i18n.t('common:close')}>
-            <svg className="window-control-icon" viewBox="0 0 12 12" aria-hidden="true">
-              <path d="m1.5 1.5 9 9m0-9-9 9" />
-            </svg>
-          </button>
-        </div>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Background - transparent over mpv */}
