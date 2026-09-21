@@ -90,6 +90,8 @@ export interface Channel {
   catchup_type?: string;     // M3U catchup type (e.g. "default", "append", "flussonic", "shift")
   catchup_source?: string;   // M3U catchup source template URL (e.g. "http://.../replay.m3u8&start=${start}")
   catchup_days?: number;     // Number of catchup days available
+  /** KODIPROP values attached to this M3U item. Keys omit the #KODIPROP: prefix. */
+  kodi_props?: Record<string, string>;
 }
 
 // =============================================================================

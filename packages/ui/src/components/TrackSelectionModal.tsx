@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Bridge } from '../services/tauri-bridge';
 import { useSettingsStore } from '../stores/settingsStore';
 import { StoredChannel } from '../db';
+import type { DashTrackCatalog } from '../services/native-dash';
 import './TrackSelectionModal.css';
 
 interface Track {
@@ -36,7 +37,9 @@ export function TrackSelectionModal({ isOpen, type, onClose, channel }: TrackSel
   const [selectedCcId, setSelectedCcId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [audioDelay, setAudioDelay] = useState<number>(0.0);
-  const [activeTab, setActiveTab] = useState<'tracks' | 'devices' | 'settings'>('tracks');
+  const [activeTab, setActiveTab] = useState<'tracks' | 'devices' | 'settings' | 'quality'>('tracks');
+  const [dashCatalog, setDashCatalog] = useState<DashTrackCatalog | null>(null);
+  const [qualityError, setQualityError] = useState<string | null>(null);
   const [devices, setDevices] = useState<{ name: string; description: string }[]>([]);
   const [currentDevice, setCurrentDevice] = useState<string>('auto');
 
@@ -53,10 +56,12 @@ export function TrackSelectionModal({ isOpen, type, onClose, channel }: TrackSel
   useEffect(() => {
     if (isOpen) {
       setActiveTab('tracks');
+      setQualityError(null);
       loadTracks();
       if (type === 'audio') {
         loadAudioDelay();
         loadAudioDevices();
+        Bridge.getNativeDashTrackCatalog().then(setDashCatalog).catch(() => setDashCatalog(null));
       } else if (type === 'subtitle') {
         loadSubtitleDelay();
         loadSubtitleSettings();
@@ -207,6 +212,26 @@ export function TrackSelectionModal({ isOpen, type, onClose, channel }: TrackSel
       onClose();
     } catch (e) {
       console.error('Failed to set track:', e);
+    }
+  };
+
+  const handleQualitySelect = async (representationId: string) => {
+    setQualityError(null);
+    try {
+      await Bridge.setNativeDashVideoRepresentation(representationId);
+      setDashCatalog(current => current ? { ...current, selectedVideoRepresentationId: representationId, videoQualityMode: { type: 'manual', representationId } } : current);
+    } catch (e) {
+      setQualityError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const handleAutoQualitySelect = async () => {
+    setQualityError(null);
+    try {
+      await Bridge.setNativeDashAutoVideoQuality();
+      setDashCatalog(current => current ? { ...current, videoQualityMode: { type: 'auto' } } : current);
+    } catch (e) {
+      setQualityError(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -408,7 +433,7 @@ export function TrackSelectionModal({ isOpen, type, onClose, channel }: TrackSel
 
   const title = type === 'subtitle' 
     ? (activeTab === 'tracks' ? 'Subtitle Tracks' : 'Subtitle Settings')
-    : (activeTab === 'tracks' ? 'Audio Tracks' : 'Audio Devices');
+    : (activeTab === 'tracks' ? 'Audio Tracks' : activeTab === 'quality' ? 'Video Quality' : 'Audio Devices');
 
   return (
     <div className="track-modal-overlay" onClick={onClose}>
@@ -447,6 +472,14 @@ export function TrackSelectionModal({ isOpen, type, onClose, channel }: TrackSel
             >
               Audio Devices
             </button>
+            {dashCatalog?.active && (
+              <button
+                className={`track-modal-tab ${activeTab === 'quality' ? 'active' : ''}`}
+                onClick={() => setActiveTab('quality')}
+              >
+                Video Quality
+              </button>
+            )}
           </div>
         )}
 
@@ -549,7 +582,40 @@ export function TrackSelectionModal({ isOpen, type, onClose, channel }: TrackSel
                 </div>
               )}
 
-              {type === 'subtitle' && activeTab === 'settings' ? (
+              {type === 'audio' && activeTab === 'quality' && dashCatalog ? (
+                <>
+                  <div className="track-section-title">DASH Video Quality</div>
+                  {qualityError && <div className="track-modal-empty">{qualityError}</div>}
+                  <ul className="track-list">
+                    <li role="button" tabIndex={0} className={`track-item ${dashCatalog.videoQualityMode.type === 'auto' ? 'selected' : ''}`}
+                      onClick={handleAutoQualitySelect} onKeyDown={(e) => handleTrackKeyDown(e, handleAutoQualitySelect)}>
+                      <span className="track-name">Auto</span>
+                      <span className="track-info"><span className="track-lang">{dashCatalog.videoRepresentations.find((representation) => representation.representationId === dashCatalog.selectedVideoRepresentationId)?.label}</span></span>
+                    </li>
+                    {dashCatalog.videoRepresentations.map((representation) => {
+                      const selected = dashCatalog.selectedVideoRepresentationId === representation.representationId;
+                      return (
+                        <li
+                          key={representation.representationId}
+                          role="button"
+                          tabIndex={representation.compatible ? 0 : -1}
+                          aria-disabled={!representation.compatible}
+                          className={`track-item ${selected && dashCatalog.videoQualityMode.type === 'manual' ? 'selected' : ''} ${!representation.compatible ? 'disabled' : ''}`}
+                          onClick={() => representation.compatible && handleQualitySelect(representation.representationId)}
+                          onKeyDown={(e) => representation.compatible && handleTrackKeyDown(e, () => handleQualitySelect(representation.representationId))}
+                        >
+                          <span className="track-name">{representation.label}</span>
+                          <span className="track-info">
+                            <span className="track-codec">{representation.codec.toUpperCase()}</span>
+                            <span className="track-lang">{Math.round(representation.bandwidth / 1000)} kbps</span>
+                            {!representation.compatible && <span className="track-badge">Incompatible</span>}
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </>
+              ) : type === 'subtitle' && activeTab === 'settings' ? (
                 <div className="subtitle-settings-container">
                   <div className="subtitle-setting-row">
                     <div className="subtitle-setting-info">

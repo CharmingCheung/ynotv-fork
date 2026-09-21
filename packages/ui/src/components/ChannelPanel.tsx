@@ -28,6 +28,7 @@ import { db } from '../db';
 import { matchesSearch } from '../utils/searchNormalization';
 import { decompressEpgDescription } from '../utils/compression';
 import { formatTime, formatDate } from '../utils/dateTime';
+import { dvrProgressPercent } from '../hooks/useTimeshift';
 import { pickCurrentProgram, EPG_WINDOW_BACK_MS, EPG_WINDOW_FWD_MS } from '../utils/epgTime';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
@@ -365,6 +366,7 @@ interface ChannelPanelProps {
   onToggleFullscreen?: () => void;
   onShowSubtitleModal?: () => void;
   onShowAudioModal?: () => void;
+  onShowQualityModal?: () => void;
   onCatchupSeek?: (channel: StoredChannel, programTitle: string, startTimeMs: number, durationMinutes: number, seekSeconds: number, programDesc?: string) => void;
   timeshiftEnabled?: boolean;
   timeshiftState?: {
@@ -373,6 +375,7 @@ interface ChannelPanelProps {
     timePos: number;
     behindLive: number;
     cachedDuration: number;
+    nativeDash?: boolean;
   } | null;
   onTimeshiftCatchUp?: () => void;
   aspectRatio?: AspectRatioMode;
@@ -458,6 +461,7 @@ export function ChannelPanel({
   onToggleFullscreen,
   onShowSubtitleModal,
   onShowAudioModal,
+  onShowQualityModal,
   onCatchupSeek,
   timeshiftEnabled = false,
   timeshiftState = null,
@@ -940,9 +944,10 @@ export function ChannelPanel({
   const [seekDrag, setSeekDrag] = useState(false);
   const [hoverPos, setHoverPos] = useState(0);
   const seekBarRef = useRef<HTMLDivElement>(null);
+  const suppressSeekClickRef = useRef(false);
 
   const hasTimeshift = timeshiftState && timeshiftState.cachedDuration > 1;
-  const showSeek = (timeshiftEnabled && !!hasTimeshift) && !!onSeek;
+  const showSeek = ((timeshiftEnabled || timeshiftState?.nativeDash) && !!hasTimeshift) && !!onSeek;
 
   const getSeekRatio = useCallback((clientX: number): number => {
     if (!seekBarRef.current) return 0;
@@ -951,10 +956,14 @@ export function ChannelPanel({
   }, []);
 
   const ts = hasTimeshift ? timeshiftState! : null;
-  const seekFillPct = ts ? ((ts.timePos - ts.cacheStart) / ts.cachedDuration) * 100 : 0;
+  const seekFillPct = ts ? dvrProgressPercent(ts) : 0;
 
   const handleSeekClick = useCallback((e: React.MouseEvent) => {
     if (!showSeek || !onSeek) return;
+    if (suppressSeekClickRef.current) {
+      suppressSeekClickRef.current = false;
+      return;
+    }
     const ratio = getSeekRatio(e.clientX);
     if (ts) {
       onSeek(ts.cacheStart + ratio * ts.cachedDuration);
@@ -964,6 +973,7 @@ export function ChannelPanel({
   const handleSeekDragStart = useCallback((e: React.MouseEvent) => {
     if (!showSeek || !onSeek) return;
     e.preventDefault();
+    suppressSeekClickRef.current = false;
     setSeekDrag(true);
     const ratio = getSeekRatio(e.clientX);
     setHoverPos(ts ? ts.cacheStart + ratio * ts.cachedDuration : 0);
@@ -977,6 +987,8 @@ export function ChannelPanel({
     };
     const onUp = (e: MouseEvent) => {
       setSeekDrag(false);
+      suppressSeekClickRef.current = true;
+      window.setTimeout(() => { suppressSeekClickRef.current = false; }, 0);
       if (onSeek) {
         const ratio = getSeekRatio(e.clientX);
         if (ts) onSeek(ts.cacheStart + ratio * ts.cachedDuration);
@@ -2444,8 +2456,10 @@ export function ChannelPanel({
     let rafId: number | null = null;
     let lastMainGeometry = '';
     let forceNextUpdate = false;
-    let isDragging = false;
+    let geometryUpdateInFlight = false;
+    let geometryUpdateQueued = false;
     let dragSettleTimer: ReturnType<typeof setTimeout> | null = null;
+    let disposed = false;
 
     const updateVideoPosition = () => {
       if (!previewRef.current) {
@@ -2491,12 +2505,33 @@ export function ChannelPanel({
       const sh = Math.round(rect.height * d);
       const nextMainGeometry = `${sx}:${sy}:${sw}:${sh}`;
 
-      // Suppress geometry updates while the window is being dragged to avoid choppy
-      // mid-drag resizing. The drag-settle handler fires one forced update when movement stops.
-      if (!isDragging && (force || nextMainGeometry !== lastMainGeometry)) {
-        lastMainGeometry = nextMainGeometry;
-        invoke('mpv_set_geometry', { x: sx, y: sy, width: sw, height: sh }).catch(() => {});
+      if (!force && nextMainGeometry === lastMainGeometry) return;
+
+      // Tauri commands are asynchronous. During a live macOS resize, allowing
+      // every ResizeObserver notification to invoke independently lets an old
+      // frame land after a newer one, making the native OpenGL surface alternate
+      // between stale and current sizes. Keep one command in flight and collapse
+      // the rest into a single update of the latest DOM rect.
+      if (geometryUpdateInFlight) {
+        geometryUpdateQueued = true;
+        forceNextUpdate = true;
+        return;
       }
+
+      geometryUpdateInFlight = true;
+      lastMainGeometry = nextMainGeometry;
+      invoke('mpv_set_geometry', { x: sx, y: sy, width: sw, height: sh })
+        .catch(() => {
+          // Permit the next observation (or the settle pass) to retry.
+          lastMainGeometry = '';
+        })
+        .finally(() => {
+          geometryUpdateInFlight = false;
+          if (!disposed && geometryUpdateQueued) {
+            geometryUpdateQueued = false;
+            scheduleVideoPositionUpdate();
+          }
+        });
     };
 
     const scheduleVideoPositionUpdate = () => {
@@ -2533,7 +2568,9 @@ export function ChannelPanel({
     };
     window.addEventListener('resize', handleWindowResize);
 
-    // Listen for window move events to keep the MPV window aligned during dragging
+    // A window move normally leaves the preview's client rect unchanged, so the
+    // geometry cache makes this cheap. It still catches backing-scale changes
+    // when the window crosses between displays.
     let unlistenMove: (() => void) | null = null;
     // On Windows, mpv's embedded window follows the parent via a
     // WM_WINDOWPOSCHANGED hook and re-fits itself to the FULL parent on
@@ -2541,22 +2578,18 @@ export function ChannelPanel({
     // the video full-screen with the CSS preview showing only a cutout. Re-
     // assert the preview rect whenever the window regains focus.
     let unlistenFocus: (() => void) | null = null;
-    let disposed = false;
-
     import('@tauri-apps/api/window').then(({ getCurrentWindow }) => {
       const appWindow = getCurrentWindow();
       appWindow.onMoved(() => {
-        // Mark drag in progress — suppresses mpv_set_geometry during movement
-        isDragging = true;
-        // Debounce: once onMoved stops firing for 100ms the window has settled.
-        // Clear any pending settle timer and restart it.
+        scheduleVideoPositionUpdate();
+        // Re-assert once after the move settles. Unlike the previous drag guard,
+        // this does not suppress resize updates: on macOS, resizing from the top
+        // or left also emits move events, and freezing the native surface there
+        // is what exposed a zoomed/cropped frame while the CSS pane kept resizing.
         if (dragSettleTimer !== null) clearTimeout(dragSettleTimer);
         dragSettleTimer = setTimeout(() => {
           dragSettleTimer = null;
-          isDragging = false;
-          // Bypass geometry cache and reposition MPV exactly once after the drag ends.
           forceNextUpdate = true;
-          lastMainGeometry = ''; // reset cache so the geometry call is never skipped
           scheduleVideoPositionUpdate();
         }, 100);
       }).then((unlisten) => {
@@ -3169,6 +3202,7 @@ export function ChannelPanel({
           onToggleFullscreen={onToggleFullscreen || (() => {})}
           onShowSubtitleModal={onShowSubtitleModal || (() => {})}
           onShowAudioModal={onShowAudioModal || (() => {})}
+          onShowQualityModal={onShowQualityModal}
           onCatchupSeek={onCatchupSeek}
           onGoToLive={() => {
             if (selectedChannel) onPlayChannel(selectedChannel);

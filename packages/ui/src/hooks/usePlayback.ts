@@ -26,6 +26,8 @@ import { logInfo, logWarn, logError } from '../utils/logger';
 import { toSubSourceLang, fromSubSourceLang, LANG_MAP } from '../services/subsource';
 import { snapshotPlaylistProgress } from '../utils/playlistPlayback';
 import i18n, { translateNativeError } from '../i18n';
+import { routeNativeDash, type NativeDashPlaybackConfig } from '../services/native-dash';
+import { getM3uHttpHeaders, splitM3uUserAgent } from '../services/m3u-http-headers';
 
 /**
  * Push Nuvio watch progress for the given item, building the entry from the
@@ -226,9 +228,21 @@ async function tryLoadWithFallbacks(
   primaryUrl: string,
   isLive: boolean,
   userAgent?: string,
-  onError?: (msg: string) => void
+  onError?: (msg: string) => void,
+  nativeDash?: NativeDashPlaybackConfig,
+  httpHeaders: Record<string, string> = {},
 ): Promise<{ success: boolean; url: string; error?: string }> {
+  const request = splitM3uUserAgent(httpHeaders, userAgent);
+  userAgent = request.userAgent;
   logInfo('[Playback] Setting User-Agent:', userAgent || '(using default)');
+
+  // Always reset this per load: mpv properties persist and must not leak one
+  // channel's credentials/referer into the next channel.
+  try {
+    await Bridge.setProperty('http-header-fields', request.headerFields);
+  } catch (e) {
+    logWarn('Failed to set channel HTTP headers:', e);
+  }
 
   if (userAgent) {
     try {
@@ -239,11 +253,18 @@ async function tryLoadWithFallbacks(
   }
 
   logInfo('[Playback] Loading URL:', primaryUrl);
-  const result = await Bridge.loadVideo(primaryUrl, userAgent);
+  const result = await Bridge.loadVideo(primaryUrl, userAgent, nativeDash);
 
   if (result.success) {
     logInfo('[Playback] Successfully loaded:', primaryUrl);
     return { success: true, url: primaryUrl };
+  }
+
+  // Native DASH is a single manifest/config transaction. URL-shape fallbacks
+  // are for ordinary IPTV URLs and must never bypass this explicit route.
+  if (nativeDash) {
+    const errorMsg = translateNativeError((result as any).error) || i18n.t('player:unknownError');
+    return { success: false, url: primaryUrl, error: errorMsg };
   }
 
   const errorMsg = translateNativeError((result as any).error) || i18n.t('player:unknownError');
@@ -1098,11 +1119,23 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
         Bridge.setCastMetadata(channel.name, 'Live TV');
       }
 
+      const channelHttpHeaders = getM3uHttpHeaders(channel.kodi_props);
+      const nativeDashRoute = await routeNativeDash(resolved.url, channel.kodi_props, channelHttpHeaders);
+      if (nativeDashRoute.kind === 'native') {
+        nativeDashRoute.config.preferredSubtitleLanguage =
+          useSettingsStore.getState().subtitleSettings?.defaultLanguage || 'en';
+      }
+      if (nativeDashRoute.kind === 'error') {
+        setError(nativeDashRoute.error);
+        return false;
+      }
       const result = await tryLoadWithFallbacks(
         resolved.url,
         true,
         resolved.userAgent,
-        (msg) => setError(msg)
+        (msg) => setError(msg),
+        nativeDashRoute.kind === 'native' ? nativeDashRoute.config : undefined,
+        channelHttpHeaders,
       );
 
       if (!result.success) {
@@ -2286,7 +2319,11 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
       const bestTrack = candidates[0];
       logInfo(`[Playback] Auto-selecting subtitle track: ${bestTrack.id} language: ${defaultLanguage} external: ${bestTrack.external} title: ${bestTrack.title}`);
       if (hasManualSubtitleSelectionRef.current) return;
-      await Bridge.setSubtitleTrack(bestTrack.id);
+      if (!bestTrack.selected) {
+        await Bridge.setSubtitleTrack(bestTrack.id);
+      } else {
+        logInfo(`[Playback] Subtitle track ${bestTrack.id} is already selected; keeping native selection`);
+      }
       hasAutoSelectedSubRef.current = true;
       subAutoSelectEverCompletedRef.current = true;
     } else if (subTracks.length > 0) {
@@ -2309,7 +2346,9 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
       if (fallback) {
         logInfo(`[Playback] No ${defaultLanguage} match (${subTracks.length} tracks); falling back to embedded subtitle track: ${fallback.id} title: ${fallback.title}`);
         if (hasManualSubtitleSelectionRef.current) return;
-        await Bridge.setSubtitleTrack(fallback.id);
+        if (!fallback.selected) {
+          await Bridge.setSubtitleTrack(fallback.id);
+        }
       } else {
         // Apply full subtitle settings so any active MPV subtitle (e.g. auto-selected CC/ASS track) gets proper sizing, scaling & ASS overrides.
         await applySubtitleSettings();
@@ -2654,8 +2693,16 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
     const isLocal = isLocalUrl(resolved.url);
     if (isLocal) {
       setIgnoreHttpErrors(true);
-    }      const result = await tryLoadWithFallbacks(resolved.url, false, resolved.userAgent);
-      if (!result.success) {
+    }
+    const result = await tryLoadWithFallbacks(
+      resolved.url,
+      false,
+      resolved.userAgent,
+      undefined,
+      undefined,
+      getM3uHttpHeaders(channel.kodi_props),
+    );
+    if (!result.success) {
       if (isLocal) setIgnoreHttpErrors(false);
       setError(translateNativeError(result.error) || i18n.t('player:failedToLoadCatchupStream'));
     } else {

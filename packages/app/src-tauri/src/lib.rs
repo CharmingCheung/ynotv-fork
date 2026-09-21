@@ -275,6 +275,9 @@ pub(crate) async fn get_player_engine<R: Runtime>(app: &AppHandle<R>) -> PlayerE
     }
     #[cfg(not(target_os = "macos"))]
     {
+        if native_dash::is_active() {
+            return PlayerEngine::LibMpv;
+        }
         if let Some(val) = read_store_setting(app, "playerEngine") {
             if let Some(s) = val.as_str() {
                 if s.eq_ignore_ascii_case("libmpv") {
@@ -327,6 +330,11 @@ mod raw_hid_gamepad;
 mod web_server;
 mod jellyfin_web;
 mod icon_switcher;
+// Exact DASH time/index model shared by the C0 tests and experimental C5 session.
+mod dash_timeline;
+mod dash_abr;
+mod native_dash;
+mod ttml;
 
 #[tauri::command]
 fn get_connected_gamepads() -> Vec<gamepad::GamepadInfo> {
@@ -1425,7 +1433,19 @@ async fn mpv_load<R: Runtime>(
     app: AppHandle<R>,
     url: String,
     user_agent: Option<String>,
+    native_dash: Option<native_dash::NativeDashPlaybackConfig>,
 ) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let native_dash_was_active = native_dash::is_active();
+    native_dash::cancel_active();
+    if let Some(config) = native_dash {
+        if config.manifest_url != url {
+            return Err("Native DASH manifest configuration mismatch".into());
+        }
+        apply_quality_profile_on_load(&app, PlayerEngine::LibMpv).await;
+        let packet_source = native_dash::prepare(config).await?;
+        return mpv_core::load_native_dash_packet_source(&app, &packet_source).await;
+    }
     let force_hls = content_is_hls_manifest(&url, user_agent.as_deref()).await;
     if force_hls {
         log::info!("[MPV] Content probe identified extensionless HLS; forcing hls demuxer for {}", url);
@@ -1445,6 +1465,12 @@ async fn mpv_load<R: Runtime>(
             let _ = mpv_core::set_property(&app, "audio-delay".to_string(), serde_json::json!(0.0)).await;
             mpv_core::load_file(&app, url, force_hls).await
         } else {
+            if native_dash_was_active {
+                log::info!("[native-dash] restoring Windows sidecar playback");
+                let params = sanitize_mpv_args(get_mpv_params_from_store(&app).await);
+                let state = app.state::<MpvState>();
+                mpv_windows::init_mpv_with_params(app.clone(), state, params).await?;
+            }
             apply_quality_profile_on_load(&app, PlayerEngine::Sidecar).await;
             let _ = mpv_windows::set_property(&app, "audio-delay".to_string(), serde_json::json!(0.0)).await;
             mpv_windows::load_file(&app, url, force_hls).await
@@ -1500,6 +1526,9 @@ async fn mpv_pause<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
 
 #[tauri::command]
 async fn mpv_resume<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+    if let Some(relative) = native_dash::clamp_expired_position_on_resume().await? {
+        mpv_core::seek(&app, relative).await?;
+    }
     #[cfg(target_os = "macos")]
     {
         mpv_core::resume(&app).await
@@ -1520,13 +1549,16 @@ async fn mpv_resume<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
 
 #[tauri::command]
 async fn mpv_stop<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let engine = get_player_engine(&app).await;
+    native_dash::cancel_active();
     #[cfg(target_os = "macos")]
     {
         mpv_core::stop(&app).await
     }
     #[cfg(target_os = "windows")]
     {
-        if get_player_engine(&app).await == PlayerEngine::LibMpv {
+        if engine == PlayerEngine::LibMpv {
             mpv_core::stop(&app).await
         } else {
             mpv_windows::stop(&app).await
@@ -1560,6 +1592,7 @@ async fn mpv_set_volume<R: Runtime>(app: AppHandle<R>, volume: f64) -> Result<()
 
 #[tauri::command]
 async fn mpv_seek<R: Runtime>(app: AppHandle<R>, seconds: f64) -> Result<(), String> {
+    let seconds = crate::native_dash::request_seek(seconds).await?.unwrap_or(seconds);
     #[cfg(target_os = "macos")]
     {
         mpv_core::seek(&app, seconds).await
@@ -1659,43 +1692,70 @@ async fn mpv_get_track_list<R: Runtime>(app: AppHandle<R>) -> Result<serde_json:
 }
 
 #[tauri::command]
+async fn native_dash_get_track_catalog() -> Result<Option<native_dash::DashTrackCatalog>, String> {
+    Ok(native_dash::track_catalog())
+}
+
+#[tauri::command]
+async fn native_dash_select_video_representation(representation_id: String) -> Result<(), String> {
+    native_dash::request_video_representation(&representation_id)
+}
+
+#[tauri::command]
+async fn native_dash_select_auto_video_quality() -> Result<(), String> {
+    native_dash::request_auto_video_quality()
+}
+
+#[tauri::command]
 async fn mpv_set_audio<R: Runtime>(app: AppHandle<R>, id: i64) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        mpv_core::set_audio_track(&app, id).await
-    }
-    #[cfg(target_os = "windows")]
-    {
-        if get_player_engine(&app).await == PlayerEngine::LibMpv {
+    let result = {
+        #[cfg(target_os = "macos")]
+        {
             mpv_core::set_audio_track(&app, id).await
-        } else {
-            mpv_windows::set_audio_track(&app, id).await
         }
+        #[cfg(target_os = "windows")]
+        {
+            if get_player_engine(&app).await == PlayerEngine::LibMpv {
+                mpv_core::set_audio_track(&app, id).await
+            } else {
+                mpv_windows::set_audio_track(&app, id).await
+            }
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            mpv_core::set_audio_track(&app, id).await
+        }
+    };
+    if result.is_ok() {
+        native_dash::note_audio_track_selection(id);
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        mpv_core::set_audio_track(&app, id).await
-    }
+    result
 }
 
 #[tauri::command]
 async fn mpv_set_subtitle<R: Runtime>(app: AppHandle<R>, id: i64) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        mpv_core::set_subtitle_track(&app, id).await
-    }
-    #[cfg(target_os = "windows")]
-    {
-        if get_player_engine(&app).await == PlayerEngine::LibMpv {
+    let result = {
+        #[cfg(target_os = "macos")]
+        {
             mpv_core::set_subtitle_track(&app, id).await
-        } else {
-            mpv_windows::set_subtitle_track(&app, id).await
         }
+        #[cfg(target_os = "windows")]
+        {
+            if get_player_engine(&app).await == PlayerEngine::LibMpv {
+                mpv_core::set_subtitle_track(&app, id).await
+            } else {
+                mpv_windows::set_subtitle_track(&app, id).await
+            }
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            mpv_core::set_subtitle_track(&app, id).await
+        }
+    };
+    if result.is_ok() {
+        native_dash::note_subtitle_track_selection(id);
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        mpv_core::set_subtitle_track(&app, id).await
-    }
+    result
 }
 
 #[tauri::command]
@@ -4805,6 +4865,75 @@ fn is_valid_saved_window_position(x: i32, y: i32) -> bool {
     x > -10_000 && y > -10_000
 }
 
+fn has_visible_window_area(
+    window_x: i32,
+    window_y: i32,
+    window_width: u32,
+    window_height: u32,
+    monitor_x: i32,
+    monitor_y: i32,
+    monitor_width: u32,
+    monitor_height: u32,
+) -> bool {
+    let left = i64::from(window_x).max(i64::from(monitor_x));
+    let top = i64::from(window_y).max(i64::from(monitor_y));
+    let right = (i64::from(window_x) + i64::from(window_width))
+        .min(i64::from(monitor_x) + i64::from(monitor_width));
+    let bottom = (i64::from(window_y) + i64::from(window_height))
+        .min(i64::from(monitor_y) + i64::from(monitor_height));
+    right - left >= 64 && bottom - top >= 64
+}
+
+fn is_window_position_visible<R: tauri::Runtime>(
+    window: &tauri::Window<R>,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) -> bool {
+    if !is_valid_saved_window_position(x, y) {
+        return false;
+    }
+    let Ok(monitors) = window.available_monitors() else {
+        return true;
+    };
+    if monitors.is_empty() {
+        return true;
+    }
+    monitors.iter().any(|monitor| {
+        let position = monitor.position();
+        let size = monitor.size();
+        has_visible_window_area(x, y, width.max(400), height.max(300), position.x, position.y, size.width, size.height)
+    })
+}
+
+fn centered_window_position<R: tauri::Runtime>(window: &tauri::Window<R>, width: u32, height: u32) -> (i32, i32) {
+    let monitor = window.current_monitor().ok().flatten().or_else(|| window.primary_monitor().ok().flatten());
+    let Some(monitor) = monitor else { return (0, 0) };
+    let position = monitor.position();
+    let size = monitor.size();
+    let x = i64::from(position.x) + (i64::from(size.width).saturating_sub(i64::from(width))) / 2;
+    let y = i64::from(position.y) + (i64::from(size.height).saturating_sub(i64::from(height))) / 2;
+    (x.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32, y.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32)
+}
+
+#[cfg(test)]
+mod window_position_tests {
+    use super::has_visible_window_area;
+
+    #[test]
+    fn rejects_disconnected_monitor_coordinates_and_tiny_slivers() {
+        assert!(has_visible_window_area(100, 100, 1200, 700, 0, 0, 1920, 1080));
+        assert!(!has_visible_window_area(3944, 274, 1229, 747, 0, 0, 1920, 1080));
+        assert!(!has_visible_window_area(1900, 100, 1200, 700, 0, 0, 1920, 1080));
+    }
+
+    #[test]
+    fn accepts_visible_windows_on_negative_coordinate_monitors() {
+        assert!(has_visible_window_area(-1800, 100, 1200, 700, -1920, 0, 1920, 1080));
+    }
+}
+
 fn window_state_path<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<std::path::PathBuf> {
     app.path()
         .app_data_dir()
@@ -4893,7 +5022,7 @@ pub(crate) fn save_window_state<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
             if let Some(state) = unmaximized_state.filter(|state| {
                 state.width >= 400
                     && state.height >= 300
-                    && is_valid_saved_window_position(state.x, state.y)
+                    && is_window_position_visible(&window, state.x, state.y, state.width, state.height)
             }) {
                 saved_width = if dont_save_size { 0 } else { state.width };
                 saved_height = if dont_save_size { 0 } else { state.height };
@@ -4904,7 +5033,7 @@ pub(crate) fn save_window_state<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
                 if let (Ok(physical_size), Ok(pos)) = (window.inner_size(), window.outer_position()) {
                     let scale_factor = window.scale_factor().unwrap_or(1.0);
                     let logical_size = physical_size.to_logical::<f64>(scale_factor);
-                    if !is_valid_saved_window_position(pos.x, pos.y) {
+                    if !is_window_position_visible(&window, pos.x, pos.y, physical_size.width, physical_size.height) {
                         warn!("[WindowState] Ignoring invalid restored position: ({}, {})", pos.x, pos.y);
                         return;
                     }
@@ -4923,7 +5052,7 @@ pub(crate) fn save_window_state<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
                 // Sanity-check: ignore absurd values (minimised, off-screen, etc.)
                 if physical_size.width < 400
                     || physical_size.height < 300
-                    || !is_valid_saved_window_position(pos.x, pos.y)
+                    || !is_window_position_visible(&window, pos.x, pos.y, physical_size.width, physical_size.height)
                 {
                     return;
                 }
@@ -5099,7 +5228,10 @@ fn restore_window_position(app: &tauri::AppHandle) {
         if let Ok(json) = std::fs::read_to_string(&path) {
             if let Ok(state) = serde_json::from_str::<WindowState>(&json) {
                 if let Some(window) = app.get_window("main") {
-                    let valid_position = is_valid_saved_window_position(state.x, state.y);
+                    let force_dev_center = cfg!(debug_assertions)
+                        && std::env::var_os("YNOTV_DEV_CENTER_WINDOW").as_deref() == Some(std::ffi::OsStr::new("1"));
+                    let valid_position = !force_dev_center
+                        && is_window_position_visible(&window, state.x, state.y, state.width, state.height);
                     let valid_size = state.width >= 400 && state.height >= 300;
 
                     let scale_factor = window.scale_factor().unwrap_or(1.0);
@@ -5109,8 +5241,8 @@ fn restore_window_position(app: &tauri::AppHandle) {
                         .unwrap_or_else(|| "unknown".to_string());
 
                     info!(
-                        "[WindowState Diagnostics] SavedState: {}x{} at ({}, {}) | Maximized: {}, Fullscreen: {} | Monitor: {} | ScaleFactor: {} | Valid: {}",
-                        state.width, state.height, state.x, state.y, state.maximized, state.fullscreen, monitor_str, scale_factor, valid_position && valid_size
+                        "[WindowState Diagnostics] SavedState: {}x{} at ({}, {}) | Maximized: {}, Fullscreen: {} | Monitor: {} | ScaleFactor: {} | ForceDevCenter: {} | Valid: {}",
+                        state.width, state.height, state.x, state.y, state.maximized, state.fullscreen, monitor_str, scale_factor, force_dev_center, valid_position && valid_size
                     );
 
                     // Position and size are restored independently: a state saved with
@@ -5133,22 +5265,25 @@ fn restore_window_position(app: &tauri::AppHandle) {
                             "[WindowState] Discarding invalid saved position: ({}, {})",
                             state.x, state.y
                         );
-                        let (cur_width, cur_height, cur_x, cur_y) = match (
-                            window.inner_size(),
-                            window.outer_position(),
-                        ) {
-                            (Ok(physical_size), Ok(pos)) => {
+                        let (cur_width, cur_height) = match window.inner_size() {
+                            Ok(physical_size) => {
                                 let sf = window.scale_factor().unwrap_or(1.0);
                                 let logical = physical_size.to_logical::<f64>(sf);
-                                (logical.width.round() as u32, logical.height.round() as u32, pos.x, pos.y)
+                                (logical.width.round() as u32, logical.height.round() as u32)
                             }
-                            _ => (state.width.max(400), state.height.max(300), state.x, state.y),
+                            _ => (state.width.max(400), state.height.max(300)),
                         };
+                        let saved_width = if valid_size { state.width } else { cur_width.max(400) };
+                        let saved_height = if valid_size { state.height } else { cur_height.max(300) };
+                        let sf = window.scale_factor().unwrap_or(1.0);
+                        let center_width = (f64::from(saved_width) * sf).round().clamp(1.0, f64::from(u32::MAX)) as u32;
+                        let center_height = (f64::from(saved_height) * sf).round().clamp(1.0, f64::from(u32::MAX)) as u32;
+                        let (recovered_x, recovered_y) = centered_window_position(&window, center_width, center_height);
                         let recovered = WindowState {
-                            width: cur_width.max(400),
-                            height: cur_height.max(300),
-                            x: if is_valid_saved_window_position(cur_x, cur_y) { cur_x } else { 0 },
-                            y: if is_valid_saved_window_position(cur_x, cur_y) { cur_y } else { 0 },
+                            width: saved_width,
+                            height: saved_height,
+                            x: recovered_x,
+                            y: recovered_y,
                             maximized: false,
                             fullscreen: false,
                         };
@@ -5156,6 +5291,9 @@ fn restore_window_position(app: &tauri::AppHandle) {
                             let _ = std::fs::write(&path, recovered_json);
                         }
                         if !is_startup_tray {
+                            let _ = window.set_position(tauri::Position::Physical(
+                                tauri::PhysicalPosition { x: recovered_x, y: recovered_y }
+                            ));
                             let _ = window.unminimize();
                             let _ = window.show();
                             let _ = window.set_focus();
@@ -5596,6 +5734,9 @@ pub fn run() {
             mpv_toggle_stats,
             mpv_toggle_fullscreen,
             mpv_get_track_list,
+            native_dash_get_track_catalog,
+            native_dash_select_video_representation,
+            native_dash_select_auto_video_quality,
             mpv_set_audio,
             mpv_set_subtitle,
             mpv_add_subtitle,
@@ -5886,6 +6027,7 @@ async fn db_health(app: AppHandle) -> DbHealth {
 /// prevent the exit and show a dialog so the user can either keep the app open
 /// (and keep recording) or stop the recording and quit.
 fn handle_exit_requested(app_handle: &tauri::AppHandle, api: tauri::ExitRequestApi) {
+    native_dash::cancel_active();
     // Flush the SQLite WAL back into the main DB before exiting so the next
     // launch doesn't have to recover a large WAL (which blocked startup).
     checkpoint_databases(app_handle);

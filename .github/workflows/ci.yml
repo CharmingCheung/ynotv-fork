@@ -1,0 +1,38 @@
+name: Compile and test
+
+on:
+  push:
+    branches: [custom_dev, main]
+  pull_request:
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+
+  rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install macOS native headers
+        if: runner.os == 'macOS'
+        run: brew install mpv pkg-config
+      - name: Prepare Windows Native DASH runtime
+        if: runner.os == 'Windows'
+        run: node scripts/setup-native-runtime.mjs
+      - name: Compile Rust backend
+        working-directory: packages/app/src-tauri
+        run: cargo check --locked

@@ -45,7 +45,6 @@ jobs:
           echo "Checking if mpv binary was created:"
           ls -la packages/app/src-tauri/bin/ || echo "bin directory not found or empty"
         shell: bash
-        continue-on-error: true
 
       - name: Download FFmpeg (Tauri Sidecar)
         run: |
@@ -55,14 +54,10 @@ jobs:
           echo "Checking if FFmpeg binary was created:"
           ls -la packages/app/src-tauri/bin/ || echo "bin directory not found or empty"
         shell: bash
-        continue-on-error: true
 
-      - name: Setup libmpv (Windows)
+      - name: Setup Native DASH runtime (Windows)
         if: runner.os == 'Windows'
-        run: |
-          powershell -ExecutionPolicy Bypass -File packages/app/src-tauri/setup-libmpv.ps1
-          echo "LIBMPV_PATH=$GITHUB_WORKSPACE/packages/app/src-tauri/libmpv" >> $GITHUB_ENV
-        shell: bash
+        run: node scripts/setup-native-runtime.mjs
 
       - name: Setup libmpv (macOS)
         if: runner.os == 'macOS'

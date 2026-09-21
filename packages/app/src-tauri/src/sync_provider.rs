@@ -197,6 +197,7 @@ pub async fn sync_xtream_source(
             catchup_type: None,
             catchup_source: None,
             catchup_days: None,
+            kodi_props: None,
         });
     }
 
@@ -419,9 +420,183 @@ pub(crate) fn extract_m3u_attr(text: &str, keys: &[&str]) -> String {
     "".to_string()
 }
 
+fn parse_kodi_property(line: &str) -> Option<(String, String)> {
+    const PREFIX: &str = "#KODIPROP:";
+    if !line
+        .get(..PREFIX.len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(PREFIX))
+    {
+        return None;
+    }
+    let property = &line[PREFIX.len()..];
+    let separator = property.find('=')?;
+    let key = property[..separator].trim().to_ascii_lowercase();
+    if key.is_empty() {
+        return None;
+    }
+    Some((key, property[separator + 1..].trim().to_string()))
+}
+
+const M3U_HTTP_HEADERS_PROPERTY: &str = "ynotv.http_headers";
+
+fn decode_header_component(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hex = |b: u8| match b {
+                b'0'..=b'9' => Some(b - b'0'),
+                b'a'..=b'f' => Some(b - b'a' + 10),
+                b'A'..=b'F' => Some(b - b'A' + 10),
+                _ => None,
+            };
+            if let (Some(high), Some(low)) = (hex(bytes[i + 1]), hex(bytes[i + 2])) {
+                decoded.push(high * 16 + low);
+                i += 3;
+                continue;
+            }
+        }
+        decoded.push(if bytes[i] == b'+' { b' ' } else { bytes[i] });
+        i += 1;
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
+fn set_http_header(headers: &mut HashMap<String, String>, raw_name: &str, raw_value: &str, decode: bool) {
+    let name = raw_name.trim().trim_start_matches('!');
+    if name.is_empty() || name.contains(['\r', '\n', ':']) { return; }
+    let value = if decode { decode_header_component(raw_value.trim()) } else { raw_value.trim().to_string() };
+    if value.is_empty() || value.contains(['\r', '\n']) { return; }
+    if let Some(existing) = headers.keys().find(|key| key.eq_ignore_ascii_case(name)).cloned() {
+        headers.remove(&existing);
+    }
+    let canonical = match name.to_ascii_lowercase().as_str() {
+        "user-agent" => "User-Agent",
+        "referer" | "referrer" => "Referer",
+        "origin" => "Origin",
+        "cookie" => "Cookie",
+        "authorization" => "Authorization",
+        _ => name,
+    };
+    headers.insert(canonical.to_string(), value);
+}
+
+fn merge_header_string(headers: &mut HashMap<String, String>, value: &str) {
+    for part in value.replace('|', "&").split('&') {
+        if let Some((name, header_value)) = part.split_once('=') {
+            set_http_header(headers, name, header_value, true);
+        }
+    }
+}
+
+fn merge_json_headers(headers: &mut HashMap<String, String>, value: &str) {
+    if let Ok(serde_json::Value::Object(object)) = serde_json::from_str(value) {
+        for (name, value) in object {
+            if let Some(value) = value.as_str() {
+                set_http_header(headers, &name, value, false);
+            }
+        }
+    }
+}
+
+fn merge_kodi_headers(headers: &mut HashMap<String, String>, key: &str, value: &str) {
+    let lower = key.to_ascii_lowercase();
+    if lower.ends_with("inputstream.adaptive.common_headers")
+        || lower.ends_with("inputstream.adaptive.manifest_headers")
+        || lower.ends_with("inputstream.adaptive.stream_headers")
+    {
+        merge_header_string(headers, value);
+    } else if lower.ends_with("inputstream.adaptive.license_key")
+        || lower.ends_with("inputstream.adaptive.drm_legacy")
+    {
+        if let Some((_, header_part)) = value.split_once('|') {
+            merge_header_string(headers, header_part);
+        }
+    } else if lower.ends_with("inputstream.adaptive.drm") {
+        fn visit(headers: &mut HashMap<String, String>, node: &serde_json::Value) {
+            match node {
+                serde_json::Value::Object(object) => for (key, value) in object {
+                    if key.eq_ignore_ascii_case("req_headers") {
+                        if let Some(value) = value.as_str() { merge_header_string(headers, value); }
+                    } else { visit(headers, value); }
+                },
+                serde_json::Value::Array(items) => for item in items { visit(headers, item); },
+                _ => {}
+            }
+        }
+        if let Ok(drm) = serde_json::from_str(value) { visit(headers, &drm); }
+    }
+}
+
+fn split_url_headers(line: &str) -> (String, HashMap<String, String>) {
+    let mut headers = HashMap::new();
+    if let Some((url, header_part)) = line.split_once('|') {
+        merge_header_string(&mut headers, header_part);
+        (url.trim().to_string(), headers)
+    } else {
+        (line.to_string(), headers)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{create_m3u_category_id, extract_m3u_attr};
+    use super::{
+        create_m3u_category_id, extract_m3u_attr, merge_json_headers,
+        merge_kodi_headers, parse_kodi_property, split_url_headers,
+    };
+    use std::collections::HashMap;
+
+    #[test]
+    fn parses_kodi_properties_without_requiring_inputstream_marker() {
+        assert_eq!(
+            parse_kodi_property("#KODIPROP:InputStream.Adaptive.Manifest_Type=MPD"),
+            Some((
+                "inputstream.adaptive.manifest_type".to_string(),
+                "MPD".to_string()
+            ))
+        );
+        assert_eq!(
+            parse_kodi_property("#kodiprop:future.property=kept=value"),
+            Some(("future.property".to_string(), "kept=value".to_string()))
+        );
+        assert_eq!(parse_kodi_property("#KODIPROP:=ignored"), None);
+    }
+
+    #[test]
+    fn parses_pipe_vlc_json_and_kodi_http_headers() {
+        let (url, mut headers) = split_url_headers(
+            "https://example.com/live.m3u8|!X-Token=abc|user-agent=Mozilla%2F5.0&Cookie=session%3D123",
+        );
+        assert_eq!(url, "https://example.com/live.m3u8");
+        assert_eq!(headers.get("X-Token").map(String::as_str), Some("abc"));
+        assert_eq!(headers.get("User-Agent").map(String::as_str), Some("Mozilla/5.0"));
+        assert_eq!(headers.get("Cookie").map(String::as_str), Some("session=123"));
+
+        merge_json_headers(&mut headers, r#"{"Authorization":"Bearer abc"}"#);
+        merge_kodi_headers(
+            &mut headers,
+            "inputstream.adaptive.common_headers",
+            "Referer=https%3A%2F%2Fexample.com&Origin=https://example.com",
+        );
+        merge_kodi_headers(
+            &mut headers,
+            "inputstream.adaptive.drm",
+            r#"{"com.widevine.alpha":{"license":{"req_headers":"X-Device-ID=123"}}}"#,
+        );
+        assert_eq!(headers.get("Authorization").map(String::as_str), Some("Bearer abc"));
+        assert_eq!(headers.get("Referer").map(String::as_str), Some("https://example.com"));
+        assert_eq!(headers.get("Origin").map(String::as_str), Some("https://example.com"));
+        assert_eq!(headers.get("X-Device-ID").map(String::as_str), Some("123"));
+    }
+
+    #[test]
+    fn header_names_are_case_insensitive_and_last_value_wins() {
+        let (_, headers) = split_url_headers(
+            "https://example.com/live.m3u8|referer=first&REFErer=second",
+        );
+        assert_eq!(headers, HashMap::from([("Referer".to_string(), "second".to_string())]));
+    }
 
     #[test]
     fn creates_distinct_ids_for_cyrillic_m3u_groups() {
@@ -760,6 +935,8 @@ pub async fn sync_m3u_source(
     let mut seen_ids = HashSet::new();
 
     let mut current_extinf: Option<String> = None;
+    let mut current_kodi_props: HashMap<String, String> = HashMap::new();
+    let mut current_http_headers: HashMap<String, String> = HashMap::new();
     let mut channel_counter = 0;
     let mut epg_url: Option<String> = None;
     let mut header_catchup_type: Option<String> = None;
@@ -803,7 +980,45 @@ pub async fn sync_m3u_source(
 
         if line.starts_with("#EXTINF:") {
             current_extinf = Some(line.to_string());
+            current_kodi_props.clear();
+            current_http_headers.clear();
+            let user_agent = extract_attr(line, &["http-user-agent", "user-agent"]);
+            if !user_agent.is_empty() {
+                set_http_header(&mut current_http_headers, "User-Agent", &user_agent, false);
+            }
+            let referrer = extract_attr(line, &["http-referrer", "http-referer", "referrer", "referer"]);
+            if !referrer.is_empty() {
+                set_http_header(&mut current_http_headers, "Referer", &referrer, false);
+            }
             continue;
+        }
+
+        if current_extinf.is_some() {
+            if let Some((key, value)) = parse_kodi_property(line) {
+                merge_kodi_headers(&mut current_http_headers, &key, &value);
+                current_kodi_props.insert(key, value);
+                continue;
+            }
+            const VLC_PREFIX: &str = "#EXTVLCOPT:";
+            if line.get(..VLC_PREFIX.len()).is_some_and(|prefix| prefix.eq_ignore_ascii_case(VLC_PREFIX)) {
+                if let Some((key, value)) = line[VLC_PREFIX.len()..].split_once('=') {
+                    let header_name = match key.trim().to_ascii_lowercase().as_str() {
+                        "http-user-agent" => Some("User-Agent"),
+                        "http-referrer" | "http-referer" => Some("Referer"),
+                        "http-origin" => Some("Origin"),
+                        _ => None,
+                    };
+                    if let Some(name) = header_name {
+                        set_http_header(&mut current_http_headers, name, value, false);
+                    }
+                }
+                continue;
+            }
+            const HTTP_PREFIX: &str = "#EXTHTTP:";
+            if line.get(..HTTP_PREFIX.len()).is_some_and(|prefix| prefix.eq_ignore_ascii_case(HTTP_PREFIX)) {
+                merge_json_headers(&mut current_http_headers, line[HTTP_PREFIX.len()..].trim());
+                continue;
+            }
         }
 
         if line.starts_with('#') {
@@ -812,6 +1027,25 @@ pub async fn sync_m3u_source(
 
         if let Some(extinf) = current_extinf.take() {
             if line.starts_with("http://") || line.starts_with("https://") || line.starts_with("rtmp://") {
+                let (stream_url, pipe_headers) = split_url_headers(line);
+                for (name, value) in pipe_headers {
+                    set_http_header(&mut current_http_headers, &name, &value, false);
+                }
+                if !current_http_headers.is_empty() {
+                    current_kodi_props.insert(
+                        M3U_HTTP_HEADERS_PROPERTY.to_string(),
+                        serde_json::to_string(&current_http_headers)
+                            .map_err(|_| "Failed to preserve M3U HTTP headers".to_string())?,
+                    );
+                }
+                let kodi_props = if current_kodi_props.is_empty() {
+                    None
+                } else {
+                    Some(serde_json::to_string(&current_kodi_props)
+                        .map_err(|_| "Failed to preserve M3U KODIPROP metadata".to_string())?)
+                };
+                current_kodi_props.clear();
+                current_http_headers.clear();
                 channel_counter += 1;
 
                 let duration_str = extinf[8..].split_whitespace().next().unwrap_or("-1").replace(",", "");
@@ -853,7 +1087,7 @@ pub async fn sync_m3u_source(
                     format!("Channel {}", channel_counter)
                 };
 
-                let stream_id = generate_stable_stream_id(&source_id, &tvg_id, line, &mut seen_ids);
+                let stream_id = generate_stable_stream_id(&source_id, &tvg_id, &stream_url, &mut seen_ids);
 
                 let mut category_ids = Vec::new();
                 let category_name = if group_title.is_empty() { "Uncategorized".to_string() } else { group_title.clone() };
@@ -876,7 +1110,7 @@ pub async fn sync_m3u_source(
                     });
                 }
 
-                let xtream_stream_id = extract_xtream_stream_id(line);
+                let xtream_stream_id = extract_xtream_stream_id(&stream_url);
                 bulk_channels.push(BulkChannel {
                     stream_id,
                     source_id: source_id.clone(),
@@ -893,7 +1127,7 @@ pub async fn sync_m3u_source(
                     custom_sid: None,
                     tv_archive: Some(tv_archive),
                     direct_source: None,
-                    direct_url: Some(line.to_string()),
+                    direct_url: Some(stream_url),
                     xmltv_id: None,
                     series_no: None,
                     live: Some(1),
@@ -903,6 +1137,7 @@ pub async fn sync_m3u_source(
                     catchup_type,
                     catchup_source,
                     catchup_days,
+                    kodi_props,
                 });
             }
         }
@@ -918,9 +1153,14 @@ pub async fn sync_m3u_source(
     for b in &bulk_channels {
         parsed_channel_ids.push(b.stream_id.clone());
     }
+    let kodi_property_channels = bulk_channels
+        .iter()
+        .filter(|channel| channel.kodi_props.is_some())
+        .count();
     let result_chans = db_bulk_ops::bulk_upsert_channels(&state.db, bulk_channels).map_err(|e| e.to_string())?;
 
     info!("[M3U Sync] Competed successfully: {} categories, {} channels", result_cats.inserted + result_cats.updated, result_chans.inserted + result_chans.updated);
+    info!("[M3U Sync] Preserved KODIPROP metadata for {} channels", kodi_property_channels);
 
     Ok(M3uSyncResult {
         categories: result_cats,

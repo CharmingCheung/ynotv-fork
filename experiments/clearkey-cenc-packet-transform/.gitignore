@@ -1,0 +1,7 @@
+/cenc_packet_producer
+/cenc_component_producer
+/test_cenc_transform
+/fixtures/
+/results/
+/local-test.env
+/real-cache/

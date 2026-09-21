@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MPD type="dynamic"
+     availabilityStartTime="2026-09-21T00:00:00Z"
+     publishTime="2026-09-21T12:00:06Z"
+     minimumUpdatePeriod="PT6S"
+     timeShiftBufferDepth="PT43200S"
+     suggestedPresentationDelay="PT18S">
+  <Period id="dvr" start="PT360000S" duration="PT1100000S">
+    <AdaptationSet id="video" contentType="video" mimeType="video/mp4" codecs="avc1.64001f">
+      <SegmentTemplate timescale="1" presentationTimeOffset="0" startNumber="500000" initialization="$RepresentationID$/init.mp4" media="$RepresentationID$/$Time$.m4s">
+        <SegmentTimeline><S t="1000000" d="6" r="7200"/></SegmentTimeline>
+      </SegmentTemplate>
+      <Representation id="v1000" bandwidth="1000000" width="1280" height="720"/>
+    </AdaptationSet>
+    <AdaptationSet id="audio" contentType="audio" mimeType="audio/mp4" codecs="mp4a.40.2" lang="en">
+      <SegmentTemplate timescale="1" presentationTimeOffset="0" startNumber="700000" initialization="$RepresentationID$/init.mp4" media="$RepresentationID$/$Time$.m4s">
+        <SegmentTimeline><S t="1000000" d="6" r="7200"/></SegmentTimeline>
+      </SegmentTemplate>
+      <Representation id="a128" bandwidth="128000" audioSamplingRate="48000"/>
+    </AdaptationSet>
+  </Period>
+</MPD>

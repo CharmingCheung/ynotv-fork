@@ -119,6 +119,55 @@ html[data-ui-version="v2"] .view-transition-container {
   shape-rendering: geometricPrecision;
 }
 
+/* macOS traffic lights for the frameless window. Native window decorations
+   shrink the content view and break the full-size MPV/webview composition, so
+   these preserve the borderless window while matching the platform controls. */
+.macos-window-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 12px;
+  transform: translateY(3px);
+  -webkit-app-region: no-drag;
+}
+
+.macos-window-control {
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.22);
+  color: rgba(0, 0, 0, 0.65);
+  cursor: default;
+  display: grid;
+  place-items: center;
+}
+
+.macos-window-control.close {
+  background: #ff5f57;
+}
+
+.macos-window-control.minimize {
+  background: #febc2e;
+}
+
+.macos-window-control.maximize {
+  background: #28c840;
+}
+
+.macos-window-control span {
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 10px;
+  opacity: 0;
+}
+
+.macos-window-controls:hover .macos-window-control span {
+  opacity: 1;
+}
+
 /* Title Bar Layout - Using spacer pattern for centering */
 .title-bar-spacer {
   flex: 1;
@@ -1376,5 +1425,4 @@ html[data-custom-scrollbar="true"] .series-detail__cast-row,
 html[data-custom-scrollbar="true"] .streaming-service-view__items {
   scrollbar-width: none !important;
 }
-
 

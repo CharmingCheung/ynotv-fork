@@ -1,0 +1,11 @@
+packet_producer
+generation_producer
+fixture.rdp
+regression-fixture.rdp
+generation-fixture.rdp
+mpv-work/
+results/*.log
+results/*.json
+results/*.mkv
+results/session_destroy
+results/c8/

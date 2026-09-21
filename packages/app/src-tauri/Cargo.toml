@@ -60,6 +60,7 @@ tokio-util = { version = "0.7", features = ["io", "rt"] }
 tokio-stream = "0.1"
 futures-util = "0.3"
 bytes = "1"
+tempfile = "3"
 flate2 = "1.0"
 
 # HTTP client for TMDB caching and EPG streaming
@@ -145,10 +146,6 @@ windows = { version = "0.58", features = [
 # already in the lockfile as a transitive dependency, so no new downloads.
 winreg = "0.55"
 
-[dev-dependencies]
-tempfile = "3"
-
 [patch.crates-io]
 # Local patch adds: set_read_timeout(), receive_nonblocking(), connect_with_timeout()
 rust_cast = { path = "vendor/rust_cast" }
-

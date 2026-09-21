@@ -93,6 +93,7 @@ A feature-rich, open source IPTV player for Windows built on [Tauri v2](https://
 - [Microsoft Edge WebView2](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) — required for Tauri's rendering engine
 - Visual Studio 2022 with C++ build tools
 - Windows 10 SDK
+- Git Bash and 7-Zip (used to prepare the native sidecars)
 
 **macOS additional requirements:**
 - Xcode Command Line Tools (`xcode-select --install`)
@@ -113,47 +114,73 @@ cd ynotv
 pnpm install
 ```
 
-**3. Download mpv sidecar**
-
-FFmpeg is downloaded automatically during the build step, but mpv (and yt-dlp) must be downloaded manually first:
-
-```bash
-bash scripts/download-mpv-tauri.sh
-```
-
-*(Optional)* If you also want to pre-download FFmpeg manually:
-```bash
-cd packages/app
-node scripts/download-ffmpeg.js
-cd ../..
-```
-
-**4. Run in development mode**
+**3. Run in development mode**
 
 ```bash
 pnpm dev
 ```
 
-This starts both the Vite UI dev server and the Tauri app concurrently.
+This downloads and verifies the versioned Native DASH runtime, prepares any
+missing sidecars and packet producer, then starts the Vite UI server and Tauri
+app. No local libmpv path or environment variable is required. The first run
+needs network access and can take several minutes.
+Apple Silicon macOS and Windows x64 are the supported clean-clone development
+targets. See [Native dependencies and reproducible builds](docs/native-dependencies.md)
+for every external input, platform limitation, and the separately maintained
+Native DASH runtime.
 
-**5. Build for production**
+If a previous development session was not stopped and still owns port 5173,
+use `pnpm dev:clean` to replace it.
+
+### Developing the mpv patch
+
+Application changes continue to use the cached released runtime with ordinary
+`pnpm dev`; they do not require pushing or rebuilding `ynotv-native`. When the
+two repositories are sibling directories and you are actively changing the mpv
+patch, use:
+
+```bash
+pnpm native:dev
+pnpm dev:clean
+```
+
+The first command incrementally rebuilds the local `../ynotv-native` patch,
+runs its native tests, and installs it into the gitignored ynoTV cache. The
+second restarts the app with that native library. Iterate locally as often as needed;
+only increment `ynotv-native/VERSION` and push after the patch and real playback
+tests are stable.
+
+**4. Build for production**
 
 ```bash
 pnpm tauri build
 ```
 
-On Apple Silicon macOS, the following command prepares all native sidecars and
-builds a DMG in one step:
+On Apple Silicon macOS, the following command prepares all native sidecars,
+builds a DMG, and rejects it if it still contains machine-local dylib links:
 
 ```bash
 pnpm build:macos
 ```
+
+> The current macOS output still contains Homebrew-linked native libraries, so
+> `pnpm build:macos` intentionally fails its final portability audit. For a
+> local-only package use `pnpm build:macos:local`; do not publish that DMG.
+> Native DASH is supported on Apple Silicon macOS and Windows x64. Windows
+> runtime builds use MSYS2 UCRT64; see the native-dependencies document above.
 
 Build output is located at:
 
 ```
 packages/app/src-tauri/target/release/bundle/
 ```
+
+To build both desktop packages against current `ynotv-native` source, open
+GitHub Actions, run **Build app with latest native source**, and optionally set
+`native_ref` to a branch, tag, or commit. The macOS and Windows jobs compile the
+selected native checkout inside the same run and upload DMG/NSIS artifacts plus
+the exact application and native commit IDs. They do not consume a
+`ynotv-native` Release artifact.
 
 > **Recovery builds**: if a user's database is too large and the app fails to
 > start, there is a one-off database recovery screen (export → rebuild →

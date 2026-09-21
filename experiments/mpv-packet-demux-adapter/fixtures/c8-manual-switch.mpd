@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="PT3S">
+  <Period id="c8" start="PT0S" duration="PT3S">
+    <AdaptationSet id="video-main" contentType="video" mimeType="video/mp4" codecs="avc1.64001f" selectionPriority="1">
+      <Role schemeIdUri="urn:mpeg:dash:role:2011" value="main"/>
+      <Representation id="video-320" bandwidth="300000" width="320" height="180" frameRate="25">
+        <BaseURL>../results/c8/rep-a/</BaseURL>
+        <SegmentTemplate timescale="12800" startNumber="1" initialization="init.mp4" media="segment-$Number$.m4s">
+          <SegmentTimeline><S t="0" d="12800" r="2"/></SegmentTimeline>
+        </SegmentTemplate>
+      </Representation>
+      <Representation id="video-640" bandwidth="700000" width="640" height="360" frameRate="25">
+        <BaseURL>../results/c8/rep-b/</BaseURL>
+        <SegmentTemplate timescale="12800" startNumber="1" initialization="init.mp4" media="segment-$Number$.m4s">
+          <SegmentTimeline><S t="0" d="12800" r="2"/></SegmentTimeline>
+        </SegmentTemplate>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet id="audio-en" contentType="audio" mimeType="audio/mp4" lang="en" selectionPriority="2">
+      <Label>English 440 Hz</Label><Role schemeIdUri="urn:mpeg:dash:role:2011" value="main"/>
+      <AudioChannelConfiguration schemeIdUri="urn:mpeg:dash:23003:3:audio_channel_configuration:2011" value="1"/>
+      <Representation id="audio-en-96" bandwidth="96000" codecs="mp4a.40.2" audioSamplingRate="48000">
+        <BaseURL>../results/c8/audio-en/</BaseURL>
+        <SegmentTemplate timescale="48000" startNumber="1" initialization="init.mp4" media="segment-$Number$.m4s"><SegmentTimeline><S t="0" d="48000" r="2"/></SegmentTimeline></SegmentTemplate>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet id="audio-zh" contentType="audio" mimeType="audio/mp4" lang="zh">
+      <Label>中文 880 Hz</Label><Role schemeIdUri="urn:mpeg:dash:role:2011" value="commentary"/>
+      <AudioChannelConfiguration schemeIdUri="urn:mpeg:dash:23003:3:audio_channel_configuration:2011" value="1"/>
+      <Representation id="audio-zh-96" bandwidth="96000" codecs="mp4a.40.2" audioSamplingRate="48000">
+        <BaseURL>../results/c8/audio-zh/</BaseURL>
+        <SegmentTemplate timescale="48000" startNumber="1" initialization="init.mp4" media="segment-$Number$.m4s"><SegmentTimeline><S t="0" d="48000" r="2"/></SegmentTimeline></SegmentTemplate>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>

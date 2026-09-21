@@ -48,6 +48,7 @@ export interface StoredChannel extends Omit<Channel, 'stream_icon' | 'epg_channe
   series_no?: number;
   live?: number;
   xtream_stream_id?: string; // Xtream stream_id for building catchup URLs on M3U sources
+  kodi_props?: Record<string, string>;
 
   // Optional source name (populated during search for display purposes)
   source_name?: string;
@@ -610,7 +611,8 @@ class YnotvDatabase extends SqliteDatabase {
         xtream_stream_id TEXT,
         catchup_type TEXT,
         catchup_source TEXT,
-        catchup_days INTEGER
+        catchup_days INTEGER,
+        kodi_props TEXT
       )`);
 
     // ── channel_categories: denormalized category membership map ──────────────
@@ -630,7 +632,7 @@ class YnotvDatabase extends SqliteDatabase {
     // Each version block runs exactly ONCE. To add new columns in the future,
     // increment DB_VERSION and add a new case (do NOT modify existing cases).
     // ─────────────────────────────────────────────────────────────────────────
-    const DB_VERSION = 27;
+    const DB_VERSION = 28;
     const versionResult = await db.select('PRAGMA user_version') as Array<{ user_version: number }>;
     const currentVersion = versionResult[0]?.user_version ?? 0;
 
@@ -1060,6 +1062,11 @@ class YnotvDatabase extends SqliteDatabase {
         } catch (e) {
           console.error('[DB] v27 migration failed:', e);
         }
+      }
+
+      if (currentVersion < 28) {
+        console.log('[DB] v28 migration: Adding M3U KODIPROP metadata to channels');
+        try { await db.execute('ALTER TABLE channels ADD COLUMN kodi_props TEXT'); } catch { /* already exists */ }
       }
 
       // Bump the stored version so these migrations never run again
@@ -3699,5 +3706,3 @@ export async function setVodEpisodeWatchedState(
     throw error;
   }
 }
-
-
