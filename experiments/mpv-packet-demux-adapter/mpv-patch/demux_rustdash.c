@@ -21,6 +21,8 @@
 #define RDP_VERSION 1u
 #define RDP_GENERATION_MAGIC "RDPKT002"
 #define RDP_GENERATION_VERSION 2u
+#define RDP_LIVE_MAGIC "RDPKT003"
+#define RDP_LIVE_VERSION 3u
 #define RDP_CODEC_NAME_BYTES 32u
 #define RDP_RECORD_PACKET 0x31544b50u
 #define RDP_RECORD_EOF    0x31464f45u
@@ -65,6 +67,7 @@ struct rdp_packet_index {
 
 struct rdp_ready_packet {
     int index;
+    struct rdp_packet_index live_packet;
     uint8_t *payload;
 };
 
@@ -77,6 +80,7 @@ struct priv {
     struct rdp_packet_index *packets;
     int num_packets;
     bool generation_fixture;
+    bool live_source;
 
     FILE *source;
     mp_thread producer_thread;
@@ -279,10 +283,117 @@ static void clear_queue_locked(struct priv *p)
         p->queue[p->queue_head] = NULL;
         p->queue_head = (p->queue_head + 1) % RDP_QUEUE_PACKETS;
         p->queue_count--;
-        p->queue_bytes -= p->packets[ready->index].payload_size;
+        p->queue_bytes -= p->live_source ? ready->live_packet.payload_size
+                                        : p->packets[ready->index].payload_size;
         free_ready(ready);
     }
     p->queue_head = 0;
+}
+
+static bool read_live_packet_header(struct priv *p, struct rdp_packet_index *packet)
+{
+    struct stream *s = p->demuxer->stream;
+    if (!get_u32(s, &packet->track) || !get_u32(s, &packet->generation) ||
+        !get_i64(s, &packet->pts) || !get_i64(s, &packet->dts) ||
+        !get_i64(s, &packet->duration) || !get_i32(s, &packet->tb_num) ||
+        !get_i32(s, &packet->tb_den) || !get_u32(s, &packet->flags) ||
+        !get_u32(s, &packet->payload_size))
+        return false;
+    struct rdp_track *track = find_track(p, packet->track);
+    struct rdp_generation *generation =
+        find_generation(p, packet->track, packet->generation);
+    return track && generation && packet->tb_num == generation->tb_num &&
+           packet->tb_den == generation->tb_den &&
+           packet->payload_size <= RDP_MAX_PACKET &&
+           packet->payload_size <= RDP_QUEUE_BYTES && packet->duration >= 0 &&
+           !(packet->flags & ~RDP_FLAG_KEYFRAME);
+}
+
+static MP_THREAD_VOID live_producer_thread(void *ctx)
+{
+    struct priv *p = ctx;
+    mp_thread_set_name("rdp-live-producer");
+    while (true) {
+        mp_mutex_lock(&p->lock);
+        while (!p->stopping &&
+               (p->queue_count == RDP_QUEUE_PACKETS ||
+                p->queue_bytes >= RDP_QUEUE_BYTES)) {
+            MP_INFO(p->demuxer, "producer blocked queue_count=%d queue_bytes=%zu\n",
+                    p->queue_count, p->queue_bytes);
+            mp_cond_wait(&p->wakeup, &p->lock);
+        }
+        bool stopping = p->stopping;
+        mp_mutex_unlock(&p->lock);
+        if (stopping)
+            break;
+
+        uint32_t record = 0;
+        if (!get_u32(p->demuxer->stream, &record)) {
+            mp_mutex_lock(&p->lock);
+            if (!p->stopping)
+                p->producer_failed = true;
+            mp_cond_broadcast(&p->wakeup);
+            mp_mutex_unlock(&p->lock);
+            break;
+        }
+        if (record == RDP_RECORD_EOF) {
+            mp_mutex_lock(&p->lock);
+            p->producer_done = true;
+            mp_cond_broadcast(&p->wakeup);
+            mp_mutex_unlock(&p->lock);
+            break;
+        }
+        struct rdp_ready_packet *ready = calloc(1, sizeof(*ready));
+        if (record != RDP_RECORD_PACKET || !ready ||
+            !read_live_packet_header(p, &ready->live_packet)) {
+            free_ready(ready);
+            mp_mutex_lock(&p->lock);
+            p->producer_failed = true;
+            mp_cond_broadcast(&p->wakeup);
+            mp_mutex_unlock(&p->lock);
+            break;
+        }
+
+        struct rdp_packet_index *packet = &ready->live_packet;
+        mp_mutex_lock(&p->lock);
+        while (!p->stopping &&
+               (p->queue_count == RDP_QUEUE_PACKETS ||
+                p->queue_bytes + packet->payload_size > RDP_QUEUE_BYTES))
+            mp_cond_wait(&p->wakeup, &p->lock);
+        stopping = p->stopping;
+        mp_mutex_unlock(&p->lock);
+        if (stopping) {
+            free_ready(ready);
+            break;
+        }
+        ready->payload = malloc(packet->payload_size);
+        if (!ready->payload ||
+            !read_exact(p->demuxer->stream, ready->payload, packet->payload_size)) {
+            free_ready(ready);
+            mp_mutex_lock(&p->lock);
+            if (!p->stopping)
+                p->producer_failed = true;
+            mp_cond_broadcast(&p->wakeup);
+            mp_mutex_unlock(&p->lock);
+            break;
+        }
+
+        mp_mutex_lock(&p->lock);
+        if (p->stopping) {
+            mp_mutex_unlock(&p->lock);
+            free_ready(ready);
+            break;
+        }
+        int tail = (p->queue_head + p->queue_count) % RDP_QUEUE_PACKETS;
+        p->queue[tail] = ready;
+        p->queue_count++;
+        p->queue_bytes += packet->payload_size;
+        p->max_queue_count = MPMAX(p->max_queue_count, p->queue_count);
+        p->max_queue_bytes = MPMAX(p->max_queue_bytes, p->queue_bytes);
+        mp_cond_broadcast(&p->wakeup);
+        mp_mutex_unlock(&p->lock);
+    }
+    MP_THREAD_RETURN();
 }
 
 static bool wait_for_group_delay_locked(struct priv *p, int group, uint64_t epoch)
@@ -404,7 +515,7 @@ static int rustdash_open(struct demuxer *demuxer, enum demux_check check)
     if (check != DEMUX_CHECK_REQUEST && check != DEMUX_CHECK_FORCE)
         return -1;
     struct stream *s = demuxer->stream;
-    if (!s || !s->seekable)
+    if (!s)
         return -1;
 
     char magic[8];
@@ -414,9 +525,15 @@ static int rustdash_open(struct demuxer *demuxer, enum demux_check check)
         return -1;
     bool generation_fixture = !memcmp(magic, RDP_GENERATION_MAGIC, 8) &&
                               version == RDP_GENERATION_VERSION;
+    bool live_source = !memcmp(magic, RDP_LIVE_MAGIC, 8) &&
+                       version == RDP_LIVE_VERSION;
     if (generation_fixture) {
         if (!get_u32(s, &num_generations) || num_tracks != 1 || num_generations != 2)
             return -1;
+    } else if (live_source) {
+        if (num_tracks != 2)
+            return -1;
+        num_generations = num_tracks;
     } else {
         if (memcmp(magic, RDP_MAGIC, 8) || version != RDP_VERSION || num_tracks != 2)
             return -1;
@@ -427,6 +544,7 @@ static int rustdash_open(struct demuxer *demuxer, enum demux_check check)
     demuxer->priv = p;
     p->demuxer = demuxer;
     p->generation_fixture = generation_fixture;
+    p->live_source = live_source;
     for (uint32_t n = 0; n < num_generations; n++) {
         if (!read_config(demuxer, p, !generation_fixture || n == 0))
             return -1;
@@ -435,35 +553,39 @@ static int rustdash_open(struct demuxer *demuxer, enum demux_check check)
         return -1;
 
     int group = 0;
-    bool seen_video_keyframe = false;
-    while (true) {
-        uint32_t record;
-        if (!get_u32(s, &record))
+    if (!live_source) {
+        bool seen_video_keyframe = false;
+        while (true) {
+            uint32_t record;
+            if (!get_u32(s, &record))
+                return -1;
+            if (record == RDP_RECORD_EOF)
+                break;
+            if (record != RDP_RECORD_PACKET ||
+                !scan_packet(demuxer, p, &group, &seen_video_keyframe))
+                return -1;
+        }
+        if (!p->num_packets)
             return -1;
-        if (record == RDP_RECORD_EOF)
-            break;
-        if (record != RDP_RECORD_PACKET ||
-            !scan_packet(demuxer, p, &group, &seen_video_keyframe))
-            return -1;
-    }
-    if (!p->num_packets)
-        return -1;
 
-    p->source = fopen(demuxer->filename, "rb");
-    if (!p->source) {
-        MP_ERR(demuxer, "could not open producer fixture %s: %s\n",
-               demuxer->filename, strerror(errno));
-        return -1;
+        p->source = fopen(demuxer->filename, "rb");
+        if (!p->source) {
+            MP_ERR(demuxer, "could not open producer fixture %s: %s\n",
+                   demuxer->filename, strerror(errno));
+            return -1;
+        }
     }
     mp_mutex_init(&p->lock);
     mp_cond_init(&p->wakeup);
     p->sync_initialized = true;
     p->delay_ms = read_delay_ms();
-    p->producer_group = p->packets[0].group;
+    p->producer_group = live_source ? 0 : p->packets[0].group;
     mp_cancel_set_cb(demuxer->cancel, cancel_wait, p);
-    if (mp_thread_create(&p->producer_thread, producer_thread, p)) {
+    if (mp_thread_create(&p->producer_thread,
+                         live_source ? live_producer_thread : producer_thread, p)) {
         mp_cancel_set_cb(demuxer->cancel, NULL, NULL);
-        fclose(p->source);
+        if (p->source)
+            fclose(p->source);
         p->source = NULL;
         mp_cond_destroy(&p->wakeup);
         mp_mutex_destroy(&p->lock);
@@ -472,12 +594,13 @@ static int rustdash_open(struct demuxer *demuxer, enum demux_check check)
     }
     p->producer_started = true;
 
-    demuxer->seekable = true;
-    demuxer->filetype = generation_fixture ? "rustdash-generation-v2"
-                                            : "rustdash-live-v1";
+    demuxer->seekable = !live_source;
+    demuxer->filetype = live_source ? "rustdash-live-v3" :
+        (generation_fixture ? "rustdash-generation-v2" : "rustdash-live-v1");
     MP_INFO(demuxer, "bounded producer started packets=%d groups=%d "
             "queue_packets=%d queue_bytes=%u delay_ms=%d\n",
-            p->num_packets, group + 1, RDP_QUEUE_PACKETS, RDP_QUEUE_BYTES,
+            live_source ? -1 : p->num_packets, live_source ? -1 : group + 1,
+            RDP_QUEUE_PACKETS, RDP_QUEUE_BYTES,
             p->delay_ms);
     return 0;
 }
@@ -518,7 +641,8 @@ static bool rustdash_read_packet(struct demuxer *demuxer, struct demux_packet **
         p->queue[p->queue_head] = NULL;
         p->queue_head = (p->queue_head + 1) % RDP_QUEUE_PACKETS;
         p->queue_count--;
-        struct rdp_packet_index *src = &p->packets[ready->index];
+        struct rdp_packet_index *src = p->live_source ? &ready->live_packet
+                                                      : &p->packets[ready->index];
         p->queue_bytes -= src->payload_size;
         mp_cond_broadcast(&p->wakeup);
         mp_mutex_unlock(&p->lock);
@@ -581,6 +705,8 @@ static void rustdash_interrupt(struct demuxer *demuxer)
 static void rustdash_seek(struct demuxer *demuxer, double seek_pts, int flags)
 {
     struct priv *p = demuxer->priv;
+    if (p->live_source)
+        return;
     double target = flags & SEEK_FACTOR ? seek_pts * demuxer->duration : seek_pts;
     int chosen = 0;
     double chosen_pts = 0;

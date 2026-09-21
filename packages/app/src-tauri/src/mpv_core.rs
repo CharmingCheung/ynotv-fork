@@ -577,15 +577,14 @@ pub async fn load_file<R: Runtime>(
 }
 
 pub async fn load_native_dash_packet_source<R: Runtime>(
-    app: &AppHandle<R>, path: &std::path::Path,
+    app: &AppHandle<R>, source: &str,
 ) -> Result<(), String> {
     let state = app.state::<MpvCoreState>();
     let mpv = { state.mpv.lock().unwrap().clone() }
         .ok_or("Native DASH requires initialized in-process libmpv")?;
-    let path = path.to_str().ok_or("Native DASH packet path is invalid")?;
-    mpv.command("loadfile", &[path, "replace", "-1", "demuxer=rustdash"])
+    mpv.command("loadfile", &[source, "replace", "-1", "demuxer=rustdash"])
         .map_err(|e| format!("Native DASH custom demux load failed: {:?}", e))?;
-    *state.current_url.lock().unwrap() = Some(path.to_string());
+    *state.current_url.lock().unwrap() = Some(source.to_string());
     Ok(())
 }
 
