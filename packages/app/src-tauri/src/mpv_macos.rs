@@ -225,7 +225,11 @@ fn start_status_monitor<R: Runtime>(app: AppHandle<R>) {
             tokio::time::sleep(Duration::from_millis(500)).await;
 
             // Poll properties
-            let properties = ["pause", "volume", "mute", "time-pos", "duration", "paused-for-cache", "core-idle", "eof-reached"];
+            // `vid`/`video-format` are polled too: the frontend needs them to
+            // tell an audio-only stream (radio) from a video one, and this
+            // engine previously reported neither, so the audio visualiser never
+            // appeared here.
+            let properties = ["pause", "volume", "mute", "time-pos", "duration", "paused-for-cache", "core-idle", "eof-reached", "vid", "video-format"];
             for prop in &properties {
                 let result = get_property_internal(&app, prop).await;
                 match (*prop, result) {
@@ -235,6 +239,10 @@ fn start_status_monitor<R: Runtime>(app: AppHandle<R>) {
                     ("time-pos", Ok(Value::Number(t))) => last_status.position = t.as_f64().unwrap_or(0.0),
                     ("duration", Ok(Value::Number(d))) => last_status.duration = d.as_f64().unwrap_or(0.0),
                     ("paused-for-cache", Ok(Value::Bool(p))) => last_status.paused_for_cache = p,
+                    // mpv answers `vid` with `false` when nothing is selected and the
+                    // selected track's id otherwise.
+                    ("vid", Ok(v)) => last_status.video_track_id = Some(v),
+                    ("video-format", Ok(Value::String(f))) => last_status.video_format = Some(f),
                     ("core-idle", Ok(Value::Bool(i))) => last_status.core_idle = i,
                     ("eof-reached", Ok(Value::Bool(e))) => {
                         last_status.eof_reached = e;

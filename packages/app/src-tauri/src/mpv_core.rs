@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use libmpv2::events::{Event, EventContext};
+use libmpv2::mpv_node::MpvNode;
 use libmpv2::{Mpv, MpvInitializer};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -349,6 +350,26 @@ pub async fn init_mpv_with_params<R: Runtime>(
     Ok(())
 }
 
+/// Read the selected video track in the same shape the standalone sidecar
+/// reports it.
+///
+/// mpv answers the *node* form of `vid` with `false` when no video track is
+/// selected (`1`, `2`, ... when one is), but a typed int64 read of the same
+/// property fails outright in that case — so the previous
+/// `get_property::<i64>("vid").ok()` produced `null` for every audio-only
+/// stream, leaving the UI unable to tell "no video" from "not reported" and
+/// hiding the audio visualiser on the embedded engine. The int64 read stays as
+/// a fallback for engines that don't answer the node form.
+fn read_video_track_id(mpv: &Mpv) -> Option<Value> {
+    match mpv.get_property::<MpvNode>("vid") {
+        Ok(MpvNode::Flag(flag)) => Some(Value::Bool(flag)),
+        Ok(MpvNode::Int64(id)) => Some(Value::from(id)),
+        Ok(MpvNode::Double(id)) => Some(Value::from(id)),
+        Ok(MpvNode::String(id)) => Some(Value::from(id)),
+        _ => mpv.get_property::<i64>("vid").ok().map(Value::from),
+    }
+}
+
 fn spawn_status_monitor<R: Runtime>(
     app: AppHandle<R>,
     mpv: Arc<Mpv>,
@@ -380,7 +401,7 @@ fn spawn_status_monitor<R: Runtime>(
             let core_idle: bool = mpv.get_property("core-idle").unwrap_or(true);
             let eof_reached: bool = mpv.get_property("eof-reached").unwrap_or(false);
             let video_format: Option<String> = mpv.get_property("video-format").ok();
-            let vid: Option<i64> = mpv.get_property("vid").ok();
+            let video_track_id = read_video_track_id(&mpv);
 
             // Keep enough subtitle state in the normal application log to
             // distinguish "the UI remembers a track" from "libmpv is really
@@ -490,7 +511,7 @@ fn spawn_status_monitor<R: Runtime>(
                 core_idle,
                 eof_reached,
                 video_format,
-                video_track_id: vid.map(Value::from),
+                video_track_id,
             };
 
             let _ = app.emit("mpv-status", status);
