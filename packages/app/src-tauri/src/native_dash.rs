@@ -17,7 +17,11 @@ const MIN_MUP: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct NativeDashPlaybackConfig { pub manifest_url: String, pub drm: NativeDashDrm }
+pub(crate) struct NativeDashPlaybackConfig {
+    pub manifest_url: String,
+    #[serde(default)] pub request_headers: HashMap<String, String>,
+    pub drm: NativeDashDrm,
+}
 #[derive(Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub(crate) enum NativeDashDrm { ClearKey { kid: String, key: String } }
@@ -50,7 +54,7 @@ pub(crate) async fn prepare(config: NativeDashPlaybackConfig) -> Result<String, 
         active.files = None; active.dynamic = false; active.generation = generation;
         active.cancellation = Some(cancellation.clone());
     }
-    let result = build_live(&config.manifest_url, kid, key, &cancellation).await;
+    let result = build_live(&config.manifest_url, &config.request_headers, kid, key, &cancellation).await;
     match result {
         Ok((dir, source, dynamic)) => {
             let mut active = ACTIVE.lock();
@@ -224,9 +228,15 @@ struct LiveRuntime {
     seen_cues:HashSet<String>, origin:ExactTime, batch:u64,
 }
 
-async fn build_live(url:&str,kid:[u8;16],key:[u8;16],cancel:&CancellationToken)->Result<(TempDir,String,bool),String>{
+async fn build_live(url:&str,request_headers:&HashMap<String,String>,kid:[u8;16],key:[u8;16],cancel:&CancellationToken)->Result<(TempDir,String,bool),String>{
     let manifest_url=Url::parse(url).map_err(|_|"Manifest fetch failed: invalid URL")?;
-    let client=reqwest::Client::builder().connect_timeout(Duration::from_secs(8)).timeout(Duration::from_secs(20)).build().map_err(|_|"Manifest fetch failed")?;
+    let mut headers=reqwest::header::HeaderMap::new();
+    for(name,value)in request_headers{
+        let name=reqwest::header::HeaderName::from_bytes(name.as_bytes()).map_err(|_|"Manifest fetch failed: invalid header name")?;
+        let value=reqwest::header::HeaderValue::from_str(value).map_err(|_|"Manifest fetch failed: invalid header value")?;
+        headers.insert(name,value);
+    }
+    let client=reqwest::Client::builder().default_headers(headers).connect_timeout(Duration::from_secs(8)).timeout(Duration::from_secs(20)).build().map_err(|_|"Manifest fetch failed")?;
     let(body,final_url)=fetch_final(&client,manifest_url.clone(),cancel,"Manifest fetch failed").await?;
     let snapshot=parse_snapshot(&body,final_url,1,None)?;log_snapshot(&snapshot);
     let mut index=SegmentIndex::default();let stats=index.merge(&snapshot)?;log_merge(&snapshot,&stats);

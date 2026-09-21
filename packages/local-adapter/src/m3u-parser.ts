@@ -14,6 +14,82 @@ import { fetch as tauriFetch } from '@tauri-apps/plugin-http';
 import type { Channel, Category } from '@ynotv/core';
 
 const XTREAM_STREAM_ID_RE = /\/live\/[^/]+\/[^/]+\/(\d+)(?:\.(?:ts|m3u8|m3u))?/i;
+export const M3U_HTTP_HEADERS_PROPERTY = 'ynotv.http_headers';
+
+type HttpHeaders = Record<string, string>;
+
+function decodeHeaderComponent(value: string): string {
+  try {
+    return decodeURIComponent(value.replace(/\+/g, '%20'));
+  } catch {
+    return value;
+  }
+}
+
+function setHttpHeader(headers: HttpHeaders, rawName: string, rawValue: string, decode = true): void {
+  const name = rawName.trim().replace(/^!+/, '');
+  if (!name || /[\r\n:]/.test(name)) return;
+  const value = (decode ? decodeHeaderComponent(rawValue.trim()) : rawValue.trim());
+  if (!value || /[\r\n]/.test(value)) return;
+  const existing = Object.keys(headers).find(key => key.toLowerCase() === name.toLowerCase());
+  if (existing) delete headers[existing];
+  const canonical = ({
+    'user-agent': 'User-Agent', referer: 'Referer', referrer: 'Referer',
+    origin: 'Origin', cookie: 'Cookie', authorization: 'Authorization',
+  } as Record<string, string>)[name.toLowerCase()] || name;
+  headers[canonical] = value;
+}
+
+function mergeHeaderString(headers: HttpHeaders, value: string): void {
+  for (const part of value.replace(/\|/g, '&').split('&')) {
+    const separator = part.indexOf('=');
+    if (separator <= 0) continue;
+    setHttpHeader(headers, part.substring(0, separator), part.substring(separator + 1));
+  }
+}
+
+function mergeJsonHeaders(headers: HttpHeaders, value: string): void {
+  try {
+    const parsed = JSON.parse(value);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+    for (const [name, headerValue] of Object.entries(parsed)) {
+      if (typeof headerValue === 'string') setHttpHeader(headers, name, headerValue, false);
+    }
+  } catch { /* Ignore malformed optional metadata. */ }
+}
+
+function mergeKodiHeaders(headers: HttpHeaders, key: string, value: string): void {
+  if (/inputstream\.adaptive\.(?:common|manifest|stream)_headers$/i.test(key)) {
+    mergeHeaderString(headers, value);
+    return;
+  }
+  if (/inputstream\.adaptive\.(?:license_key|drm_legacy)$/i.test(key)) {
+    const pipe = value.indexOf('|');
+    if (pipe >= 0) mergeHeaderString(headers, value.substring(pipe + 1));
+    return;
+  }
+  if (/inputstream\.adaptive\.drm$/i.test(key)) {
+    try {
+      const drm = JSON.parse(value);
+      const visit = (node: unknown) => {
+        if (!node || typeof node !== 'object') return;
+        for (const [childKey, child] of Object.entries(node as Record<string, unknown>)) {
+          if (childKey.toLowerCase() === 'req_headers' && typeof child === 'string') mergeHeaderString(headers, child);
+          else visit(child);
+        }
+      };
+      visit(drm);
+    } catch { /* Keep the original KODIPROP even when its JSON is invalid. */ }
+  }
+}
+
+function splitUrlHeaders(line: string): { url: string; headers: HttpHeaders } {
+  const separator = line.indexOf('|');
+  if (separator < 0) return { url: line, headers: {} };
+  const headers: HttpHeaders = {};
+  mergeHeaderString(headers, line.substring(separator + 1));
+  return { url: line.substring(0, separator).trim(), headers };
+}
 
 /**
  * Generate a stable hash from a string (DJB2 algorithm)
@@ -122,6 +198,7 @@ interface ExtInfMetadata {
   catchupType?: string;
   catchupDays?: number;
   catchupSource?: string;
+  httpHeaders: HttpHeaders;
 }
 
 interface HeaderCatchupDefaults {
@@ -237,8 +314,33 @@ export function parseM3U(content: string, sourceId: string): M3UParseResult {
       if (separator > 0) {
         const key = property.substring(0, separator).trim().toLowerCase();
         const value = property.substring(separator + 1).trim();
-        if (key) currentKodiProps[key] = value;
+        if (key) {
+          currentKodiProps[key] = value;
+          mergeKodiHeaders(currentMetadata.httpHeaders, key, value);
+        }
       }
+      continue;
+    }
+
+    if (currentMetadata && line.toUpperCase().startsWith('#EXTVLCOPT:')) {
+      const option = line.substring('#EXTVLCOPT:'.length);
+      const separator = option.indexOf('=');
+      if (separator > 0) {
+        const key = option.substring(0, separator).trim().toLowerCase();
+        const value = option.substring(separator + 1).trim();
+        const headerName = ({
+          'http-user-agent': 'User-Agent',
+          'http-referrer': 'Referer',
+          'http-referer': 'Referer',
+          'http-origin': 'Origin',
+        } as Record<string, string>)[key];
+        if (headerName) setHttpHeader(currentMetadata.httpHeaders, headerName, value, false);
+      }
+      continue;
+    }
+
+    if (currentMetadata && line.toUpperCase().startsWith('#EXTHTTP:')) {
+      mergeJsonHeaders(currentMetadata.httpHeaders, line.substring('#EXTHTTP:'.length).trim());
       continue;
     }
 
@@ -249,13 +351,20 @@ export function parseM3U(content: string, sourceId: string): M3UParseResult {
 
     // This should be a URL - create channel if we have metadata
     if (currentMetadata && (line.startsWith('http://') || line.startsWith('https://') || line.startsWith('rtmp://'))) {
+      const parsedUrl = splitUrlHeaders(line);
+      for (const [name, value] of Object.entries(parsedUrl.headers)) {
+        setHttpHeader(currentMetadata.httpHeaders, name, value, false);
+      }
+      if (Object.keys(currentMetadata.httpHeaders).length > 0) {
+        currentKodiProps[M3U_HTTP_HEADERS_PROPERTY] = JSON.stringify(currentMetadata.httpHeaders);
+      }
       channelCounter++;
 
       // Generate stable stream_id that persists across re-syncs
       const streamId = generateStableStreamId(
         sourceId,
         currentMetadata.tvgId,
-        line,
+        parsedUrl.url,
         seenStreamIds
       );
 
@@ -283,12 +392,12 @@ export function parseM3U(content: string, sourceId: string): M3UParseResult {
         stream_icon: currentMetadata.tvgLogo || '',
         epg_channel_id: currentMetadata.tvgId || '',
         category_ids: [categoryId],
-        direct_url: line,
+        direct_url: parsedUrl.url,
         source_id: sourceId,
         tv_archive: currentMetadata.tvArchive ? 1 : 0,
         provider_order: channelCounter - 1, // 0-based position in M3U file
         ...(currentMetadata.tvgChno !== null && { channel_num: currentMetadata.tvgChno }),
-        xtream_stream_id: extractXtreamStreamId(line) || undefined,
+        xtream_stream_id: extractXtreamStreamId(parsedUrl.url) || undefined,
         catchup_type: currentMetadata.catchupType,
         catchup_source: currentMetadata.catchupSource,
         catchup_days: currentMetadata.catchupDays,
@@ -340,6 +449,7 @@ function parseExtInf(line: string, headerDefaults?: HeaderCatchupDefaults): ExtI
     catchupType: headerDefaults?.catchupType,
     catchupDays: headerDefaults?.catchupDays,
     catchupSource: headerDefaults?.catchupSource,
+    httpHeaders: {},
   };
 
   // Remove #EXTINF: prefix
@@ -383,6 +493,11 @@ function parseExtInf(line: string, headerDefaults?: HeaderCatchupDefaults): ExtI
   if (groupTitle) {
     metadata.groupTitle = groupTitle;
   }
+
+  const userAgent = extractAttribute(attrPart, ['http-user-agent', 'user-agent']);
+  if (userAgent) setHttpHeader(metadata.httpHeaders, 'User-Agent', userAgent, false);
+  const referrer = extractAttribute(attrPart, ['http-referrer', 'http-referer', 'referrer', 'referer']);
+  if (referrer) setHttpHeader(metadata.httpHeaders, 'Referer', referrer, false);
 
   // Extract catchup tags (override header defaults if present)
   const catchupType = extractAttribute(attrPart, ['catchup', 'catchup-type', 'catchup-mode']);

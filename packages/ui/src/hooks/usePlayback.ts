@@ -27,6 +27,7 @@ import { toSubSourceLang, fromSubSourceLang, LANG_MAP } from '../services/subsou
 import { snapshotPlaylistProgress } from '../utils/playlistPlayback';
 import i18n, { translateNativeError } from '../i18n';
 import { routeNativeDash, type NativeDashPlaybackConfig } from '../services/native-dash';
+import { getM3uHttpHeaders, splitM3uUserAgent } from '../services/m3u-http-headers';
 
 /**
  * Push Nuvio watch progress for the given item, building the entry from the
@@ -229,8 +230,19 @@ async function tryLoadWithFallbacks(
   userAgent?: string,
   onError?: (msg: string) => void,
   nativeDash?: NativeDashPlaybackConfig,
+  httpHeaders: Record<string, string> = {},
 ): Promise<{ success: boolean; url: string; error?: string }> {
+  const request = splitM3uUserAgent(httpHeaders, userAgent);
+  userAgent = request.userAgent;
   logInfo('[Playback] Setting User-Agent:', userAgent || '(using default)');
+
+  // Always reset this per load: mpv properties persist and must not leak one
+  // channel's credentials/referer into the next channel.
+  try {
+    await Bridge.setProperty('http-header-fields', request.headerFields);
+  } catch (e) {
+    logWarn('Failed to set channel HTTP headers:', e);
+  }
 
   if (userAgent) {
     try {
@@ -1107,7 +1119,8 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
         Bridge.setCastMetadata(channel.name, 'Live TV');
       }
 
-      const nativeDashRoute = routeNativeDash(resolved.url, channel.kodi_props);
+      const channelHttpHeaders = getM3uHttpHeaders(channel.kodi_props);
+      const nativeDashRoute = await routeNativeDash(resolved.url, channel.kodi_props, channelHttpHeaders);
       if (nativeDashRoute.kind === 'error') {
         setError(nativeDashRoute.error);
         return false;
@@ -1117,7 +1130,8 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
         true,
         resolved.userAgent,
         (msg) => setError(msg),
-        nativeDashRoute.kind === 'native' ? nativeDashRoute.config : undefined
+        nativeDashRoute.kind === 'native' ? nativeDashRoute.config : undefined,
+        channelHttpHeaders,
       );
 
       if (!result.success) {
@@ -2669,8 +2683,16 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
     const isLocal = isLocalUrl(resolved.url);
     if (isLocal) {
       setIgnoreHttpErrors(true);
-    }      const result = await tryLoadWithFallbacks(resolved.url, false, resolved.userAgent);
-      if (!result.success) {
+    }
+    const result = await tryLoadWithFallbacks(
+      resolved.url,
+      false,
+      resolved.userAgent,
+      undefined,
+      undefined,
+      getM3uHttpHeaders(channel.kodi_props),
+    );
+    if (!result.success) {
       if (isLocal) setIgnoreHttpErrors(false);
       setError(translateNativeError(result.error) || i18n.t('player:failedToLoadCatchupStream'));
     } else {
