@@ -45,6 +45,8 @@ for mode in seek stop quit queued-stop; do
   fi
 done
 
+python3 dvr_track_switch_test.py "$mpv_bin"
+
 "$mpv_bin" -v --no-config --demuxer=rustdash --demuxer-seekable-cache=no \
   --cache=no --hwdec=no --vo=null --ao=null --aid=no \
   "$live_fixture" > "$results/audio-disabled.log" 2>&1

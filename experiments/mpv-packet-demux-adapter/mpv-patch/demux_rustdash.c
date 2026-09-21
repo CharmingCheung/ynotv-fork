@@ -713,6 +713,11 @@ static int rustdash_open(struct demuxer *demuxer, enum demux_check check)
     p->producer_started = true;
 
     demuxer->seekable = !live_source || live_v6;
+    // RDPKT006 seeks require a seek epoch prepared by the Rust producer.
+    // Mark the source partially seekable so mpv does not synthesize an
+    // unprepared refresh seek when enabling an audio/subtitle track. Explicit
+    // player seeks still reach rustdash_seek after the epoch handshake.
+    demuxer->partially_seekable = live_v6;
     demuxer->filetype = live_v6 ? "rustdash-live-v6" : live_v5 ? "rustdash-live-v5" : live_v4 ? "rustdash-live-v4" : live_source ? "rustdash-live-v3" :
         (generation_fixture ? "rustdash-generation-v2" : "rustdash-live-v1");
     MP_INFO(demuxer, "bounded producer started packets=%d groups=%d "
