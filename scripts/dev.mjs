@@ -52,9 +52,7 @@ if ((process.platform === 'darwin' && process.arch === 'arm64') ||
   const nativeLibmpv = join(nativeRuntime, libraryName);
   if (!existsSync(nativeLibmpv)) throw new Error(`Native runtime setup completed without ${libraryName}`);
   env.YNOTV_NATIVE_DASH_LIBMPV_DIR = nativeRuntime;
-  env.YNOTV_NATIVE_DASH_PACKET_PRODUCER = process.platform === 'win32'
-    ? join(nativeRuntime, producerName)
-    : join(root, 'experiments/clearkey-cenc-packet-transform', producerName);
+  env.YNOTV_NATIVE_DASH_PACKET_PRODUCER = join(nativeRuntime, producerName);
   if (process.platform === 'darwin') {
     env.DYLD_LIBRARY_PATH = `${nativeRuntime}${delimiter}${env.DYLD_LIBRARY_PATH ?? ''}`;
   } else {

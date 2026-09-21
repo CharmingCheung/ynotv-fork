@@ -21,19 +21,19 @@ jobs:
     runs-on: macos-15
     steps:
       - name: Checkout ynoTV
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Checkout ynotv-native source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: CharmingCheung/ynotv-native
           ref: ${{ inputs.native_ref }}
           path: ynotv-native
 
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 24
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
 
@@ -49,10 +49,8 @@ jobs:
           ./ynotv-native/scripts/build-macos.sh "$version"
           node scripts/setup-native-runtime.mjs --from ynotv-native/.work/stage
 
-      - name: Build packet producer and sidecars
+      - name: Build sidecars
         run: |
-          export PKG_CONFIG_PATH="$(brew --prefix ffmpeg)/lib/pkgconfig:$(brew --prefix openssl@3)/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
-          bash experiments/clearkey-cenc-packet-transform/build.sh
           bash scripts/download-mpv-tauri.sh
           node packages/app/scripts/download-ffmpeg.js
 
@@ -67,7 +65,7 @@ jobs:
       - name: Build macOS app
         env:
           YNOTV_NATIVE_DASH_LIBMPV_DIR: ${{ github.workspace }}/packages/app/src-tauri/native-dash-libmpv
-          YNOTV_NATIVE_DASH_PACKET_PRODUCER: ${{ github.workspace }}/experiments/clearkey-cenc-packet-transform/cenc_component_producer
+          YNOTV_NATIVE_DASH_PACKET_PRODUCER: ${{ github.workspace }}/packages/app/src-tauri/native-dash-libmpv/cenc_component_producer
           DYLD_LIBRARY_PATH: ${{ github.workspace }}/packages/app/src-tauri/native-dash-libmpv
           VITE_TRAKT_CLIENT_ID: ${{ secrets.TRAKT_CLIENT_ID }}
           VITE_TRAKT_CLIENT_SECRET: ${{ secrets.TRAKT_CLIENT_SECRET }}
@@ -75,7 +73,7 @@ jobs:
         run: pnpm tauri build --bundles dmg --ci --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
       - name: Upload macOS package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ynotv-macos-arm64-native-source
           path: |
@@ -89,19 +87,19 @@ jobs:
     runs-on: windows-2025
     steps:
       - name: Checkout ynoTV
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Checkout ynotv-native source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: CharmingCheung/ynotv-native
           ref: ${{ inputs.native_ref }}
           path: ynotv-native
 
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 24
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
 
@@ -131,7 +129,7 @@ jobs:
         shell: msys2 {0}
         run: |
           version=$(tr -d '[:space:]' < ynotv-native/VERSION)
-          ./ynotv-native/scripts/build-windows.sh "$version" "$(cygpath -u "$GITHUB_WORKSPACE")"
+          ./ynotv-native/scripts/build-windows.sh "$version"
 
       - name: Install locally built Native DASH runtime
         shell: pwsh
@@ -166,7 +164,7 @@ jobs:
         run: pnpm tauri build --bundles nsis --ci --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
       - name: Upload Windows package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ynotv-windows-x64-native-source
           path: |

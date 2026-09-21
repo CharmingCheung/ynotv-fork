@@ -19,7 +19,7 @@ pnpm dev
 
 | Platform | Prepared automatically | Still required from the machine |
 | --- | --- | --- |
-| Apple Silicon macOS | versioned Native DASH libmpv/libplacebo runtime, mpv sidecar, yt-dlp; copies FFmpeg into ignored caches; builds the packet producer | Xcode CLI tools and Homebrew `mpv`, `ffmpeg`, `pkg-config` |
+| Apple Silicon macOS | versioned Native DASH libmpv/libplacebo runtime and packet producer, mpv sidecar, yt-dlp; copies FFmpeg into ignored caches | Xcode CLI tools and Homebrew `mpv`, `ffmpeg`, `pkg-config` |
 | Windows x64 | versioned Native DASH libmpv runtime and packet producer, mpv, FFmpeg, yt-dlp, Vulkan loader | Visual Studio C++ tools, Windows SDK, WebView2, Git Bash, 7-Zip |
 | Linux x64 | wrapper around `/usr/bin/mpv`, FFmpeg and yt-dlp | Experimental only; the desktop playback backend is not implemented for Linux |
 
@@ -72,10 +72,9 @@ pnpm dev
 ```
 
 The setup validates both the current `RDPKT006` demux contract and the
-`YNOIMSC1` bitmap-subtitle bridge, builds the repository-local ClearKey packet
-producer when missing, and injects the cached runtime into both the Rust linker
-and the launched process. `pnpm setup:native-runtime -- --force` refreshes a
-damaged cache.
+`YNOIMSC1` bitmap-subtitle bridge, verifies the bundled ClearKey packet producer,
+and injects the cached runtime into both the Rust linker and the launched
+process. `pnpm setup:native-runtime -- --force` refreshes a damaged cache.
 
 The pinned source, patch, regression fixtures, platform build scripts, and release
 workflow live in `CharmingCheung/ynotv-native`. Application developers consume
@@ -106,9 +105,10 @@ required before treating the first Windows artifact as production-proven.
 The current macOS bundle is **not yet portable**. Inspection of the generated
 app shows absolute `/opt/homebrew/...` references from the main executable and
 the copied FFmpeg binary; a bundled libmpv build would also need its full dylib
-closure relocated. The Native DASH packet producer is not bundled. Therefore a
-DMG built by the current pipeline can depend on the builder's Homebrew
-installation and must not be treated as a distributable release.
+closure relocated. The Native DASH packet producer is bundled, but its FFmpeg
+and OpenSSL dylib closure is not yet relocated. Therefore a DMG built by the
+current pipeline can depend on the builder's Homebrew installation and must not
+be treated as a distributable release.
 
 Run the guard after any macOS bundle build:
 

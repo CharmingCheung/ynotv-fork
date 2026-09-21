@@ -25,12 +25,10 @@ if (!library.includes(Buffer.from('RDPKT006')) || !library.includes(Buffer.from(
 
 const producer = process.platform === 'win32'
   ? join(patched, 'cenc_component_producer.exe')
-  : join(process.cwd(), 'experiments/clearkey-cenc-packet-transform/cenc_component_producer');
-if (process.platform === 'darwin' && !existsSync(producer)) {
-  console.log('[native-dash] building the repository-local ClearKey packet producer');
-  const result = spawnSync('bash', ['experiments/clearkey-cenc-packet-transform/build.sh'], { stdio: 'inherit' });
-  if (result.error) throw result.error;
-  if (result.status !== 0) process.exit(result.status ?? 1);
+  : join(patched, 'cenc_component_producer');
+if (!existsSync(producer)) {
+  console.error('[native-dash] Native DASH packet producer is missing from the runtime');
+  process.exit(1);
 }
 
 console.log(`[native-dash] using patched libmpv: ${patched}`);

@@ -1,7 +1,7 @@
 {
   "bundle": {
     "resources": {
-      "../../../experiments/clearkey-cenc-packet-transform/cenc_component_producer": "cenc_component_producer"
+      "native-dash-libmpv/cenc_component_producer": "cenc_component_producer"
     },
     "macOS": {
       "files": {

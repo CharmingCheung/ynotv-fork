@@ -13,7 +13,7 @@ const platform = (() => {
   if (process.platform === 'darwin' && process.arch === 'arm64') {
     return {
       id: 'macos-arm64', archive: `ynotv-native-macos-arm64-${version}.tar.gz`,
-      library: 'libmpv.2.dylib', required: ['libmpv.dylib', 'libplacebo.360.dylib'],
+      library: 'libmpv.2.dylib', required: ['libmpv.dylib', 'libplacebo.360.dylib', 'cenc_component_producer'],
     };
   }
   if (process.platform === 'win32' && process.arch === 'x64') {

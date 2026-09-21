@@ -46,14 +46,6 @@ if (!existsSync(ffmpeg)) {
 if ((process.platform === 'darwin' && process.arch === 'arm64') ||
     (process.platform === 'win32' && process.arch === 'x64')) {
   run(process.execPath, ['scripts/setup-native-runtime.mjs']);
-
-  const producer = process.platform === 'win32'
-    ? join(tauri, 'native-dash-libmpv/cenc_component_producer.exe')
-    : join(root, 'experiments/clearkey-cenc-packet-transform/cenc_component_producer');
-  if (process.platform === 'darwin' && !existsSync(producer)) {
-    console.log('[dev-setup] building the Native DASH packet producer');
-    run('bash', ['experiments/clearkey-cenc-packet-transform/build.sh']);
-  }
 }
 
 console.log('[dev-setup] native development assets are ready');
