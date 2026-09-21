@@ -330,6 +330,7 @@ mod icon_switcher;
 // Exact DASH time/index model shared by the C0 tests and experimental C5 session.
 mod dash_timeline;
 mod native_dash;
+mod ttml;
 
 #[tauri::command]
 fn get_connected_gamepads() -> Vec<gamepad::GamepadInfo> {

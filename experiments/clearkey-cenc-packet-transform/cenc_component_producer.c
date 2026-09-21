@@ -156,38 +156,45 @@ static int read_component(struct component *component,
     size_t side_size = 0;
     const uint8_t *side = av_packet_get_side_data(
         component->packet, AV_PKT_DATA_ENCRYPTION_INFO, &side_size);
-    if (!side)
-        fail("encrypted component packet has no encryption info");
-    AVEncryptionInfo *info = av_encryption_info_get_side_data(side, side_size);
-    if (!info)
-        fail("could not parse packet encryption info");
-    if (!*printed_kid && info->key_id_size == 16) {
-        printf("packet_kid=%02x%02x...%02x%02x key_lookup=attempted\n",
-               info->key_id[0], info->key_id[1], info->key_id[14], info->key_id[15]);
-        *printed_kid = 1;
-    }
-    if (info->iv_size < component->min_iv) component->min_iv = info->iv_size;
-    if (info->iv_size > component->max_iv) component->max_iv = info->iv_size;
-    if (info->subsample_count) component->subsample_packets++;
-    if (info->subsample_count > component->max_subsamples)
-        component->max_subsamples = info->subsample_count;
-
-    struct cenc_packet input = {
-        component->packet->data,
-        (size_t)component->packet->size,
-        packet_time(component->packet->pts),
-        packet_time(component->packet->dts),
-        component->packet->duration,
-        !!(component->packet->flags & AV_PKT_FLAG_KEY),
-        1,
-    };
-    enum cenc_packet_state state = cenc_decrypt_packet(
-        store, &input, info, 0, &component->clear);
-    av_encryption_info_free(info);
-    if (state != CENC_ENCRYPTED_PACKET) {
-        fprintf(stderr, "cenc_component_producer: transform=%s\n",
-                cenc_packet_state_name(state));
-        exit(state == CENC_KEY_UNAVAILABLE ? 3 : 1);
+    if (side) {
+        AVEncryptionInfo *info = av_encryption_info_get_side_data(side, side_size);
+        if (!info)
+            fail("could not parse packet encryption info");
+        if (!*printed_kid && info->key_id_size == 16) {
+            printf("packet_kid=%02x%02x...%02x%02x key_lookup=attempted\n",
+                   info->key_id[0], info->key_id[1], info->key_id[14], info->key_id[15]);
+            *printed_kid = 1;
+        }
+        if (info->iv_size < component->min_iv) component->min_iv = info->iv_size;
+        if (info->iv_size > component->max_iv) component->max_iv = info->iv_size;
+        if (info->subsample_count) component->subsample_packets++;
+        if (info->subsample_count > component->max_subsamples)
+            component->max_subsamples = info->subsample_count;
+        struct cenc_packet input = {
+            component->packet->data, (size_t)component->packet->size,
+            packet_time(component->packet->pts), packet_time(component->packet->dts),
+            component->packet->duration, !!(component->packet->flags & AV_PKT_FLAG_KEY), 1,
+        };
+        enum cenc_packet_state state = cenc_decrypt_packet(store, &input, info, 0,
+                                                           &component->clear);
+        av_encryption_info_free(info);
+        if (state != CENC_ENCRYPTED_PACKET) {
+            fprintf(stderr, "cenc_component_producer: transform=%s\n",
+                    cenc_packet_state_name(state));
+            exit(state == CENC_KEY_UNAVAILABLE ? 3 : 1);
+        }
+    } else {
+        component->clear.data = malloc((size_t)component->packet->size);
+        if (!component->clear.data)
+            fail("clear packet allocation failed");
+        memcpy(component->clear.data, component->packet->data,
+               (size_t)component->packet->size);
+        component->clear.size = (size_t)component->packet->size;
+        component->clear.pts = packet_time(component->packet->pts);
+        component->clear.dts = packet_time(component->packet->dts);
+        component->clear.duration = component->packet->duration;
+        component->clear.keyframe = !!(component->packet->flags & AV_PKT_FLAG_KEY);
+        component->clear.codec_generation = 1;
     }
     if (component->base_dts == AV_NOPTS_VALUE) {
         component->base_dts = component->packet->dts != AV_NOPTS_VALUE
@@ -236,8 +243,8 @@ static void close_component(struct component *component)
 
 int main(int argc, char **argv)
 {
-    if (argc != 4) {
-        fprintf(stderr, "usage: %s VIDEO.mp4 AUDIO.mp4 OUTPUT.rdp\n", argv[0]);
+    if (argc < 4 || argc > 10) {
+        fprintf(stderr, "usage: %s VIDEO.mp4 AUDIO.mp4 [SUBTITLE.mp4 ...] OUTPUT.rdp\n", argv[0]);
         return 2;
     }
     struct cenc_key_entry entry;
@@ -247,25 +254,32 @@ int main(int argc, char **argv)
         fail("RUSTDASH_TEST_KID and RUSTDASH_TEST_KEY must each be 32 hex digits");
     struct cenc_key_store store = {&entry, 1};
 
-    struct component video;
-    struct component audio;
-    open_component(&video, argv[1], AVMEDIA_TYPE_VIDEO, 1, RDP_TRACK_VIDEO);
-    open_component(&audio, argv[2], AVMEDIA_TYPE_AUDIO, 2, RDP_TRACK_AUDIO);
-    FILE *output = fopen(argv[3], "wb");
+    int component_count = argc - 2;
+    struct component components[8];
+    open_component(&components[0], argv[1], AVMEDIA_TYPE_VIDEO, 1, RDP_TRACK_VIDEO);
+    open_component(&components[1], argv[2], AVMEDIA_TYPE_AUDIO, 2, RDP_TRACK_AUDIO);
+    for (int n = 2; n < component_count; n++)
+        open_component(&components[n], argv[n + 1], AVMEDIA_TYPE_SUBTITLE,
+                       (uint32_t)n + 1, RDP_TRACK_SUBTITLE);
+    FILE *output = fopen(argv[argc - 1], "wb");
     if (!output)
         fail(strerror(errno));
     put_bytes(output, RDP_MAGIC, 8);
     put_u32(output, RDP_VERSION);
-    put_u32(output, 2);
-    write_config(output, &video);
-    write_config(output, &audio);
+    put_u32(output, (uint32_t)component_count);
+    for (int n = 0; n < component_count; n++)
+        write_config(output, &components[n]);
 
     int printed_kid = 0;
-    read_component(&video, &store, &printed_kid);
-    read_component(&audio, &store, &printed_kid);
-    while (video.have_packet || audio.have_packet) {
-        struct component *next = !audio.have_packet ||
-            (video.have_packet && earlier(&video, &audio)) ? &video : &audio;
+    for (int n = 0; n < component_count; n++)
+        read_component(&components[n], &store, &printed_kid);
+    while (1) {
+        struct component *next = NULL;
+        for (int n = 0; n < component_count; n++)
+            if (components[n].have_packet && (!next || earlier(&components[n], next)))
+                next = &components[n];
+        if (!next)
+            break;
         write_packet(output, next);
         read_component(next, &store, &printed_kid);
     }
@@ -273,19 +287,19 @@ int main(int argc, char **argv)
     if (fclose(output) != 0)
         fail("output close failed");
 
-    AVCodecParameters *video_codec = video.format->streams[video.stream_index]->codecpar;
-    AVCodecParameters *audio_codec = audio.format->streams[audio.stream_index]->codecpar;
+    AVCodecParameters *video_codec = components[0].format->streams[components[0].stream_index]->codecpar;
+    AVCodecParameters *audio_codec = components[1].format->streams[components[1].stream_index]->codecpar;
     printf("real_transform=PASS video_codec=%s audio_codec=%s video_packets=%" PRIu64
            " audio_packets=%" PRIu64 " key_lookup=success\n",
            avcodec_get_name(video_codec->codec_id), avcodec_get_name(audio_codec->codec_id),
-           video.packets, audio.packets);
+           components[0].packets, components[1].packets);
     printf("video_iv=%u..%u video_subsample_packets=%" PRIu64
            " video_max_subsamples=%u audio_iv=%u..%u audio_subsample_packets=%" PRIu64
            " audio_max_subsamples=%u pssh_records=%d\n",
-           video.min_iv, video.max_iv, video.subsample_packets, video.max_subsamples,
-           audio.min_iv, audio.max_iv, audio.subsample_packets, audio.max_subsamples,
-           video.pssh_count + audio.pssh_count);
-    close_component(&video);
-    close_component(&audio);
+           components[0].min_iv, components[0].max_iv, components[0].subsample_packets, components[0].max_subsamples,
+           components[1].min_iv, components[1].max_iv, components[1].subsample_packets, components[1].max_subsamples,
+           components[0].pssh_count + components[1].pssh_count);
+    for (int n = 0; n < component_count; n++)
+        close_component(&components[n]);
     return 0;
 }

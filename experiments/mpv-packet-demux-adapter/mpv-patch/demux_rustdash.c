@@ -23,17 +23,22 @@
 #define RDP_GENERATION_VERSION 2u
 #define RDP_LIVE_MAGIC "RDPKT003"
 #define RDP_LIVE_VERSION 3u
+#define RDP_SUBTITLE_MAGIC "RDPKT004"
+#define RDP_SUBTITLE_VERSION 4u
 #define RDP_CODEC_NAME_BYTES 32u
 #define RDP_RECORD_PACKET 0x31544b50u
 #define RDP_RECORD_EOF    0x31464f45u
 #define RDP_TRACK_VIDEO 1u
 #define RDP_TRACK_AUDIO 2u
+#define RDP_TRACK_SUBTITLE 3u
 #define RDP_FLAG_KEYFRAME 1u
+#define RDP_TRACK_FLAG_DEFAULT 1u
+#define RDP_TRACK_FLAG_FORCED 2u
 #define RDP_NOPTS INT64_MIN
 #define RDP_MAX_EXTRADATA (1024u * 1024u)
 #define RDP_MAX_PACKET (64u * 1024u * 1024u)
-#define RDP_MAX_TRACKS 4
-#define RDP_MAX_GENERATIONS 8
+#define RDP_MAX_TRACKS 8
+#define RDP_MAX_GENERATIONS 16
 #define RDP_QUEUE_PACKETS 8
 #define RDP_QUEUE_BYTES (128u * 1024u)
 
@@ -166,7 +171,8 @@ static struct rdp_generation *find_generation(struct priv *p, uint32_t track,
     return NULL;
 }
 
-static bool read_config(struct demuxer *demuxer, struct priv *p, bool publish)
+static bool read_config(struct demuxer *demuxer, struct priv *p, bool publish,
+                        bool has_metadata)
 {
     struct stream *s = demuxer->stream;
     uint32_t id, generation, type, extradata_size;
@@ -181,7 +187,8 @@ static bool read_config(struct demuxer *demuxer, struct priv *p, bool publish)
         return false;
     if (!id || !generation || tb_num <= 0 || tb_den <= 0 ||
         extradata_size > RDP_MAX_EXTRADATA ||
-        (type != RDP_TRACK_VIDEO && type != RDP_TRACK_AUDIO) ||
+        (type != RDP_TRACK_VIDEO && type != RDP_TRACK_AUDIO &&
+         type != RDP_TRACK_SUBTITLE) ||
         p->num_generations >= RDP_MAX_GENERATIONS)
         return false;
 
@@ -192,7 +199,8 @@ static bool read_config(struct demuxer *demuxer, struct priv *p, bool publish)
         track = &p->tracks[p->num_tracks++];
         track->id = id;
         track->type = type;
-        enum stream_type stype = type == RDP_TRACK_VIDEO ? STREAM_VIDEO : STREAM_AUDIO;
+        enum stream_type stype = type == RDP_TRACK_VIDEO ? STREAM_VIDEO :
+                                 type == RDP_TRACK_AUDIO ? STREAM_AUDIO : STREAM_SUB;
         track->sh = demux_alloc_sh_stream(stype);
         track->sh->demuxer_id = id;
     } else if (!track || track->type != type) {
@@ -201,14 +209,15 @@ static bool read_config(struct demuxer *demuxer, struct priv *p, bool publish)
 
     struct mp_codec_params *codec = publish ? track->sh->codec
                                              : talloc_zero(demuxer, struct mp_codec_params);
-    codec->type = type == RDP_TRACK_VIDEO ? STREAM_VIDEO : STREAM_AUDIO;
+    codec->type = type == RDP_TRACK_VIDEO ? STREAM_VIDEO :
+                  type == RDP_TRACK_AUDIO ? STREAM_AUDIO : STREAM_SUB;
     codec->codec = talloc_strdup(codec, codec_name);
     codec->native_tb_num = tb_num;
     codec->native_tb_den = tb_den;
     if (type == RDP_TRACK_VIDEO) {
         codec->disp_w = width;
         codec->disp_h = height;
-    } else {
+    } else if (type == RDP_TRACK_AUDIO) {
         codec->samplerate = sample_rate;
         mp_chmap_from_channels(&codec->channels, channels);
     }
@@ -217,6 +226,25 @@ static bool read_config(struct demuxer *demuxer, struct priv *p, bool publish)
         if (!read_exact(s, codec->extradata, extradata_size))
             return false;
         codec->extradata_size = extradata_size;
+    }
+    if (has_metadata) {
+        uint32_t track_flags, lang_size, title_size;
+        char lang[64] = {0};
+        char title[256] = {0};
+        if (!get_u32(s, &track_flags) || !get_u32(s, &lang_size) ||
+            lang_size >= sizeof(lang) || !read_exact(s, lang, lang_size) ||
+            !get_u32(s, &title_size) || title_size >= sizeof(title) ||
+            !read_exact(s, title, title_size) ||
+            (track_flags & ~(RDP_TRACK_FLAG_DEFAULT | RDP_TRACK_FLAG_FORCED)))
+            return false;
+        if (publish) {
+            if (lang_size)
+                track->sh->lang = talloc_strdup(track->sh, lang);
+            if (title_size)
+                track->sh->title = talloc_strdup(track->sh, title);
+            track->sh->default_track = track_flags & RDP_TRACK_FLAG_DEFAULT;
+            track->sh->forced_track = track_flags & RDP_TRACK_FLAG_FORCED;
+        }
     }
     if (publish)
         demux_add_sh_stream(demuxer, track->sh);
@@ -525,17 +553,21 @@ static int rustdash_open(struct demuxer *demuxer, enum demux_check check)
         return -1;
     bool generation_fixture = !memcmp(magic, RDP_GENERATION_MAGIC, 8) &&
                               version == RDP_GENERATION_VERSION;
-    bool live_source = !memcmp(magic, RDP_LIVE_MAGIC, 8) &&
+    bool live_v3 = !memcmp(magic, RDP_LIVE_MAGIC, 8) &&
                        version == RDP_LIVE_VERSION;
+    bool live_v4 = !memcmp(magic, RDP_SUBTITLE_MAGIC, 8) &&
+                   version == RDP_SUBTITLE_VERSION;
+    bool live_source = live_v3 || live_v4;
     if (generation_fixture) {
         if (!get_u32(s, &num_generations) || num_tracks != 1 || num_generations != 2)
             return -1;
     } else if (live_source) {
-        if (num_tracks != 2)
+        if (num_tracks < 1 || num_tracks > RDP_MAX_TRACKS)
             return -1;
         num_generations = num_tracks;
     } else {
-        if (memcmp(magic, RDP_MAGIC, 8) || version != RDP_VERSION || num_tracks != 2)
+        if (memcmp(magic, RDP_MAGIC, 8) || version != RDP_VERSION ||
+            num_tracks < 1 || num_tracks > RDP_MAX_TRACKS)
             return -1;
         num_generations = num_tracks;
     }
@@ -546,7 +578,7 @@ static int rustdash_open(struct demuxer *demuxer, enum demux_check check)
     p->generation_fixture = generation_fixture;
     p->live_source = live_source;
     for (uint32_t n = 0; n < num_generations; n++) {
-        if (!read_config(demuxer, p, !generation_fixture || n == 0))
+        if (!read_config(demuxer, p, !generation_fixture || n == 0, live_v4))
             return -1;
     }
     if (p->num_tracks != (int)num_tracks)
@@ -595,7 +627,7 @@ static int rustdash_open(struct demuxer *demuxer, enum demux_check check)
     p->producer_started = true;
 
     demuxer->seekable = !live_source;
-    demuxer->filetype = live_source ? "rustdash-live-v3" :
+    demuxer->filetype = live_v4 ? "rustdash-live-v4" : live_source ? "rustdash-live-v3" :
         (generation_fixture ? "rustdash-generation-v2" : "rustdash-live-v1");
     MP_INFO(demuxer, "bounded producer started packets=%d groups=%d "
             "queue_packets=%d queue_bytes=%u delay_ms=%d\n",

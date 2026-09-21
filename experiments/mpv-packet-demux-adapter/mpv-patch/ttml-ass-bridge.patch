@@ -1,0 +1,29 @@
+diff --git a/sub/sd_ass.c b/sub/sd_ass.c
+index d415106ca..20af9a93d 100644
+--- a/sub/sd_ass.c
++++ b/sub/sd_ass.c
+@@ -308,0 +309,7 @@ static int init(struct sd *sd)
++    // ynoTV's native DASH path preserves the public TTML codec identity while
++    // supplying semantically converted ASS codec-private data and packets.
++    // The ASS header makes this opt-in and prevents ordinary raw TTML streams
++    // from being mistaken for bridged packets.
++    bool bridged_ttml = strcmp(sd->codec->codec, "ttml") == 0 &&
++        sd->codec->extradata_size >= 13 &&
++        memcmp(sd->codec->extradata, "[Script Info]", 13) == 0;
+@@ -312 +320 @@ static int init(struct sd *sd)
+-        strcmp(sd->codec->codec, "null") != 0)
++        strcmp(sd->codec->codec, "null") != 0 && !bridged_ttml)
+@@ -326 +334,4 @@ static int init(struct sd *sd)
+-    const char *_Atomic *desc = ctx->converter ? &sd->codec->codec_profile : &sd->codec->codec_desc;
++    const char *_Atomic *desc = ctx->converter ? &sd->codec->codec_profile :
++                               &sd->codec->codec_desc;
++    if (bridged_ttml)
++        *desc = "Timed Text Markup Language";
+@@ -329 +340,2 @@ static int init(struct sd *sd)
+-        *desc = "Advanced Sub Station Alpha";
++        if (!bridged_ttml)
++            *desc = "Advanced Sub Station Alpha";
+@@ -332 +344,2 @@ static int init(struct sd *sd)
+-        *desc = "Sub Station Alpha";
++        if (!bridged_ttml)
++            *desc = "Sub Station Alpha";
