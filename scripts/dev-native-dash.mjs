@@ -48,6 +48,7 @@ const child = spawn('pnpm', ['--filter', '@ynotv/app', 'tauri', 'dev'], {
   env: {
     ...process.env,
     YNOTV_NATIVE_DASH_LIBMPV_DIR: patched,
+    YNOTV_DEV_CENTER_WINDOW: '1',
   },
 });
 child.on('exit', (code, signal) => {
