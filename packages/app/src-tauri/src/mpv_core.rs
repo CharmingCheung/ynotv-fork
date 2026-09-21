@@ -118,7 +118,7 @@ pub struct MpvStatus {
 pub struct MpvCoreState {
     pub mpv: Arc<Mutex<Option<Arc<Mpv>>>>,
     pub current_url: Mutex<Option<String>>,
-    pub is_shutting_down: Arc<std::sync::atomic::AtomicBool>,
+    pub monitor_generation: Arc<std::sync::atomic::AtomicU64>,
     /// Embedded main-player HWND on Windows, cached so geometry updates stay
     /// deterministic even if the window title lookup races window creation.
     #[cfg(windows)]
@@ -133,7 +133,7 @@ impl MpvCoreState {
         MpvCoreState {
             mpv: Arc::new(Mutex::new(None)),
             current_url: Mutex::new(None),
-            is_shutting_down: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            monitor_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             #[cfg(windows)]
             main_hwnd: Mutex::new(0),
             log_lines: Arc::new(Mutex::new(VecDeque::new())),
@@ -322,17 +322,19 @@ pub async fn init_mpv_with_params<R: Runtime>(
         let mut guard = state.mpv.lock().unwrap();
         *guard = Some(mpv_arc.clone());
     }
+    let monitor_generation = state.monitor_generation.load(std::sync::atomic::Ordering::Acquire);
 
     // Capture libmpv log-message events for the Diagnostics panel
     spawn_log_capture(
         app.clone(),
         mpv_arc.clone(),
-        state.is_shutting_down.clone(),
+        state.monitor_generation.clone(),
+        monitor_generation,
         state.log_lines.clone(),
     );
 
     // Start background status and event monitor
-    spawn_status_monitor(app.clone(), mpv_arc, state.is_shutting_down.clone());
+    spawn_status_monitor(app.clone(), mpv_arc, state.monitor_generation.clone(), monitor_generation);
 
     #[cfg(windows)]
     {
@@ -350,20 +352,27 @@ pub async fn init_mpv_with_params<R: Runtime>(
 fn spawn_status_monitor<R: Runtime>(
     app: AppHandle<R>,
     mpv: Arc<Mpv>,
-    shutdown: Arc<std::sync::atomic::AtomicBool>,
+    monitor_generation: Arc<std::sync::atomic::AtomicU64>,
+    generation: u64,
 ) {
     tauri::async_runtime::spawn(async move {
         let mut last_eof_reached = false;
         let mut was_idle = true;
         let mut last_position: f64 = 0.0;
+        let mut had_dash_timeline = false;
 
-        while !shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+        while monitor_generation.load(std::sync::atomic::Ordering::Acquire) == generation {
             tokio::time::sleep(Duration::from_millis(250)).await;
 
             let pause: bool = mpv.get_property("pause").unwrap_or(true);
             let volume: f64 = mpv.get_property("volume").unwrap_or(100.0);
             let mute: bool = mpv.get_property("mute").unwrap_or(false);
-            let position: f64 = mpv.get_property("time-pos").unwrap_or(0.0);
+            let observed_position = mpv.get_property::<f64>("time-pos").ok().filter(|value| value.is_finite());
+            // During cache waits and decoder reconfiguration mpv can
+            // temporarily remove time-pos.  Retain the last clock value; zero
+            // is a real timestamp and must not be fabricated for a missing
+            // property because it sends a live DVR thumb to the window start.
+            let position = observed_position.unwrap_or(last_position);
             let duration: f64 = mpv.get_property("duration").unwrap_or(0.0);
             let paused_for_cache: bool = mpv.get_property("paused-for-cache").unwrap_or(false);
             let core_idle: bool = mpv.get_property("core-idle").unwrap_or(true);
@@ -381,10 +390,12 @@ fn spawn_status_monitor<R: Runtime>(
             was_idle = core_idle;
 
             // Detect seek (jump in position larger than 2 seconds not accounted for by elapsed time)
-            if (position - last_position).abs() > 2.0 && !core_idle {
+            if observed_position.is_some() && (position - last_position).abs() > 2.0 && !core_idle {
                 let _ = app.emit("mpv-seek", true);
             }
-            last_position = position;
+            if observed_position.is_some() {
+                last_position = position;
+            }
 
             // End-of-file & stream ended events
             if eof_reached && !last_eof_reached {
@@ -398,22 +409,41 @@ fn spawn_status_monitor<R: Runtime>(
             }
             last_eof_reached = eof_reached;
 
+            // Native DASH owns its presentation timeline.  Its seekable DVR
+            // window is manifest/media backed and must not be inferred from
+            // mpv's packet cache or the live input's synthetic duration.
+            let dash_timeline = crate::native_dash::presentation_timeline_state(observed_position);
+            if let Some(timeline) = dash_timeline.as_ref() {
+                let _ = app.emit("native-dash-timeline", timeline);
+                had_dash_timeline = true;
+            } else if had_dash_timeline {
+                let _ = app.emit("native-dash-timeline-ended", ());
+                had_dash_timeline = false;
+            }
+
             // Timeshift / Live buffer updates
             if let Ok(demuxer_cache) = mpv.get_property::<f64>("demuxer-cache-duration") {
                 crate::native_dash::observe_buffered_seconds(Some(demuxer_cache.max(0.0)));
-                let cache_start: f64 = mpv.get_property("demuxer-cache-state/cache-start").unwrap_or(0.0);
-                let cache_end: f64 = mpv.get_property("demuxer-cache-state/cache-end").unwrap_or(position + demuxer_cache);
-                let cached_duration = (cache_end - cache_start).max(demuxer_cache);
-                let behind_live = (cache_end - position).max(0.0);
-                if cached_duration > 0.0 {
-                    let ts_state = json!({
-                        "cacheStart": cache_start,
-                        "cacheEnd": cache_end,
-                        "timePos": position,
-                        "behindLive": behind_live,
-                        "cachedDuration": cached_duration,
-                    });
-                    let _ = app.emit("timeshift-update", ts_state);
+                // A native DASH DVR window and mpv's packet cache are two
+                // different timelines. Never publish the cache timeline while
+                // DASH owns the presentation timeline, otherwise the UI
+                // alternates between an absolute DVR window and a zero-based
+                // cache range on every monitor tick.
+                if dash_timeline.is_none() {
+                    let cache_start: f64 = mpv.get_property("demuxer-cache-state/cache-start").unwrap_or(0.0);
+                    let cache_end: f64 = mpv.get_property("demuxer-cache-state/cache-end").unwrap_or(position + demuxer_cache);
+                    let cached_duration = (cache_end - cache_start).max(demuxer_cache);
+                    let behind_live = (cache_end - position).max(0.0);
+                    if cached_duration > 0.0 {
+                        let ts_state = json!({
+                            "cacheStart": cache_start,
+                            "cacheEnd": cache_end,
+                            "timePos": position,
+                            "behindLive": behind_live,
+                            "cachedDuration": cached_duration,
+                        });
+                        let _ = app.emit("timeshift-update", ts_state);
+                    }
                 }
             }
 
@@ -421,7 +451,7 @@ fn spawn_status_monitor<R: Runtime>(
                 playing: !pause,
                 volume,
                 muted: mute,
-                position,
+                position: dash_timeline.as_ref().map(|timeline| timeline.current_time).unwrap_or(position),
                 duration,
                 paused_for_cache,
                 core_idle,
@@ -437,25 +467,27 @@ fn spawn_status_monitor<R: Runtime>(
 
 /// Drain mpv `log-message` events into a bounded ring buffer so the
 /// Diagnostics panel can show in-process libmpv logs, and handle file lifecycle
-/// events (subtitle suppression on load). Stops on the same `is_shutting_down`
-/// flag as the status monitor; `mpv_destroy` also wakes the waiter with a
-/// `Shutdown` event, which exits the drain early.
+/// events (subtitle suppression on load). Stops when superseded by a newer
+/// monitor generation; `mpv_destroy` also wakes the waiter with a
+/// a `Shutdown` event, which exits the drain early.
 fn spawn_log_capture<R: Runtime>(
     app: AppHandle<R>,
     mpv: Arc<Mpv>,
-    shutdown: Arc<std::sync::atomic::AtomicBool>,
+    monitor_generation: Arc<std::sync::atomic::AtomicU64>,
+    generation: u64,
     log_lines: Arc<Mutex<VecDeque<String>>>,
 ) {
     tauri::async_runtime::spawn(async move {
         let mut ec = EventContext::new(mpv.ctx);
-        // Default verbosity matches the sidecar engine's --msg-level=all=warn;
-        // mpv_set_verbose_logging raises it to "v" on demand.
-        if let Ok(level) = std::ffi::CString::new("warn") {
+        // Keep adapter lifecycle/seek messages available in the bounded ring;
+        // only rustdash lines are forwarded to the application log below.
+        // mpv_set_verbose_logging can still raise this to "v" on demand.
+        if let Ok(level) = std::ffi::CString::new("info") {
             unsafe {
                 libmpv2_sys::mpv_request_log_messages(mpv.ctx.as_ptr(), level.as_ptr());
             }
         }
-        while !shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+        while monitor_generation.load(std::sync::atomic::Ordering::Acquire) == generation {
             while let Some(ev) = ec.wait_event(0.0) {
                 match ev {
                     Ok(Event::LogMessage {
@@ -465,14 +497,24 @@ fn spawn_log_capture<R: Runtime>(
                         ..
                     }) => {
                         let line = format!("[{}:{}] {}", prefix, level, text.trim_end());
-                        if prefix.contains("rustdash") || text.contains("fatal producer error") {
-                            log::warn!("[libmpv] {}", line);
+                        let rustdash = prefix.contains("rustdash") || text.contains("fatal producer error");
+                        let routine_backpressure = prefix.contains("rustdash")
+                            && text.contains("producer blocked queue_count=");
+                        if rustdash && !routine_backpressure {
+                            match level {
+                                "fatal" | "error" => log::error!("[libmpv] {}", line),
+                                "warn" => log::warn!("[libmpv] {}", line),
+                                "info" | "status" => log::info!("[libmpv] {}", line),
+                                _ => log::debug!("[libmpv] {}", line),
+                            }
                         }
-                        let mut buf = log_lines.lock().unwrap();
-                        if buf.len() >= MAX_LOG_LINES {
-                            buf.pop_front();
+                        if !routine_backpressure {
+                            let mut buf = log_lines.lock().unwrap();
+                            if buf.len() >= MAX_LOG_LINES {
+                                buf.pop_front();
+                            }
+                            buf.push_back(line);
                         }
-                        buf.push_back(line);
                     }
                     Ok(Event::FileLoaded) => {
                         // mpv auto-selects subtitle tracks when a file finishes
@@ -483,7 +525,16 @@ fn spawn_log_capture<R: Runtime>(
                         // autoSelectSubtitle logic can cleanly re-enable exactly
                         // the right track (mirrors the old sidecar engine's
                         // file-loaded handler, lost in the libmpv refactor).
-                        let _ = mpv.set_property("sid", "no");
+                        let dash_catalog = crate::native_dash::track_catalog();
+                        // Native DASH chose the preferred subtitle before it
+                        // fetched the first batch and advertised that choice in
+                        // the stream header. Toggling sid off here and back on
+                        // from the frontend causes a live track reconfiguration
+                        // immediately after playback-restart, followed by an
+                        // audio underrun and a frozen first frame.
+                        if dash_catalog.is_none() {
+                            let _ = mpv.set_property("sid", "no");
+                        }
                         let _ = app.emit("mpv-file-loaded", true);
                     }
                     Ok(Event::Shutdown) => break,
@@ -586,7 +637,15 @@ pub async fn load_native_dash_packet_source<R: Runtime>(
     let state = app.state::<MpvCoreState>();
     let mpv = { state.mpv.lock().unwrap().clone() }
         .ok_or("Native DASH requires initialized in-process libmpv")?;
-    mpv.command("loadfile", &[source, "replace", "-1", "demuxer=rustdash"])
+    // Native DASH owns the full DVR index.  mpv's packet-cache seek must not
+    // satisfy a request internally, because that bypasses demux_rustdash's
+    // low-level seek callback and leaves the prepared RDPKT006 epoch held.
+    // Forward readahead/cache remains enabled for playback and ABR feedback.
+    let subtitle_id = crate::native_dash::selected_subtitle_mpv_track_id()
+        .map(|id| id.to_string())
+        .unwrap_or_else(|| "no".into());
+    let file_options = format!("demuxer=rustdash,demuxer-seekable-cache=no,sid={subtitle_id}");
+    mpv.command("loadfile", &[source, "replace", "-1", &file_options])
         .map_err(|e| format!("Native DASH custom demux load failed: {:?}", e))?;
     *state.current_url.lock().unwrap() = Some(source.to_string());
     Ok(())
@@ -643,8 +702,10 @@ pub async fn seek<R: Runtime>(app: &AppHandle<R>, seconds: f64) -> Result<(), St
         guard.clone()
     };
     if let Some(mpv) = mpv {
+        log::info!("[native-dash/mpv] submitting absolute seek target={seconds:.3}");
         mpv.command("seek", &[&seconds.to_string(), "absolute"])
             .map_err(|e| format!("seek error: {:?}", e))?;
+        log::info!("[native-dash/mpv] absolute seek command accepted target={seconds:.3}");
     }
     Ok(())
 }
@@ -1207,7 +1268,7 @@ fn is_valid_mpv_hwnd(hwnd_raw: isize) -> bool {
 
 pub async fn kill_mpv<R: Runtime>(app: &AppHandle<R>) {
     let state = app.state::<MpvCoreState>();
-    state.is_shutting_down.store(true, std::sync::atomic::Ordering::Relaxed);
+    state.monitor_generation.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
     let _ = app.emit("mpv-ready", false);
 
     #[cfg(target_os = "macos")]
@@ -1239,5 +1300,4 @@ pub async fn kill_mpv<R: Runtime>(app: &AppHandle<R>) {
         *state.main_hwnd.lock().unwrap() = 0;
     }
 
-    state.is_shutting_down.store(false, std::sync::atomic::Ordering::Relaxed);
 }

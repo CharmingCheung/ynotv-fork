@@ -1519,6 +1519,9 @@ async fn mpv_pause<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
 
 #[tauri::command]
 async fn mpv_resume<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+    if let Some(relative) = native_dash::clamp_expired_position_on_resume().await? {
+        mpv_core::seek(&app, relative).await?;
+    }
     #[cfg(target_os = "macos")]
     {
         mpv_core::resume(&app).await
@@ -1580,6 +1583,7 @@ async fn mpv_set_volume<R: Runtime>(app: AppHandle<R>, volume: f64) -> Result<()
 
 #[tauri::command]
 async fn mpv_seek<R: Runtime>(app: AppHandle<R>, seconds: f64) -> Result<(), String> {
+    let seconds = crate::native_dash::request_seek(seconds).await?.unwrap_or(seconds);
     #[cfg(target_os = "macos")]
     {
         mpv_core::seek(&app, seconds).await

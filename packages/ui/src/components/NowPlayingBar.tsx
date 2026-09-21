@@ -20,6 +20,7 @@ import { useActivePlaylistStore, isActivePlaylistItem } from '../stores/activePl
 import { getLocalEpisodeList } from '../services/local-library/local-library';
 import { TeamChannelOverlay } from './sports/TeamChannelOverlay';
 import { FailoverChannelOverlay } from './FailoverChannelOverlay';
+import { dvrProgressPercent } from '../hooks/useTimeshift';
 import './NowPlayingBar.css';
 
 interface NowPlayingBarProps {
@@ -67,6 +68,7 @@ interface NowPlayingBarProps {
     timePos: number;
     behindLive: number;
     cachedDuration: number;
+    nativeDash?: boolean;
   } | null;
   onTimeshiftCatchUp?: () => void;
   onChannelUp?: () => void;
@@ -476,6 +478,8 @@ export function NowPlayingBar({
   // VOD scrubber state
   const [isHovering, setIsHovering] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const activeProgressBarRef = useRef<HTMLDivElement | null>(null);
+  const suppressSeekClickRef = useRef(false);
   const [hoverPosition, setHoverPosition] = useState(0);
   const progressBarRef = useRef<HTMLDivElement>(null);
 
@@ -513,32 +517,27 @@ export function NowPlayingBar({
     return () => clearInterval(interval);
   }, [currentProgram]);
 
-  // Calculate position from mouse/touch event on progress bar
-  const getSeekPosition = useCallback((clientX: number): number => {
-    if (!progressBarRef.current || duration <= 0) return 0;
-    const rect = progressBarRef.current.getBoundingClientRect();
-    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    return ratio * duration;
-  }, [duration]);
-
   // Handle click to seek
   const handleProgressClick = useCallback((e: React.MouseEvent) => {
+    if (suppressSeekClickRef.current) {
+      suppressSeekClickRef.current = false;
+      return;
+    }
     const isLiveCatchup = !isVod && !isCatchup && currentProgram && (Boolean(channel?.tv_archive) || channel?.tv_archive === 1);
-    const hasTimeshift = !isVod && !isCatchup && timeshiftEnabled && timeshiftState && timeshiftState.cachedDuration > 1;
+    const hasTimeshift = !isVod && !isCatchup && (timeshiftEnabled || timeshiftState?.nativeDash) && timeshiftState && timeshiftState.cachedDuration > 1;
 
     if (hasTimeshift && timeshiftState && onSeek) {
-      if (!progressBarRef.current) return;
-      const rect = progressBarRef.current.getBoundingClientRect();
+      const rect = e.currentTarget.getBoundingClientRect();
       const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
       const targetPos = timeshiftState.cacheStart + ratio * timeshiftState.cachedDuration;
       onSeek(Math.min(Math.max(targetPos, timeshiftState.cacheStart), timeshiftState.cacheEnd - 1));
     } else if (isVod || isCatchup) {
       if (!onSeek) return;
-      const seekTo = getSeekPosition(e.clientX);
-      onSeek(seekTo);
+      const rect = e.currentTarget.getBoundingClientRect();
+      const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      onSeek(ratio * duration);
     } else if (isLiveCatchup && onCatchupSeek && channel) {
-      if (!progressBarRef.current) return;
-      const rect = progressBarRef.current.getBoundingClientRect();
+      const rect = e.currentTarget.getBoundingClientRect();
       const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
 
       const rawStartMs = currentProgram.raw_start
@@ -550,29 +549,27 @@ export function NowPlayingBar({
 
       onCatchupSeek(channel, currentProgram.title, rawStartMs, elapsedMins, seekSeconds, currentProgram.description);
     }
-  }, [isVod, isCatchup, currentProgram, channel, onSeek, onCatchupSeek, getSeekPosition, timeshiftEnabled, timeshiftState]);
+  }, [isVod, isCatchup, currentProgram, channel, onSeek, onCatchupSeek, duration, timeshiftEnabled, timeshiftState]);
 
   // Handle mouse move for hover tooltip
   const handleProgressMouseMove = useCallback((e: React.MouseEvent) => {
     const isLiveCatchup = !isVod && !isCatchup && currentProgram && (Boolean(channel?.tv_archive) || channel?.tv_archive === 1);
-    const hasTimeshift = !isVod && !isCatchup && timeshiftEnabled && timeshiftState && timeshiftState.cachedDuration > 1;
+    const hasTimeshift = !isVod && !isCatchup && (timeshiftEnabled || timeshiftState?.nativeDash) && timeshiftState && timeshiftState.cachedDuration > 1;
     if (!isVod && !isCatchup && !isLiveCatchup && !hasTimeshift) return;
 
     if (hasTimeshift && timeshiftState) {
-      if (!progressBarRef.current) return;
-      const rect = progressBarRef.current.getBoundingClientRect();
+      const rect = e.currentTarget.getBoundingClientRect();
       const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
       setHoverPosition(timeshiftState.cacheStart + ratio * timeshiftState.cachedDuration);
     } else if (isLiveCatchup) {
-      if (!progressBarRef.current) return;
-      const rect = progressBarRef.current.getBoundingClientRect();
+      const rect = e.currentTarget.getBoundingClientRect();
       const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
       const progStartMs = new Date(currentProgram.start).getTime();
       const durationSecs = Math.max(1, (Date.now() - progStartMs) / 1000);
       setHoverPosition(ratio * durationSecs);
     } else {
-      if (!progressBarRef.current || duration <= 0) return;
-      const rect = progressBarRef.current.getBoundingClientRect();
+      if (duration <= 0) return;
+      const rect = e.currentTarget.getBoundingClientRect();
       const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
       setHoverPosition(ratio * duration);
     }
@@ -581,38 +578,42 @@ export function NowPlayingBar({
   // Handle drag start
   const handleDragStart = useCallback((e: React.MouseEvent | React.TouchEvent) => {
     const isLiveCatchup = !isVod && !isCatchup && currentProgram && (Boolean(channel?.tv_archive) || channel?.tv_archive === 1);
-    const hasTimeshift = !isVod && !isCatchup && timeshiftEnabled && timeshiftState && timeshiftState.cachedDuration > 1;
+    const hasTimeshift = !isVod && !isCatchup && (timeshiftEnabled || timeshiftState?.nativeDash) && timeshiftState && timeshiftState.cachedDuration > 1;
 
     if (hasTimeshift && timeshiftState) {
       e.preventDefault();
+      activeProgressBarRef.current = e.currentTarget as HTMLDivElement;
+      suppressSeekClickRef.current = false;
       setIsDragging(true);
       const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
-      if (!progressBarRef.current) return;
-      const rect = progressBarRef.current.getBoundingClientRect();
+      const rect = e.currentTarget.getBoundingClientRect();
       const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
       setHoverPosition(timeshiftState.cacheStart + ratio * timeshiftState.cachedDuration);
     } else if (isVod || isCatchup) {
       e.preventDefault();
+      activeProgressBarRef.current = e.currentTarget as HTMLDivElement;
+      suppressSeekClickRef.current = false;
       setIsDragging(true);
       const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
-      if (!progressBarRef.current || duration <= 0) return;
-      const rect = progressBarRef.current.getBoundingClientRect();
+      if (duration <= 0) return;
+      const rect = e.currentTarget.getBoundingClientRect();
       const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
       setHoverPosition(ratio * duration);
     } else if (isLiveCatchup && onCatchupSeek && channel) {
       e.preventDefault();
+      activeProgressBarRef.current = e.currentTarget as HTMLDivElement;
+      suppressSeekClickRef.current = false;
       setIsDragging(true);
       const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
 
-      if (!progressBarRef.current) return;
-      const rect = progressBarRef.current.getBoundingClientRect();
+      const rect = e.currentTarget.getBoundingClientRect();
       const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
 
       const startMs = new Date(currentProgram.raw_start ?? currentProgram.start).getTime();
       const durationSecs = Math.max(1, (Date.now() - startMs) / 1000);
       setHoverPosition(ratio * durationSecs);
     }
-  }, [isVod, isCatchup, currentProgram, channel, onSeek, onCatchupSeek, getSeekPosition, duration, timeshiftEnabled, timeshiftState]);
+  }, [isVod, isCatchup, currentProgram, channel, onSeek, onCatchupSeek, duration, timeshiftEnabled, timeshiftState]);
 
   // Handle drag (mouse/touch move while dragging)
   useEffect(() => {
@@ -623,21 +624,21 @@ export function NowPlayingBar({
     const handleMove = (e: MouseEvent | TouchEvent) => {
       try {
         const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
-        const hasTimeshift = !isVod && !isCatchup && timeshiftEnabled && timeshiftState && timeshiftState.cachedDuration > 1;
+        const hasTimeshift = !isVod && !isCatchup && (timeshiftEnabled || timeshiftState?.nativeDash) && timeshiftState && timeshiftState.cachedDuration > 1;
 
         if (hasTimeshift && timeshiftState) {
-          if (!progressBarRef.current) return;
-          const rect = progressBarRef.current.getBoundingClientRect();
+          if (!activeProgressBarRef.current) return;
+          const rect = activeProgressBarRef.current.getBoundingClientRect();
           const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
           setHoverPosition(timeshiftState.cacheStart + ratio * timeshiftState.cachedDuration);
         } else if (isVod || isCatchup) {
-          if (!progressBarRef.current || duration <= 0) return;
-          const rect = progressBarRef.current.getBoundingClientRect();
+          if (!activeProgressBarRef.current || duration <= 0) return;
+          const rect = activeProgressBarRef.current.getBoundingClientRect();
           const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
           setHoverPosition(ratio * duration);
         } else if (isLiveCatchup && onCatchupSeek && channel) {
-          if (!progressBarRef.current) return;
-          const rect = progressBarRef.current.getBoundingClientRect();
+          if (!activeProgressBarRef.current) return;
+          const rect = activeProgressBarRef.current.getBoundingClientRect();
           const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
 
           const startMs = new Date(currentProgram.raw_start ?? currentProgram.start).getTime();
@@ -649,26 +650,28 @@ export function NowPlayingBar({
 
     const handleEnd = (e: MouseEvent | TouchEvent) => {
       setIsDragging(false);
+      suppressSeekClickRef.current = true;
+      window.setTimeout(() => { suppressSeekClickRef.current = false; }, 0);
       try {
         const clientX = 'changedTouches' in e ? e.changedTouches[0].clientX : e.clientX;
-        const hasTimeshift = !isVod && !isCatchup && timeshiftEnabled && timeshiftState && timeshiftState.cachedDuration > 1;
+        const hasTimeshift = !isVod && !isCatchup && (timeshiftEnabled || timeshiftState?.nativeDash) && timeshiftState && timeshiftState.cachedDuration > 1;
 
         if (hasTimeshift && timeshiftState && onSeek) {
-          if (!progressBarRef.current) return;
-          const rect = progressBarRef.current.getBoundingClientRect();
+          if (!activeProgressBarRef.current) return;
+          const rect = activeProgressBarRef.current.getBoundingClientRect();
           const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
           const targetPos = timeshiftState.cacheStart + ratio * timeshiftState.cachedDuration;
           onSeek(Math.min(Math.max(targetPos, timeshiftState.cacheStart), timeshiftState.cacheEnd - 1));
         } else if (isVod || isCatchup) {
           if (onSeek) {
-            if (!progressBarRef.current || duration <= 0) return;
-            const rect = progressBarRef.current.getBoundingClientRect();
+            if (!activeProgressBarRef.current || duration <= 0) return;
+            const rect = activeProgressBarRef.current.getBoundingClientRect();
             const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
             onSeek(ratio * duration);
           }
         } else if (isLiveCatchup && onCatchupSeek && channel) {
-          if (!progressBarRef.current) return;
-          const rect = progressBarRef.current.getBoundingClientRect();
+          if (!activeProgressBarRef.current) return;
+          const rect = activeProgressBarRef.current.getBoundingClientRect();
           const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
 
           const startMs = new Date(currentProgram.raw_start ?? currentProgram.start).getTime();
@@ -691,7 +694,7 @@ export function NowPlayingBar({
       document.removeEventListener('touchmove', handleMove);
       document.removeEventListener('touchend', handleEnd);
     };
-  }, [isDragging, isVod, isCatchup, currentProgram, channel, onSeek, onCatchupSeek, getSeekPosition, duration, timeshiftEnabled, timeshiftState]);
+  }, [isDragging, isVod, isCatchup, currentProgram, channel, onSeek, onCatchupSeek, duration, timeshiftEnabled, timeshiftState]);
 
   // VOD progress calculation
   const vodProgress = duration > 0 ? (position / duration) * 100 : 0;
@@ -749,11 +752,11 @@ export function NowPlayingBar({
                 >
                   <div
                     className="npb-clean-progress-fill"
-                    style={{ width: `${isVod || isCatchup ? vodProgress : (timeshiftState ? Math.max(0, Math.min(100, ((timeshiftState.timePos - timeshiftState.cacheStart) / timeshiftState.cachedDuration) * 100)) : progress)}%` }}
+                    style={{ width: `${isVod || isCatchup ? vodProgress : (timeshiftState ? dvrProgressPercent(timeshiftState) : progress)}%` }}
                   />
                   <div
                     className="npb-clean-scrubber-handle"
-                    style={{ left: `${isVod || isCatchup ? vodProgress : (timeshiftState ? Math.max(0, Math.min(100, ((timeshiftState.timePos - timeshiftState.cacheStart) / timeshiftState.cachedDuration) * 100)) : progress)}%` }}
+                    style={{ left: `${isVod || isCatchup ? vodProgress : (timeshiftState ? dvrProgressPercent(timeshiftState) : progress)}%` }}
                   />
                   {chapterMarkers.map((c, i) => (
                     <div
@@ -767,12 +770,12 @@ export function NowPlayingBar({
                     <div
                       className="npb-time-tooltip"
                       style={{
-                        left: `${!isVod && !isCatchup && timeshiftEnabled && timeshiftState && timeshiftState.cachedDuration > 1
+                        left: `${!isVod && !isCatchup && (timeshiftEnabled || timeshiftState?.nativeDash) && timeshiftState && timeshiftState.cachedDuration > 1
                           ? Math.max(0, Math.min(100, ((hoverPosition - timeshiftState.cacheStart) / timeshiftState.cachedDuration) * 100))
                           : (hoverPosition / (duration || 1)) * 100}%`
                       }}
                     >
-                      {formatTime(!isVod && !isCatchup && timeshiftEnabled && timeshiftState && timeshiftState.cachedDuration > 1 ? hoverPosition - timeshiftState.cacheStart : hoverPosition)}
+                      {formatTime(!isVod && !isCatchup && (timeshiftEnabled || timeshiftState?.nativeDash) && timeshiftState && timeshiftState.cachedDuration > 1 ? hoverPosition - timeshiftState.cacheStart : hoverPosition)}
                     </div>
                   )}
                 </div>
@@ -1281,14 +1284,14 @@ export function NowPlayingBar({
               ) : (
                 <div className="npb-progress-section">
                   {(() => {
-                    const hasTimeshiftData = timeshiftEnabled && timeshiftState && timeshiftState.cachedDuration > 1;
+                    const hasTimeshiftData = (timeshiftEnabled || timeshiftState?.nativeDash) && timeshiftState && timeshiftState.cachedDuration > 1;
                     const hasEpgCatchup = (Boolean(channel?.tv_archive) || channel?.tv_archive === 1) && currentProgram;
                     const showTimeshiftScrubber = hasTimeshiftData && (!hasEpgCatchup || scrubMode === 'timeshift');
                     const showEpgCatchupScrubber = hasEpgCatchup && (!hasTimeshiftData || scrubMode === 'epgcatchup');
 
                     if (showTimeshiftScrubber && timeshiftState) {
                       const { cacheStart, cacheEnd, timePos, behindLive, cachedDuration } = timeshiftState;
-                      const playheadPct = Math.max(0, Math.min(100, ((timePos - cacheStart) / cachedDuration) * 100));
+                      const playheadPct = dvrProgressPercent({ cacheStart, cacheEnd, timePos });
                       const isLive = behindLive < 5;
 
                       const handleTimeshiftClick = (e: React.MouseEvent<HTMLDivElement>) => {

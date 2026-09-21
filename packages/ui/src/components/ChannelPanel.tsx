@@ -28,6 +28,7 @@ import { db } from '../db';
 import { matchesSearch } from '../utils/searchNormalization';
 import { decompressEpgDescription } from '../utils/compression';
 import { formatTime, formatDate } from '../utils/dateTime';
+import { dvrProgressPercent } from '../hooks/useTimeshift';
 import { pickCurrentProgram, EPG_WINDOW_BACK_MS, EPG_WINDOW_FWD_MS } from '../utils/epgTime';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
@@ -374,6 +375,7 @@ interface ChannelPanelProps {
     timePos: number;
     behindLive: number;
     cachedDuration: number;
+    nativeDash?: boolean;
   } | null;
   onTimeshiftCatchUp?: () => void;
   aspectRatio?: AspectRatioMode;
@@ -942,9 +944,10 @@ export function ChannelPanel({
   const [seekDrag, setSeekDrag] = useState(false);
   const [hoverPos, setHoverPos] = useState(0);
   const seekBarRef = useRef<HTMLDivElement>(null);
+  const suppressSeekClickRef = useRef(false);
 
   const hasTimeshift = timeshiftState && timeshiftState.cachedDuration > 1;
-  const showSeek = (timeshiftEnabled && !!hasTimeshift) && !!onSeek;
+  const showSeek = ((timeshiftEnabled || timeshiftState?.nativeDash) && !!hasTimeshift) && !!onSeek;
 
   const getSeekRatio = useCallback((clientX: number): number => {
     if (!seekBarRef.current) return 0;
@@ -953,10 +956,14 @@ export function ChannelPanel({
   }, []);
 
   const ts = hasTimeshift ? timeshiftState! : null;
-  const seekFillPct = ts ? ((ts.timePos - ts.cacheStart) / ts.cachedDuration) * 100 : 0;
+  const seekFillPct = ts ? dvrProgressPercent(ts) : 0;
 
   const handleSeekClick = useCallback((e: React.MouseEvent) => {
     if (!showSeek || !onSeek) return;
+    if (suppressSeekClickRef.current) {
+      suppressSeekClickRef.current = false;
+      return;
+    }
     const ratio = getSeekRatio(e.clientX);
     if (ts) {
       onSeek(ts.cacheStart + ratio * ts.cachedDuration);
@@ -966,6 +973,7 @@ export function ChannelPanel({
   const handleSeekDragStart = useCallback((e: React.MouseEvent) => {
     if (!showSeek || !onSeek) return;
     e.preventDefault();
+    suppressSeekClickRef.current = false;
     setSeekDrag(true);
     const ratio = getSeekRatio(e.clientX);
     setHoverPos(ts ? ts.cacheStart + ratio * ts.cachedDuration : 0);
@@ -979,6 +987,8 @@ export function ChannelPanel({
     };
     const onUp = (e: MouseEvent) => {
       setSeekDrag(false);
+      suppressSeekClickRef.current = true;
+      window.setTimeout(() => { suppressSeekClickRef.current = false; }, 0);
       if (onSeek) {
         const ratio = getSeekRatio(e.clientX);
         if (ts) onSeek(ts.cacheStart + ratio * ts.cachedDuration);

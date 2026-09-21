@@ -27,10 +27,13 @@
 #define RDP_SUBTITLE_VERSION 4u
 #define RDP_SWITCH_MAGIC "RDPKT005"
 #define RDP_SWITCH_VERSION 5u
+#define RDP_DVR_MAGIC "RDPKT006"
+#define RDP_DVR_VERSION 6u
 #define RDP_CODEC_NAME_BYTES 32u
 #define RDP_RECORD_PACKET 0x31544b50u
 #define RDP_RECORD_EOF    0x31464f45u
 #define RDP_RECORD_CONFIG 0x31474643u
+#define RDP_RECORD_SEEK   0x314b4553u
 #define RDP_TRACK_VIDEO 1u
 #define RDP_TRACK_AUDIO 2u
 #define RDP_TRACK_SUBTITLE 3u
@@ -90,6 +93,7 @@ struct priv {
     bool generation_fixture;
     bool live_source;
     bool switch_source;
+    bool seek_source;
 
     FILE *source;
     mp_thread producer_thread;
@@ -112,6 +116,9 @@ struct priv {
     bool producer_failed;
     const char *producer_error;
     bool producer_failure_reported;
+    bool seek_ready;
+    uint64_t seek_epoch;
+    int64_t seek_target_ms;
     int delay_ms;
     int waits;
     int skipped_unselected;
@@ -372,8 +379,12 @@ static MP_THREAD_VOID live_producer_thread(void *ctx)
         while (!p->stopping &&
                (p->queue_count == RDP_QUEUE_PACKETS ||
                 p->queue_bytes >= RDP_QUEUE_BYTES)) {
-            MP_INFO(p->demuxer, "producer blocked queue_count=%d queue_bytes=%zu\n",
-                    p->queue_count, p->queue_bytes);
+            // Reaching the bounded queue is normal producer/consumer
+            // backpressure, not a playback warning. Keep it available for
+            // verbose adapter diagnostics without flooding normal app logs.
+            MP_VERBOSE(p->demuxer,
+                       "producer blocked queue_count=%d queue_bytes=%zu\n",
+                       p->queue_count, p->queue_bytes);
             mp_cond_wait(&p->wakeup, &p->lock);
         }
         bool stopping = p->stopping;
@@ -409,6 +420,30 @@ static MP_THREAD_VOID live_producer_thread(void *ctx)
                 break;
             }
             MP_INFO(p->demuxer, "runtime codec generation registered\n");
+            continue;
+        }
+        if (record == RDP_RECORD_SEEK && p->seek_source) {
+            int64_t target_ms;
+            uint32_t epoch_low, epoch_high;
+            if (!get_u32(p->demuxer->stream, &epoch_low) ||
+                !get_u32(p->demuxer->stream, &epoch_high) ||
+                !get_i64(p->demuxer->stream, &target_ms)) {
+                mp_mutex_lock(&p->lock);
+                p->producer_failed = true;
+                p->producer_error = "invalid seek epoch record";
+                mp_cond_broadcast(&p->wakeup);
+                mp_mutex_unlock(&p->lock);
+                break;
+            }
+            mp_mutex_lock(&p->lock);
+            clear_queue_locked(p);
+            p->seek_epoch = (uint64_t)epoch_low | (uint64_t)epoch_high << 32;
+            p->seek_target_ms = target_ms;
+            p->seek_ready = true;
+            MP_INFO(p->demuxer, "DASH seek epoch ready epoch=%" PRIu64
+                    " target=%.3f\n", p->seek_epoch, target_ms / 1000.0);
+            mp_cond_broadcast(&p->wakeup);
+            mp_mutex_unlock(&p->lock);
             continue;
         }
         struct rdp_ready_packet *ready = calloc(1, sizeof(*ready));
@@ -512,8 +547,9 @@ static MP_THREAD_VOID producer_thread(void *ctx)
         bool queue_full = p->queue_count == RDP_QUEUE_PACKETS ||
                           p->queue_bytes + packet->payload_size > RDP_QUEUE_BYTES;
         if (queue_full) {
-            MP_INFO(p->demuxer, "producer blocked queue_count=%d queue_bytes=%zu\n",
-                    p->queue_count, p->queue_bytes);
+            MP_VERBOSE(p->demuxer,
+                       "producer blocked queue_count=%d queue_bytes=%zu\n",
+                       p->queue_count, p->queue_bytes);
         }
         while (!p->stopping && !p->interrupted && p->epoch == epoch && queue_full) {
             mp_cond_wait(&p->wakeup, &p->lock);
@@ -602,7 +638,9 @@ static int rustdash_open(struct demuxer *demuxer, enum demux_check check)
                    version == RDP_SUBTITLE_VERSION;
     bool live_v5 = !memcmp(magic, RDP_SWITCH_MAGIC, 8) &&
                    version == RDP_SWITCH_VERSION;
-    bool live_source = live_v3 || live_v4 || live_v5;
+    bool live_v6 = !memcmp(magic, RDP_DVR_MAGIC, 8) &&
+                   version == RDP_DVR_VERSION;
+    bool live_source = live_v3 || live_v4 || live_v5 || live_v6;
     if (generation_fixture) {
         if (!get_u32(s, &num_generations) || num_tracks != 1 || num_generations != 2)
             return -1;
@@ -622,9 +660,11 @@ static int rustdash_open(struct demuxer *demuxer, enum demux_check check)
     p->demuxer = demuxer;
     p->generation_fixture = generation_fixture;
     p->live_source = live_source;
-    p->switch_source = live_v5;
+    p->switch_source = live_v5 || live_v6;
+    p->seek_source = live_v6;
     for (uint32_t n = 0; n < num_generations; n++) {
-        if (!read_config(demuxer, p, !generation_fixture || n == 0, live_v4 || live_v5))
+        if (!read_config(demuxer, p, !generation_fixture || n == 0,
+                         live_v4 || live_v5 || live_v6))
             return -1;
     }
     if (p->num_tracks != (int)num_tracks)
@@ -672,8 +712,8 @@ static int rustdash_open(struct demuxer *demuxer, enum demux_check check)
     }
     p->producer_started = true;
 
-    demuxer->seekable = !live_source;
-    demuxer->filetype = live_v5 ? "rustdash-live-v5" : live_v4 ? "rustdash-live-v4" : live_source ? "rustdash-live-v3" :
+    demuxer->seekable = !live_source || live_v6;
+    demuxer->filetype = live_v6 ? "rustdash-live-v6" : live_v5 ? "rustdash-live-v5" : live_v4 ? "rustdash-live-v4" : live_source ? "rustdash-live-v3" :
         (generation_fixture ? "rustdash-generation-v2" : "rustdash-live-v1");
     MP_INFO(demuxer, "bounded producer started packets=%d groups=%d "
             "queue_packets=%d queue_bytes=%u delay_ms=%d\n",
@@ -689,7 +729,7 @@ static bool rustdash_read_packet(struct demuxer *demuxer, struct demux_packet **
     mp_mutex_lock(&p->lock);
     while (true) {
         while (!p->queue_count && !p->producer_done && !p->producer_failed &&
-               !p->stopping && !p->interrupted) {
+               !p->stopping && !p->interrupted && !p->seek_ready) {
             p->waits++;
             MP_VERBOSE(demuxer, "consumer blocked wait=%d epoch=%" PRIu64 "\n",
                        p->waits, p->epoch);
@@ -699,6 +739,10 @@ static bool rustdash_read_packet(struct demuxer *demuxer, struct demux_packet **
             p->empty_successes++;
             mp_mutex_unlock(&p->lock);
             return true;
+        }
+        if (p->seek_ready) {
+            mp_cond_wait(&p->wakeup, &p->lock);
+            continue;
         }
         if (p->producer_failed) {
             bool report = !p->producer_failure_reported;
@@ -774,7 +818,8 @@ static void rustdash_interrupt(struct demuxer *demuxer)
     mp_mutex_lock(&p->lock);
     p->interrupted = true;
     p->epoch++;
-    clear_queue_locked(p);
+    if (!p->seek_ready)
+        clear_queue_locked(p);
     MP_INFO(demuxer, "producer wait interrupted for queued seek epoch=%" PRIu64 "\n",
             p->epoch);
     mp_cond_broadcast(&p->wakeup);
@@ -784,9 +829,26 @@ static void rustdash_interrupt(struct demuxer *demuxer)
 static void rustdash_seek(struct demuxer *demuxer, double seek_pts, int flags)
 {
     struct priv *p = demuxer->priv;
-    if (p->live_source)
+    if (p->live_source && !p->seek_source)
         return;
     double target = flags & SEEK_FACTOR ? seek_pts * demuxer->duration : seek_pts;
+    if (p->seek_source) {
+        mp_mutex_lock(&p->lock);
+        while (!p->seek_ready && !p->producer_failed && !p->stopping)
+            mp_cond_wait(&p->wakeup, &p->lock);
+        if (p->seek_ready) {
+            p->interrupted = false;
+            p->seek_ready = false;
+            p->epoch = p->seek_epoch;
+            MP_INFO(demuxer, "DASH seek committed requested=%.3f actual=%.3f "
+                    "delta=%.3f epoch=%" PRIu64 "\n", target,
+                    p->seek_target_ms / 1000.0,
+                    target - p->seek_target_ms / 1000.0, p->epoch);
+            mp_cond_broadcast(&p->wakeup);
+        }
+        mp_mutex_unlock(&p->lock);
+        return;
+    }
     int chosen = 0;
     double chosen_pts = 0;
     bool found = false;

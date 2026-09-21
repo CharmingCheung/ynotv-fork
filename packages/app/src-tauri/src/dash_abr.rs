@@ -247,6 +247,16 @@ impl AbrController {
         self.consecutive_failures = self.consecutive_failures.saturating_add(1);
     }
 
+    /// A DVR seek invalidates recent consecutive-support and pending-failure
+    /// assumptions, while retaining the longer-lived throughput estimate.
+    pub(crate) fn on_seek(&mut self) {
+        while self.samples.len() > 1 {
+            self.samples.pop_front();
+        }
+        self.consecutive_failures = 0;
+        self.last_switch_time = None;
+    }
+
     pub(crate) fn observe_buffer(&mut self, buffered_seconds: Option<f64>) {
         let value = buffered_seconds.filter(|value| value.is_finite() && *value >= 0.0);
         self.stats.buffered_seconds = value;

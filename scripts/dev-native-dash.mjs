@@ -15,10 +15,13 @@ if (process.platform === 'darwin' && existsSync('/private/tmp')) {
     if (name.startsWith('ynotv-mpv-adapter.')) {
       candidates.push(join('/private/tmp', name, 'mpv/build-ui'));
     }
-    // C8 development worktrees use a direct pinned-mpv checkout and build-c8
-    // directory instead of the older adapter/mpv/build-ui nesting.
+    // C8/C10 development worktrees use a direct pinned-mpv checkout instead
+    // of the older adapter/mpv/build-ui nesting.
     if (name.startsWith('ynotv-c8-mpv.')) {
       candidates.push(join('/private/tmp', name, 'build-c8'));
+    }
+    if (name.startsWith('ynotv-c10-mpv.')) {
+      candidates.push(join('/private/tmp', name, 'build-ui'));
     }
   }
 }
@@ -29,13 +32,13 @@ const patched = candidates
   // with only RDPKT004 cannot accept C8 runtime codec-generation records.
   .filter((directory) => {
     const library = readFileSync(join(directory, libraryName));
-    return library.includes(Buffer.from('RDPKT005')) &&
+    return library.includes(Buffer.from('RDPKT006')) &&
       library.includes(Buffer.from('YNOIMSC1'));
   })
   .sort((left, right) => statSync(join(right, libraryName)).mtimeMs - statSync(join(left, libraryName)).mtimeMs)[0];
 
 if (!patched) {
-  console.error('[native-dash] track-switch capable (RDPKT005/YNOIMSC1) UI libmpv was not found. Rebuild the mpv adapter build-ui target first.');
+  console.error('[native-dash] DVR-seek capable (RDPKT006/YNOIMSC1) UI libmpv was not found. Rebuild the mpv adapter build-ui target first.');
   process.exit(1);
 }
 

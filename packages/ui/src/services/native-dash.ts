@@ -3,6 +3,7 @@ import { fetch as tauriFetch } from '@tauri-apps/plugin-http';
 export interface NativeDashPlaybackConfig {
   manifestUrl: string;
   requestHeaders?: Record<string, string>;
+  preferredSubtitleLanguage?: string;
   drm: { type: 'clearkey'; kid: string; key: string };
 }
 

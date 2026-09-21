@@ -1121,6 +1121,10 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
 
       const channelHttpHeaders = getM3uHttpHeaders(channel.kodi_props);
       const nativeDashRoute = await routeNativeDash(resolved.url, channel.kodi_props, channelHttpHeaders);
+      if (nativeDashRoute.kind === 'native') {
+        nativeDashRoute.config.preferredSubtitleLanguage =
+          useSettingsStore.getState().subtitleSettings?.defaultLanguage || 'en';
+      }
       if (nativeDashRoute.kind === 'error') {
         setError(nativeDashRoute.error);
         return false;
@@ -2315,7 +2319,11 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
       const bestTrack = candidates[0];
       logInfo(`[Playback] Auto-selecting subtitle track: ${bestTrack.id} language: ${defaultLanguage} external: ${bestTrack.external} title: ${bestTrack.title}`);
       if (hasManualSubtitleSelectionRef.current) return;
-      await Bridge.setSubtitleTrack(bestTrack.id);
+      if (!bestTrack.selected) {
+        await Bridge.setSubtitleTrack(bestTrack.id);
+      } else {
+        logInfo(`[Playback] Subtitle track ${bestTrack.id} is already selected; keeping native selection`);
+      }
       hasAutoSelectedSubRef.current = true;
       subAutoSelectEverCompletedRef.current = true;
     } else if (subTracks.length > 0) {
@@ -2338,7 +2346,9 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
       if (fallback) {
         logInfo(`[Playback] No ${defaultLanguage} match (${subTracks.length} tracks); falling back to embedded subtitle track: ${fallback.id} title: ${fallback.title}`);
         if (hasManualSubtitleSelectionRef.current) return;
-        await Bridge.setSubtitleTrack(fallback.id);
+        if (!fallback.selected) {
+          await Bridge.setSubtitleTrack(fallback.id);
+        }
       } else {
         // Apply full subtitle settings so any active MPV subtitle (e.g. auto-selected CC/ASS track) gets proper sizing, scaling & ASS overrides.
         await applySubtitleSettings();
