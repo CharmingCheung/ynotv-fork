@@ -129,6 +129,9 @@ targets. See [Native dependencies and reproducible builds](docs/native-dependenc
 for every external input, platform limitation, and the separately maintained
 Native DASH runtime.
 
+If a previous development session was not stopped and still owns port 5173,
+use `pnpm dev:clean` to replace it.
+
 **4. Build for production**
 
 ```bash
