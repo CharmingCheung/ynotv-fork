@@ -329,6 +329,7 @@ mod jellyfin_web;
 mod icon_switcher;
 // Exact DASH time/index model shared by the C0 tests and experimental C5 session.
 mod dash_timeline;
+mod dash_abr;
 mod native_dash;
 mod ttml;
 
@@ -1685,6 +1686,11 @@ async fn native_dash_get_track_catalog() -> Result<Option<native_dash::DashTrack
 #[tauri::command]
 async fn native_dash_select_video_representation(representation_id: String) -> Result<(), String> {
     native_dash::request_video_representation(&representation_id)
+}
+
+#[tauri::command]
+async fn native_dash_select_auto_video_quality() -> Result<(), String> {
+    native_dash::request_auto_video_quality()
 }
 
 #[tauri::command]
@@ -5717,6 +5723,7 @@ pub fn run() {
             mpv_get_track_list,
             native_dash_get_track_catalog,
             native_dash_select_video_representation,
+            native_dash_select_auto_video_quality,
             mpv_set_audio,
             mpv_set_subtitle,
             mpv_add_subtitle,

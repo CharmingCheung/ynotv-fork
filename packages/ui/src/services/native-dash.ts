@@ -33,6 +33,21 @@ export interface DashTrackCatalog {
   active: boolean;
   videoAdaptationSetId: string;
   selectedVideoRepresentationId: string;
+  videoQualityMode: { type: 'auto' } | { type: 'manual'; representationId: string };
+  pendingVideoRepresentationId?: string;
+  abrStatistics: {
+    throughputSampleCount: number;
+    currentEstimate?: number;
+    currentSafeBandwidth?: number;
+    currentRepresentation: string;
+    abrSwitchCount: number;
+    downSwitchCount: number;
+    upSwitchCount: number;
+    lastSwitchReason?: string;
+    bufferedSeconds?: number;
+    minimumObservedBufferedSeconds?: number;
+    maximumObservedBufferedSeconds?: number;
+  };
   selectedAudioAdaptationSetId: string;
   videoRepresentations: DashVideoRepresentation[];
   audioTracks: DashAudioTrack[];

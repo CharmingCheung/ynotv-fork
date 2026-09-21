@@ -21,7 +21,14 @@ export function DashQualityModal({ isOpen, onClose }: DashQualityModalProps) {
     setError(null);
     try {
       await Bridge.setNativeDashVideoRepresentation(representationId);
-      setCatalog((current) => current ? { ...current, selectedVideoRepresentationId: representationId } : current);
+      setCatalog((current) => current ? { ...current, selectedVideoRepresentationId: representationId, videoQualityMode: { type: 'manual', representationId } } : current);
+    } catch (value) { setError(String(value)); }
+  };
+  const chooseAuto = async () => {
+    setError(null);
+    try {
+      await Bridge.setNativeDashAutoVideoQuality();
+      setCatalog((current) => current ? { ...current, videoQualityMode: { type: 'auto' } } : current);
     } catch (value) { setError(String(value)); }
   };
   const key = (event: KeyboardEvent<HTMLElement>, action: () => void) => {
@@ -34,10 +41,16 @@ export function DashQualityModal({ isOpen, onClose }: DashQualityModalProps) {
       <div className="track-modal-content">
         {loading ? <div className="track-modal-loading">Loading…</div> : !catalog?.active ? <div className="track-modal-empty">Manual quality is available for native DASH playback.</div> : <>
           {error && <div className="track-modal-empty">{error}</div>}
-          <ul className="track-list">{catalog.videoRepresentations.map((representation) => {
+          <ul className="track-list">
+            <li role="button" tabIndex={0} className={`track-item ${catalog.videoQualityMode.type === 'auto' ? 'selected' : ''}`}
+              onClick={chooseAuto} onKeyDown={(event) => key(event, chooseAuto)}>
+              <span className="track-name">Auto</span>
+              <span className="track-info"><span className="track-lang">{catalog.videoRepresentations.find((representation) => representation.representationId === catalog.selectedVideoRepresentationId)?.label}</span></span>
+            </li>
+            {catalog.videoRepresentations.map((representation) => {
             const selected = catalog.selectedVideoRepresentationId === representation.representationId;
             return <li key={representation.representationId} role="button" tabIndex={representation.compatible ? 0 : -1} aria-disabled={!representation.compatible}
-              className={`track-item ${selected ? 'selected' : ''} ${!representation.compatible ? 'disabled' : ''}`}
+              className={`track-item ${selected && catalog.videoQualityMode.type === 'manual' ? 'selected' : ''} ${!representation.compatible ? 'disabled' : ''}`}
               onClick={() => representation.compatible && choose(representation.representationId)}
               onKeyDown={(event) => representation.compatible && key(event, () => choose(representation.representationId))}>
               <span className="track-name">{representation.label}</span>

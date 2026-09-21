@@ -1,6 +1,10 @@
 //! Native ClearKey DASH session with immutable manifest generations and C8 switching.
 
 use crate::dash_timeline::{CompactTimeline, ExactTime, TimelineEntry};
+use crate::dash_abr::{
+    AbrController, AbrDecision, AbrEvaluation, AbrPolicy, AbrReason, AbrRepresentation, AbrStatistics,
+    DownloadMeasurement, VideoQualityMode,
+};
 use futures_util::future::try_join_all;
 use once_cell::sync::Lazy;
 use quick_xml::de::from_str;
@@ -31,6 +35,8 @@ pub(crate) enum NativeDashDrm { ClearKey { kid: String, key: String } }
 struct SwitchSelection {
     generation: u64,
     video_representation: String,
+    video_quality_mode: VideoQualityMode,
+    abr_reason: Option<AbrReason>,
     audio_track: String,
     subtitle_track: Option<String>,
 }
@@ -47,6 +53,16 @@ struct ActiveSession {
 }
 static ACTIVE: Lazy<parking_lot::Mutex<ActiveSession>> = Lazy::new(|| parking_lot::Mutex::new(ActiveSession::default()));
 static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
+static BUFFERED_SECONDS_BITS: AtomicU64 = AtomicU64::new(f64::NAN.to_bits());
+
+pub(crate) fn observe_buffered_seconds(value: Option<f64>) {
+    BUFFERED_SECONDS_BITS.store(value.filter(|v| v.is_finite() && *v >= 0.0).unwrap_or(f64::NAN).to_bits(), Ordering::Relaxed);
+}
+
+fn buffered_seconds() -> Option<f64> {
+    let value = f64::from_bits(BUFFERED_SECONDS_BITS.load(Ordering::Relaxed));
+    value.is_finite().then_some(value)
+}
 
 pub(crate) fn cancel_active() {
     let mut active = ACTIVE.lock();
@@ -55,6 +71,7 @@ pub(crate) fn cancel_active() {
     active.dynamic = false;
     active.catalog = None;
     active.switch_tx = None;
+    observe_buffered_seconds(None);
 }
 pub(crate) fn note_eof() {
     let active = ACTIVE.lock();
@@ -119,6 +136,9 @@ pub(crate) struct DashTrackCatalog {
     pub active: bool,
     pub video_adaptation_set_id: String,
     pub selected_video_representation_id: String,
+    pub video_quality_mode: VideoQualityMode,
+    pub pending_video_representation_id: Option<String>,
+    pub abr_statistics: AbrStatistics,
     pub selected_audio_adaptation_set_id: String,
     pub video_representations: Vec<DashVideoRepresentation>,
     pub audio_tracks: Vec<DashAudioTrack>,
@@ -139,13 +159,38 @@ pub(crate) fn request_video_representation(representation_id: &str) -> Result<()
     if !option.compatible {
         return Err("Unsupported DASH representation switch: codec family or segment alignment is incompatible".into());
     }
+    switch_video_representation(&tx, representation_id, VideoQualityMode::Manual(representation_id.to_string()), None);
+    catalog.video_quality_mode = VideoQualityMode::Manual(representation_id.to_string());
+    catalog.pending_video_representation_id = Some(representation_id.to_string());
+    Ok(())
+}
+
+pub(crate) fn request_auto_video_quality() -> Result<(), String> {
+    let mut active = ACTIVE.lock();
+    let tx = active.switch_tx.as_ref().ok_or("No active native DASH session")?.clone();
+    let catalog = active.catalog.as_mut().ok_or("No active native DASH session")?;
+    let current = catalog.selected_video_representation_id.clone();
+    // Incrementing the shared C8 generation immediately supersedes a pending
+    // manual/ABR target without reloading or duplicating switch-boundary logic.
+    switch_video_representation(&tx, &current, VideoQualityMode::Auto, None);
+    catalog.video_quality_mode = VideoQualityMode::Auto;
+    catalog.pending_video_representation_id = None;
+    Ok(())
+}
+
+fn switch_video_representation(
+    tx: &tokio::sync::watch::Sender<SwitchSelection>,
+    representation_id: &str,
+    mode: VideoQualityMode,
+    abr_reason: Option<AbrReason>,
+) {
     let next = tx.borrow().generation.saturating_add(1);
     tx.send_modify(|selection| {
         selection.generation = next;
         selection.video_representation = representation_id.to_string();
+        selection.video_quality_mode = mode.clone();
+        selection.abr_reason = abr_reason;
     });
-    catalog.selected_video_representation_id = representation_id.to_string();
-    Ok(())
 }
 
 pub(crate) fn note_audio_track_selection(mpv_track_id: i64) {
@@ -282,10 +327,11 @@ fn parse_snapshot(bytes: &[u8], final_url: Url, generation: u64, selected: Optio
     let duration=period.duration.as_deref().or(mpd.duration.as_deref()).map(parse_duration).transpose()?;
     let period_id=period.id.clone().unwrap_or_else(|| format!("start:{}/{}",start.numerator(),start.denominator()));
     let base=inherit_base(inherit_base(final_url,&mpd.base_urls)?,&period.base_urls)?;
+    let dynamic=mpd.kind.eq_ignore_ascii_case("dynamic");
     let video_tracks=build_video_tracks(period,&base,&period_id,start,duration)?;
     let video_choices=video_tracks.first().ok_or("Unsupported DASH manifest shape: no supported Video representation")?;
     let video=selected.and_then(|s|video_choices.representations.iter().find(|r|r.identity.representation==s.video_representation)).cloned()
-        .or_else(||video_choices.representations.iter().min_by_key(|r|(r.bandwidth,&r.identity.representation)).cloned())
+        .or_else(||startup_video_representation(&video_choices.representations,dynamic))
         .ok_or("Unsupported DASH manifest shape: no supported Video representation")?;
     let audio_tracks=build_audio_tracks(period,&base,&period_id,start,duration)?;
     let audio_track=selected.and_then(|s|audio_tracks.iter().find(|t|t.adaptation_set_id==s.audio_track))
@@ -294,8 +340,16 @@ fn parse_snapshot(bytes: &[u8], final_url: Url, generation: u64, selected: Optio
     let subtitles=select_subtitles(period,None)?.into_iter().map(|choice|make_rep(base.clone(),period_id.clone(),choice,start,duration)).collect::<Result<Vec<_>,_>>()?;
     let publish_time=mpd.publish_time.as_deref().map(|v|chrono::DateTime::parse_from_rfc3339(v).map(|v|v.with_timezone(&chrono::Utc)).map_err(|_|"Unsupported DASH manifest shape: publishTime")).transpose()?;
     let minimum_update_period=mpd.minimum_update_period.as_deref().map(parse_std_duration).transpose()?.filter(|v|!v.is_zero()).unwrap_or(FALLBACK_MUP).max(MIN_MUP);
-    let dynamic=mpd.kind.eq_ignore_ascii_case("dynamic");
     Ok(ManifestSnapshot { generation,fetched_at:SystemTime::now(),published_at:Instant::now(),publish_time,minimum_update_period,dynamic,periods:vec![period_id],video_tracks,audio_tracks,video,audio,subtitles })
+}
+
+fn startup_video_representation(representations:&[RepresentationSnapshot],dynamic:bool)->Option<RepresentationSnapshot>{
+    let mut ladder=representations.to_vec();
+    ladder.sort_by_key(|r|(r.bandwidth,r.identity.representation.clone()));
+    let family=ladder.first().map(|r|codec_family(&r.codecs).to_string())?;
+    let anchor=ladder.first()?.clone();
+    ladder.retain(|r|codec_family(&r.codecs)==family&&aligned_with(&anchor,r,dynamic));
+    ladder.get(ladder.len().saturating_sub(1)/2).cloned()
 }
 
 fn build_video_tracks<'a>(period:&'a Period,base:&Url,period_id:&str,start:ExactTime,duration:Option<ExactTime>)->Result<Vec<LogicalVideoTrack>,String>{
@@ -381,7 +435,7 @@ fn build_catalog(snapshot:&ManifestSnapshot)->DashTrackCatalog{
     let active_track=snapshot.video_tracks.iter().find(|t|t.adaptation_set_id==snapshot.video.identity.adaptation).unwrap_or(&snapshot.video_tracks[0]);
     let video_representations=active_track.representations.iter().map(|r|DashVideoRepresentation{representation_id:r.identity.representation.clone(),width:r.width,height:r.height,bandwidth:r.bandwidth,codec:r.codecs.clone(),frame_rate:r.frame_rate.clone(),label:match(r.width,r.height){(Some(w),Some(h))=>format!("{w}×{h}"),_=>r.identity.representation.clone()},compatible:aligned_with(&snapshot.video,r,snapshot.dynamic)}).collect();
     let audio_tracks=snapshot.audio_tracks.iter().map(|track|DashAudioTrack{adaptation_set_id:track.adaptation_set_id.clone(),mpv_track_id:track.mpv_track_id,language:track.language.clone(),label:track.label.clone(),role:track.roles.clone(),codec:track.selected.codecs.clone(),channels:track.channel_configuration.clone(),sample_rate:track.selected.audio_sampling_rate,representation_id:track.selected.identity.representation.clone()}).collect();
-    DashTrackCatalog{active:true,video_adaptation_set_id:active_track.adaptation_set_id.clone(),selected_video_representation_id:snapshot.video.identity.representation.clone(),selected_audio_adaptation_set_id:snapshot.audio.identity.adaptation.clone(),video_representations,audio_tracks,subtitle_tracks:snapshot.subtitles.iter().map(|rep|rep.identity.adaptation.clone()).collect()}
+    DashTrackCatalog{active:true,video_adaptation_set_id:active_track.adaptation_set_id.clone(),selected_video_representation_id:snapshot.video.identity.representation.clone(),video_quality_mode:VideoQualityMode::Auto,pending_video_representation_id:None,abr_statistics:AbrStatistics{current_representation:snapshot.video.identity.representation.clone(),..AbrStatistics::default()},selected_audio_adaptation_set_id:snapshot.audio.identity.adaptation.clone(),video_representations,audio_tracks,subtitle_tracks:snapshot.subtitles.iter().map(|rep|rep.identity.adaptation.clone()).collect()}
 }
 fn merged_template(a:&Adaptation,r:&Representation)->Result<SegmentTemplate,String>{let p=a.template.clone().unwrap_or_default();let c=r.template.clone().unwrap_or_default();let x=SegmentTemplate{timescale:c.timescale.or(p.timescale),pto:c.pto.or(p.pto),start_number:c.start_number.or(p.start_number),initialization:c.initialization.or(p.initialization),media:c.media.or(p.media),timeline:c.timeline.or(p.timeline)};if x.initialization.is_none()||x.media.is_none()||x.timeline.is_none(){Err("Unsupported DASH manifest shape: SegmentTemplate/SegmentTimeline required".into())}else{Ok(x)}}
 fn validate_cenc(s:&Selection<'_>)->Result<(),String>{for p in s.adaptation.protections.iter().chain(&s.representation.protections){if p.scheme.eq_ignore_ascii_case("urn:mpeg:dash:mp4protection:2011")&&p.value.as_deref().is_some_and(|v|!v.eq_ignore_ascii_case("cenc")){return Err("Unsupported DASH manifest shape: only CENC is supported".into())}}Ok(())}
@@ -396,6 +450,7 @@ struct LiveRuntime {
     video_inits:HashMap<String,Vec<u8>>, audio_inits:HashMap<String,Vec<u8>>, subtitle_inits:HashMap<String,Vec<u8>>,
     configs:HashMap<(u32,u32),Vec<u8>>, video_generations:HashMap<String,u32>, next_video_generation:u32, audio_generations:HashMap<String,u32>, next_audio_generation:u32,
     selection:SwitchSelection, stable_selection:SwitchSelection, switch_state:SwitchState, seen_cues:HashSet<String>, origin:ExactTime, frontier:ExactTime, batch:u64,
+    abr:AbrController, switch_from_bandwidth:Option<u64>,
 }
 
 async fn build_live(url:&str,request_headers:&HashMap<String,String>,kid:[u8;16],key:[u8;16],cancel:&CancellationToken)->Result<(TempDir,String,bool,DashTrackCatalog,tokio::sync::watch::Sender<SwitchSelection>),String>{
@@ -410,7 +465,7 @@ async fn build_live(url:&str,request_headers:&HashMap<String,String>,kid:[u8;16]
     let(body,final_url)=fetch_final(&client,manifest_url.clone(),cancel,"Manifest fetch failed").await?;
     let snapshot=parse_snapshot(&body,final_url,1,None)?;log_snapshot(&snapshot);
     let catalog=build_catalog(&snapshot);
-    let selection=SwitchSelection{generation:0,video_representation:snapshot.video.identity.representation.clone(),audio_track:snapshot.audio.identity.adaptation.clone(),subtitle_track:None};
+    let selection=SwitchSelection{generation:0,video_representation:snapshot.video.identity.representation.clone(),video_quality_mode:VideoQualityMode::Auto,abr_reason:None,audio_track:snapshot.audio.identity.adaptation.clone(),subtitle_track:None};
     let(switch_tx,switch_rx)=tokio::sync::watch::channel(selection.clone());
     let mut index=SegmentIndex::default();let stats=index.merge(&snapshot)?;log_merge(&snapshot,&stats);
     let video_segments=initial_segments(&snapshot.video,snapshot.dynamic)?;
@@ -428,13 +483,14 @@ async fn build_live(url:&str,request_headers:&HashMap<String,String>,kid:[u8;16]
     let frontier=video_segments.last().unwrap().end;
     let mut generations=HashMap::new();generations.insert(snapshot.video.identity.representation.clone(),1);
     let audio_generations=snapshot.audio_tracks.iter().map(|track|(track.adaptation_set_id.clone(),1)).collect();
-    let mut runtime=LiveRuntime{client,manifest_url,snapshot,index,kid,key,directory:dir.path().to_path_buf(),video_inits,audio_inits,subtitle_inits,configs:HashMap::new(),video_generations:generations,next_video_generation:2,audio_generations,next_audio_generation:2,stable_selection:selection.clone(),selection,switch_state:SwitchState::Stable,seen_cues:HashSet::new(),origin,frontier,batch:0};
+    let abr=AbrController::new(AbrPolicy::default(),VideoQualityMode::Auto,snapshot.video.identity.representation.clone());
+    let mut runtime=LiveRuntime{client,manifest_url,snapshot,index,kid,key,directory:dir.path().to_path_buf(),video_inits,audio_inits,subtitle_inits,configs:HashMap::new(),video_generations:generations,next_video_generation:2,audio_generations,next_audio_generation:2,stable_selection:selection.clone(),selection,switch_state:SwitchState::Stable,seen_cues:HashSet::new(),origin,frontier,batch:0,abr,switch_from_bandwidth:None};
     let first=runtime.make_batch(&video_segments,&audio_segments,&subtitle_segments,cancel).await?;
     runtime.commit_batch(&video_segments,&audio_segments,&subtitle_segments);
     let listener=TcpListener::bind("127.0.0.1:0").await.map_err(|_|"Native DASH packet bridge failed")?;
     let address=listener.local_addr().map_err(|_|"Native DASH packet bridge failed")?;
     let dynamic=runtime.snapshot.dynamic;let token=cancel.clone();
-    tokio::spawn(async move{if let Err(error)=serve_live(listener,runtime,first,switch_rx,token.clone()).await{if !token.is_cancelled(){log::error!("[native-dash] live session failed: {}",error);}}});
+    let abr_switch_tx=switch_tx.clone();tokio::spawn(async move{if let Err(error)=serve_live(listener,runtime,first,abr_switch_tx,switch_rx,token.clone()).await{if !token.is_cancelled(){log::error!("[native-dash] live session failed: {}",error);}}});
     Ok((dir,format!("http://{address}/native-dash.rdp"),dynamic,catalog,switch_tx))
 }
 fn initial_segments(rep:&RepresentationSnapshot,dynamic:bool)->Result<Vec<SegmentDescriptor>,String>{
@@ -448,22 +504,33 @@ async fn fetch_init(client:&reqwest::Client,rep:&RepresentationSnapshot,cancel:&
     let init=expand(rep.template.initialization.as_deref().unwrap(),&rep.identity.representation,None,None)?;
     fetch(client,rep.base.join(&init).map_err(|_|"Segment fetch failed")?,cancel,"Segment fetch failed").await
 }
-async fn download_component(client:&reqwest::Client,init:&[u8],segments:&[SegmentDescriptor],path:&Path,cancel:&CancellationToken)->Result<(),String>{
+struct ComponentDownload { kind:MediaKind, metrics:Vec<DownloadMeasurement> }
+async fn download_component(client:&reqwest::Client,init:&[u8],segments:&[SegmentDescriptor],path:&Path,cancel:&CancellationToken,kind:MediaKind)->Result<ComponentDownload,(MediaKind,String)>{
     let mut bytes=init.to_vec();
-    for segment in segments{bytes.extend(fetch(client,segment.url.clone(),cancel,"Segment fetch failed").await?);}
-    fs::write(path,bytes).await.map_err(|_|"Segment fetch failed: temporary write".into())
+    let mut metrics=Vec::new();
+    for segment in segments{
+        if kind==MediaKind::Video {
+            let(data,measurement)=fetch_media_segment(client,segment.url.clone(),cancel,&segment.identity.representation.representation).await.map_err(|e|(kind,e))?;
+            bytes.extend(data);metrics.push(measurement);
+        }else{
+            bytes.extend(fetch(client,segment.url.clone(),cancel,"Segment fetch failed").await.map_err(|e|(kind,e))?);
+        }
+    }
+    fs::write(path,bytes).await.map_err(|_|(kind,"Segment fetch failed: temporary write".into()))?;
+    Ok(ComponentDownload{kind,metrics})
 }
-async fn download_component_owned(client:reqwest::Client,init:Vec<u8>,segments:Vec<SegmentDescriptor>,path:PathBuf,cancel:CancellationToken)->Result<(),String>{download_component(&client,&init,&segments,&path,&cancel).await}
+async fn download_component_owned(client:reqwest::Client,init:Vec<u8>,segments:Vec<SegmentDescriptor>,path:PathBuf,cancel:CancellationToken,kind:MediaKind)->Result<ComponentDownload,(MediaKind,String)>{download_component(&client,&init,&segments,&path,&cancel,kind).await}
 
 impl LiveRuntime {
     async fn apply_selection(&mut self,selection:SwitchSelection,cancel:&CancellationToken)->Result<(),String>{
         self.switch_state=SwitchState::TargetPreparing;log::info!("DASH track switch state=TargetPreparing generation={}",selection.generation);
+        self.abr.set_mode(selection.video_quality_mode.clone());
         if selection.video_representation!=self.selection.video_representation{
             let track=self.snapshot.video_tracks.iter().find(|track|track.adaptation_set_id==self.snapshot.video.identity.adaptation).ok_or("DASH logical video track disappeared")?;
             let target=track.representations.iter().find(|rep|rep.identity.representation==selection.video_representation).cloned().ok_or("DASH video representation disappeared")?;
             if !aligned_with(&self.snapshot.video,&target,self.snapshot.dynamic){return Err("Unsupported DASH representation switch: no aligned random-access segment boundary".into())}
             if !self.video_inits.contains_key(&selection.video_representation){let init=fetch_init(&self.client,&target,cancel).await?;self.video_inits.insert(selection.video_representation.clone(),init);let generation=self.next_video_generation;self.next_video_generation+=1;self.video_generations.insert(selection.video_representation.clone(),generation);}
-            log::info!("DASH manual video switch: {} -> {} boundary={}/{} generation={}",self.snapshot.video.identity.representation,selection.video_representation,self.frontier.numerator(),self.frontier.denominator(),self.video_generations[&selection.video_representation]);self.snapshot.video=target;
+            self.switch_from_bandwidth=Some(self.snapshot.video.bandwidth);log::info!("DASH {} video switch: {} -> {} boundary={}/{} generation={}",if selection.abr_reason.is_some(){"ABR"}else{"manual"},self.snapshot.video.identity.representation,selection.video_representation,self.frontier.numerator(),self.frontier.denominator(),self.video_generations[&selection.video_representation]);self.snapshot.video=target;
         }
         if selection.audio_track!=self.selection.audio_track{
             let target=self.snapshot.audio_tracks.iter().find(|track|track.adaptation_set_id==selection.audio_track).ok_or("DASH audio track disappeared")?;
@@ -475,16 +542,27 @@ impl LiveRuntime {
     fn next_video_segment(&self)->Option<SegmentDescriptor>{self.index.records.values().filter(|r|r.advertised&&r.state==SegmentState::Known&&r.descriptor.identity.representation==self.snapshot.video.identity&&r.descriptor.start==self.frontier).min_by_key(|r|r.descriptor.start).map(|r|r.descriptor.clone())}
     fn next_overlapping(&self,identity:&RepresentationIdentity,start:ExactTime,end:ExactTime)->Option<SegmentDescriptor>{self.index.records.values().filter(|r|r.advertised&&r.state==SegmentState::Known&&r.descriptor.identity.representation==*identity&&r.descriptor.start<end&&start<r.descriptor.end).min_by_key(|r|r.descriptor.start).map(|r|r.descriptor.clone())}
     fn demuxed_overlaps(&self,identity:&RepresentationIdentity,start:ExactTime,end:ExactTime)->bool{self.index.records.values().any(|r|r.state==SegmentState::Demuxed&&r.descriptor.identity.representation==*identity&&r.descriptor.start<end&&start<r.descriptor.end)}
+    fn abr_ladder(&self)->Vec<AbrRepresentation>{
+        self.snapshot.video_tracks.iter().find(|track|track.adaptation_set_id==self.snapshot.video.identity.adaptation).into_iter().flat_map(|track|track.representations.iter()).filter(|rep|aligned_with(&self.snapshot.video,rep,self.snapshot.dynamic)).map(|rep|AbrRepresentation{id:rep.identity.representation.clone(),bandwidth:rep.bandwidth}).collect()
+    }
+    fn sync_catalog(&self,pending:Option<String>){
+        let mut active=ACTIVE.lock();if let Some(catalog)=active.catalog.as_mut(){catalog.selected_video_representation_id=self.snapshot.video.identity.representation.clone();catalog.video_quality_mode=self.selection.video_quality_mode.clone();catalog.pending_video_representation_id=pending;catalog.abr_statistics=self.abr.statistics();catalog.selected_audio_adaptation_set_id=self.selection.audio_track.clone();}
+    }
     async fn make_batch(&mut self,video:&[SegmentDescriptor],audio:&[(LogicalAudioTrack,Vec<SegmentDescriptor>)],subtitles:&[Vec<SegmentDescriptor>],cancel:&CancellationToken)->Result<RdpBatch,String>{
         for segment in video.iter().chain(audio.iter().flat_map(|(_,s)|s)).chain(subtitles.iter().flatten()){self.index.mark(&segment.identity,SegmentState::Scheduled);self.index.mark(&segment.identity,SegmentState::Fetching);}
         self.batch+=1;let vp=self.directory.join(format!("video-{}.mp4",self.batch));let ap=self.directory.join(format!("audio-{}.mp4",self.batch));let out=self.directory.join(format!("packets-{}.rdp",self.batch));
         let video_rep=video.first().ok_or("DASH video switch has no aligned segment")?.identity.representation.representation.clone();
         let video_init=self.video_inits.get(&video_rep).ok_or("DASH video init unavailable")?;
-        let mut component_paths=vec![vp.clone()];let mut mappings=vec![(1,self.video_generations[&video_rep],MediaKind::Video,TrackMetadata::default())];let mut downloads=vec![download_component_owned(self.client.clone(),video_init.clone(),video.to_vec(),vp,cancel.clone())];
-        for(n,(track,segments))in audio.iter().enumerate(){let path=if n==0{ap.clone()}else{self.directory.join(format!("audio-{n}-{}.mp4",self.batch))};let init=self.audio_inits.get(&track.adaptation_set_id).ok_or("DASH audio init unavailable")?;downloads.push(download_component_owned(self.client.clone(),init.clone(),segments.clone(),path.clone(),cancel.clone()));component_paths.push(path);mappings.push((1+track.mpv_track_id as u32,self.audio_generations[&track.adaptation_set_id],MediaKind::Audio,TrackMetadata{language:track.language.clone(),title:audio_title(track),default_track:track.adaptation_set_id==self.selection.audio_track,forced_track:false}))}
+        let mut component_paths=vec![vp.clone()];let mut mappings=vec![(1,self.video_generations[&video_rep],MediaKind::Video,TrackMetadata::default())];let mut downloads=vec![download_component_owned(self.client.clone(),video_init.clone(),video.to_vec(),vp,cancel.clone(),MediaKind::Video)];
+        for(n,(track,segments))in audio.iter().enumerate(){let path=if n==0{ap.clone()}else{self.directory.join(format!("audio-{n}-{}.mp4",self.batch))};let init=self.audio_inits.get(&track.adaptation_set_id).ok_or("DASH audio init unavailable")?;downloads.push(download_component_owned(self.client.clone(),init.clone(),segments.clone(),path.clone(),cancel.clone(),MediaKind::Audio));component_paths.push(path);mappings.push((1+track.mpv_track_id as u32,self.audio_generations[&track.adaptation_set_id],MediaKind::Audio,TrackMetadata{language:track.language.clone(),title:audio_title(track),default_track:track.adaptation_set_id==self.selection.audio_track,forced_track:false}))}
         let subtitle_track_base=2+self.snapshot.audio_tracks.len()as u32;
-        for(n,segments)in subtitles.iter().enumerate(){let p=self.directory.join(format!("subtitle-{n}-{}.mp4",self.batch));let rep=&self.snapshot.subtitles[n];downloads.push(download_component_owned(self.client.clone(),self.subtitle_inits.get(&rep.identity.adaptation).ok_or("DASH subtitle init unavailable")?.clone(),segments.clone(),p.clone(),cancel.clone()));component_paths.push(p);let meta=rep.subtitle.as_ref().unwrap();mappings.push((subtitle_track_base+n as u32,1,MediaKind::Subtitle,TrackMetadata{language:meta.language.clone(),title:meta.label.clone(),default_track:meta.default_track,forced_track:meta.forced_track}))}
-        try_join_all(downloads).await?;
+        for(n,segments)in subtitles.iter().enumerate(){let p=self.directory.join(format!("subtitle-{n}-{}.mp4",self.batch));let rep=&self.snapshot.subtitles[n];downloads.push(download_component_owned(self.client.clone(),self.subtitle_inits.get(&rep.identity.adaptation).ok_or("DASH subtitle init unavailable")?.clone(),segments.clone(),p.clone(),cancel.clone(),MediaKind::Subtitle));component_paths.push(p);let meta=rep.subtitle.as_ref().unwrap();mappings.push((subtitle_track_base+n as u32,1,MediaKind::Subtitle,TrackMetadata{language:meta.language.clone(),title:meta.label.clone(),default_track:meta.default_track,forced_track:meta.forced_track}))}
+        let downloads=match try_join_all(downloads).await{Ok(value)=>value,Err((kind,error))=>{if kind==MediaKind::Video&&error!="Native DASH session cancelled"{self.abr.observe_failed_download();}return Err(error)}};
+        let download_metrics=downloads.into_iter().filter(|download|download.kind==MediaKind::Video).flat_map(|download|download.metrics).collect::<Vec<_>>();
+        for measurement in download_metrics{
+            let representation=measurement.representation_id.clone();let bytes=measurement.bytes;let duration=measurement.request_end.saturating_duration_since(measurement.request_start);let ttfb=measurement.first_byte_time.map(|at|at.saturating_duration_since(measurement.request_start));let transfer=measurement.first_byte_time.map(|at|measurement.request_end.saturating_duration_since(at));
+            if self.abr.observe_download(measurement){log::info!("ABR sample: rep={} bytes={} request_duration={:.3}s ttfb={} transfer_duration={} request_throughput={:.3}Mbps transfer_throughput={}",representation,bytes,duration.as_secs_f64(),ttfb.map(|v|format!("{:.3}s",v.as_secs_f64())).unwrap_or_else(||"unknown".into()),transfer.map(|v|format!("{:.3}s",v.as_secs_f64())).unwrap_or_else(||"unknown".into()),bytes as f64*8.0/duration.as_secs_f64()/1_000_000.0,transfer.filter(|v|!v.is_zero()).map(|v|format!("{:.3}Mbps",bytes as f64*8.0/v.as_secs_f64()/1_000_000.0)).unwrap_or_else(||"unknown".into()));}
+        }
         for segment in video.iter().chain(audio.iter().flat_map(|(_,s)|s)).chain(subtitles.iter().flatten()){if self.index.fetched.contains(&segment.identity){return Err("Duplicate DASH segment fetch prevented".into())}}
         run_packet_producer(&component_paths,audio.len(),&out,self.kid,self.key,cancel).await?;let bytes=fs::read(out).await.map_err(|_|"Native DASH packet output failed")?;let mut batch=RdpBatch::parse(&bytes)?;batch.remap(&mappings)?;if !batch.first_packet_is_keyframe(1)?{return Err("Unsupported DASH representation switch: target segment does not begin with a random access packet".into())}let bases=subtitles.iter().enumerate().filter_map(|(n,s)|s.first().map(|first|(subtitle_track_base+n as u32,first.identity.media_time,self.snapshot.subtitles[n].template.timescale.unwrap_or(1)))).collect::<Vec<_>>();batch.bridge_ttml(&bases,&mut self.seen_cues)?;
         let first_batch=self.configs.is_empty();for config in &batch.configs{let key=(u32_at(config,0)?,u32_at(config,4)?);if let Some(old)=self.configs.get(&key){if old!=config{return Err("Unsupported native DASH codec/init generation mutation".into())}}else{self.configs.insert(key,config.clone());if !first_batch{batch.config_updates.push(config.clone())}}}
@@ -502,35 +580,56 @@ impl LiveRuntime {
         let mut candidate=parse_snapshot(&body,final_url,self.snapshot.generation+1,Some(&self.selection))?;
         let mut next_audio_id=self.snapshot.audio_tracks.iter().map(|track|track.mpv_track_id).max().unwrap_or(0)+1;
         for track in &mut candidate.audio_tracks{if let Some(old)=self.snapshot.audio_tracks.iter().find(|old|old.adaptation_set_id==track.adaptation_set_id){track.mpv_track_id=old.mpv_track_id}else{track.mpv_track_id=next_audio_id;next_audio_id+=1}}
-        if candidate.video.identity.representation!=self.selection.video_representation{log::warn!("DASH selected video representation disappeared; fallback {} -> {}",self.selection.video_representation,candidate.video.identity.representation);self.selection.video_representation=candidate.video.identity.representation.clone();}
+        if candidate.video.identity.representation!=self.selection.video_representation{log::warn!("DASH selected video representation disappeared; fallback {} -> {}",self.selection.video_representation,candidate.video.identity.representation);self.selection.video_representation=candidate.video.identity.representation.clone();if matches!(self.selection.video_quality_mode,VideoQualityMode::Manual(_)){self.selection.video_quality_mode=VideoQualityMode::Manual(candidate.video.identity.representation.clone())}self.selection.abr_reason=None;self.abr.set_mode(self.selection.video_quality_mode.clone());self.abr.note_current_representation(&candidate.video.identity.representation);self.stable_selection=self.selection.clone();if let Some(tx)=ACTIVE.lock().switch_tx.as_ref().cloned(){let replacement=self.selection.clone();tx.send_modify(|current|*current=replacement.clone());}}
         if candidate.audio.identity.adaptation!=self.selection.audio_track{log::warn!("DASH selected audio AdaptationSet disappeared; fallback {} -> {}",self.selection.audio_track,candidate.audio.identity.adaptation);self.selection.audio_track=candidate.audio.identity.adaptation.clone();}
         let video_config_changed=self.snapshot.video.identity==candidate.video.identity&&(self.snapshot.video.template.initialization!=candidate.video.template.initialization||self.snapshot.video.codecs!=candidate.video.codecs||self.snapshot.video.mime_type!=candidate.video.mime_type||self.snapshot.video.width!=candidate.video.width||self.snapshot.video.height!=candidate.video.height);
         if video_config_changed||!self.video_inits.contains_key(&candidate.video.identity.representation){let init=fetch_init(&self.client,&candidate.video,cancel).await?;self.video_inits.insert(candidate.video.identity.representation.clone(),init);let generation=self.next_video_generation;self.next_video_generation+=1;self.video_generations.insert(candidate.video.identity.representation.clone(),generation);}
         for track in &candidate.audio_tracks{let changed=self.snapshot.audio_tracks.iter().find(|old|old.adaptation_set_id==track.adaptation_set_id).is_some_and(|old|old.selected.template.initialization!=track.selected.template.initialization||old.selected.codecs!=track.selected.codecs||old.selected.audio_sampling_rate!=track.selected.audio_sampling_rate);if changed||!self.audio_inits.contains_key(&track.adaptation_set_id){self.audio_inits.insert(track.adaptation_set_id.clone(),fetch_init(&self.client,&track.selected,cancel).await?);self.audio_generations.insert(track.adaptation_set_id.clone(),self.next_audio_generation);self.next_audio_generation+=1;}}
-        let stats=self.index.merge(&candidate)?;if stats.added==0{log::info!("native DASH refresh produced no newer media");}log_snapshot(&candidate);log_merge(&candidate,&stats);self.snapshot=candidate;ACTIVE.lock().catalog=Some(build_catalog(&self.snapshot));Ok(())
+        let stats=self.index.merge(&candidate)?;if stats.added==0{log::info!("native DASH refresh produced no newer media");}log_snapshot(&candidate);log_merge(&candidate,&stats);self.snapshot=candidate;let mut catalog=build_catalog(&self.snapshot);catalog.video_quality_mode=self.selection.video_quality_mode.clone();catalog.abr_statistics=self.abr.statistics();ACTIVE.lock().catalog=Some(catalog);Ok(())
     }
 }
 fn audio_title(track:&LogicalAudioTrack)->String{let mut parts=vec![track.label.clone()];for role in &track.roles{if !role.eq_ignore_ascii_case("main")&&!parts.iter().any(|p|p.eq_ignore_ascii_case(role)){parts.push(role.clone())}}if let Some(ch)=&track.channel_configuration{if !parts.iter().any(|p|p==ch){parts.push(ch.clone())}}parts.join(" - ")}
 
-async fn serve_live(listener:TcpListener,mut runtime:LiveRuntime,first:RdpBatch,mut switches:tokio::sync::watch::Receiver<SwitchSelection>,cancel:CancellationToken)->Result<(),String>{
+async fn serve_live(listener:TcpListener,mut runtime:LiveRuntime,first:RdpBatch,switch_tx:tokio::sync::watch::Sender<SwitchSelection>,mut switches:tokio::sync::watch::Receiver<SwitchSelection>,cancel:CancellationToken)->Result<(),String>{
     let(mut socket,_)=tokio::select!{_=cancel.cancelled()=>return Ok(()),x=listener.accept()=>x.map_err(|_|"Native DASH packet bridge failed")?};
     let mut request=[0u8;2048];tokio::select!{_=cancel.cancelled()=>return Ok(()),x=socket.read(&mut request)=>x.map_err(|_|"Native DASH packet bridge failed")?};
     write_live(&mut socket,b"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",&cancel).await?;
     write_live(&mut socket,&first.header(),&cancel).await?;write_live(&mut socket,&first.wire_records(),&cancel).await?;
     loop{
-        let latest=switches.borrow().clone();if latest.generation!=runtime.selection.generation{runtime.switch_state=SwitchState::SwitchRequested;log::info!("DASH track switch state=SwitchRequested generation={}",latest.generation);runtime.apply_selection(latest,&cancel).await?;}
+        let latest=switches.borrow().clone();if latest.generation!=runtime.selection.generation{runtime.switch_state=SwitchState::SwitchRequested;log::info!("DASH track switch state=SwitchRequested generation={}",latest.generation);if let Err(error)=runtime.apply_selection(latest.clone(),&cancel).await{if latest.abr_reason.is_some(){log::info!("ABR stale proposal discarded target={} reason={}",latest.video_representation,error);runtime.selection.generation=latest.generation;runtime.switch_state=SwitchState::Stable;runtime.sync_catalog(None);continue}return Err(error)}}
+        runtime.abr.observe_buffer(buffered_seconds());if runtime.switch_state==SwitchState::Stable{let ladder=runtime.abr_ladder();let current=runtime.snapshot.video.identity.representation.clone();if let Some(evaluation)=runtime.abr.evaluate(Instant::now(),&current,&ladder,None){log_abr_evaluation(&evaluation);match evaluation.decision{AbrDecision::Switch{target_id,reason,emergency:_}=>{switch_video_representation(&switch_tx,&target_id,VideoQualityMode::Auto,Some(reason));runtime.sync_catalog(Some(target_id));continue},AbrDecision::Hold(_)=>{}}}else{log::debug!("ABR evaluate current={} decision=hold reason=current_not_in_catalog",current)}}
         if runtime.snapshot.dynamic&&runtime.next_video_segment().is_none(){let deadline=runtime.snapshot.published_at+runtime.snapshot.minimum_update_period;let now=Instant::now();if deadline>now{tokio::select!{_=cancel.cancelled()=>return Ok(()),changed=switches.changed()=>{if changed.is_err(){return Ok(())}continue},_=tokio::time::sleep_until(tokio::time::Instant::from_std(deadline))=>{}}}match runtime.refresh(&cancel).await{Ok(())=>{},Err(e)if e=="Native DASH session cancelled"=>return Ok(()),Err(e)=>{log::warn!("[native-dash] refresh failed; retaining snapshot: {}",e);tokio::select!{_=cancel.cancelled()=>return Ok(()),_=tokio::time::sleep(Duration::from_secs(1))=>{}};continue}}}
         let Some(video)=runtime.next_video_segment()else{if runtime.snapshot.dynamic{log::info!("DASH waiting for newer media");continue}else{write_live(&mut socket,&0x31464f45u32.to_le_bytes(),&cancel).await?;return Ok(())}};
         let audio_track=runtime.snapshot.audio_tracks.iter().find(|track|track.adaptation_set_id==runtime.selection.audio_track).cloned().ok_or("DASH selected audio track disappeared")?;let audio_segments=if let Some(audio)=runtime.next_overlapping(&audio_track.selected.identity,video.start,video.end){vec![audio]}else{if runtime.demuxed_overlaps(&audio_track.selected.identity,video.start,video.end){log::debug!("DASH audio segment already covers video interval; no duplicate scheduling")}else{log::info!("DASH audio not yet available for video interval; continuing without premature EOF")}Vec::new()};
         let subtitles=runtime.snapshot.subtitles.iter().map(|rep|if runtime.selection.subtitle_track.as_deref()==Some(rep.identity.adaptation.as_str()){runtime.next_overlapping(&rep.identity,video.start,video.end).map(|s|vec![s]).unwrap_or_default()}else{Vec::new()}).collect::<Vec<_>>();let audios=vec![(audio_track,audio_segments)];let videos=vec![video];let selection_generation=runtime.selection.generation;let batch_cancel=cancel.child_token();
         enum BuildOutcome{Cancelled,Changed(bool),Built(Result<RdpBatch,String>)}
         let outcome={let mut build=Box::pin(runtime.make_batch(&videos,&audios,&subtitles,&batch_cancel));tokio::select!{_=cancel.cancelled()=>BuildOutcome::Cancelled,changed=switches.changed()=>{batch_cancel.cancel();BuildOutcome::Changed(changed.is_ok())},result=&mut build=>BuildOutcome::Built(result)}};
-        let batch=match outcome{BuildOutcome::Cancelled=>return Ok(()),BuildOutcome::Changed(false)=>{runtime.reset_batch(&videos,&audios,&subtitles);return Ok(())},BuildOutcome::Changed(true)=>{runtime.reset_batch(&videos,&audios,&subtitles);log::info!("DASH switch generation {} superseded during target preparation",selection_generation);continue},BuildOutcome::Built(Ok(batch))=>batch,BuildOutcome::Built(Err(error))if runtime.switch_state!=SwitchState::Stable=>{runtime.reset_batch(&videos,&audios,&subtitles);log::warn!("DASH manual switch failed generation={}: {}",selection_generation,error);runtime.reject_switch(selection_generation,&cancel).await?;continue},BuildOutcome::Built(Err(error))=>return Err(error)};
-        if switches.borrow().generation!=selection_generation{runtime.rollback_configs(&batch);runtime.reset_batch(&videos,&audios,&subtitles);log::info!("DASH switch generation {} superseded before commit",selection_generation);continue}let switching=runtime.switch_state!=SwitchState::Stable;if switching{runtime.switch_state=SwitchState::Committing;log::info!("DASH track switch state=Committing generation={}",selection_generation);}write_live(&mut socket,&batch.wire_records(),&cancel).await?;runtime.commit_batch(&videos,&audios,&subtitles);if switching{runtime.stable_selection=runtime.selection.clone();runtime.switch_state=SwitchState::Stable;log::info!("DASH track switch state=Stable generation={}",selection_generation);}
+        let batch=match outcome{BuildOutcome::Cancelled=>return Ok(()),BuildOutcome::Changed(false)=>{runtime.reset_batch(&videos,&audios,&subtitles);return Ok(())},BuildOutcome::Changed(true)=>{runtime.reset_batch(&videos,&audios,&subtitles);log::info!("DASH switch generation {} superseded during target preparation",selection_generation);continue},BuildOutcome::Built(Ok(batch))=>batch,BuildOutcome::Built(Err(error))if runtime.switch_state!=SwitchState::Stable=>{runtime.reset_batch(&videos,&audios,&subtitles);log::warn!("DASH video switch failed generation={}: {}",selection_generation,error);runtime.reject_switch(selection_generation,&cancel).await?;continue},BuildOutcome::Built(Err(error))if matches!(runtime.selection.video_quality_mode,VideoQualityMode::Auto)&&runtime.abr.consecutive_failures()<=2&&runtime.abr_ladder().iter().any(|rep|rep.bandwidth<runtime.snapshot.video.bandwidth)=>{runtime.reset_batch(&videos,&audios,&subtitles);log::warn!("ABR video fetch failed; retaining frontier for conservative retry: {}",error);continue},BuildOutcome::Built(Err(error))=>return Err(error)};
+        if switches.borrow().generation!=selection_generation{runtime.rollback_configs(&batch);runtime.reset_batch(&videos,&audios,&subtitles);log::info!("DASH switch generation {} superseded before commit",selection_generation);continue}let switching=runtime.switch_state!=SwitchState::Stable;if switching{runtime.switch_state=SwitchState::Committing;log::info!("DASH track switch state=Committing generation={}",selection_generation);}write_live(&mut socket,&batch.wire_records(),&cancel).await?;runtime.commit_batch(&videos,&audios,&subtitles);if switching{if let Some(from)=runtime.switch_from_bandwidth.take(){let target=AbrRepresentation{id:runtime.snapshot.video.identity.representation.clone(),bandwidth:runtime.snapshot.video.bandwidth};if let Some(reason)=runtime.selection.abr_reason{runtime.abr.switch_completed(Instant::now(),from,&target,reason)}else{runtime.abr.external_switch_completed(Instant::now(),&target.id)}}runtime.stable_selection=runtime.selection.clone();runtime.switch_state=SwitchState::Stable;log::info!("DASH track switch state=Stable generation={}",selection_generation);}runtime.sync_catalog(None);
     }
 }
+fn log_abr_evaluation(e:&AbrEvaluation){
+    let(candidate_id,candidate_bitrate)=e.candidate.as_ref().map(|candidate|(candidate.id.as_str(),candidate.bandwidth.to_string())).unwrap_or(("none","none".into()));
+    let(decision,reason)=match &e.decision{AbrDecision::Hold(reason)=>("hold",*reason),AbrDecision::Switch{reason,..}=>("switch",reason.as_str())};
+    log::debug!("ABR evaluate current={}({}bps) candidate={}({}bps) latest={} estimate={} safety_factor={:.2} safe={} buffer={} zone={} up_margin={:.2} required_estimate={} confidence={}/{} supporting_samples={}/{} cooldown_remaining={:.3}s decision={} reason={}",e.current.id,e.current.bandwidth,candidate_id,candidate_bitrate,format_mbps(e.latest_throughput_bps),format_mbps(e.estimate_bps),e.safety_factor,format_mbps(e.safe_bandwidth_bps),e.buffered_seconds.map(|v|format!("{v:.3}s")).unwrap_or_else(||"unknown".into()),e.buffer_zone.as_str(),e.upswitch_headroom,format_mbps(e.required_estimate_bps),e.sample_count,e.stable_sample_count,e.supporting_sample_count,e.required_supporting_sample_count,e.cooldown_remaining.as_secs_f64(),decision,reason);
+}
+fn format_mbps(value:Option<f64>)->String{value.map(|value|format!("{:.3}Mbps",value/1_000_000.0)).unwrap_or_else(||"unknown".into())}
 async fn write_live(socket:&mut TcpStream,bytes:&[u8],cancel:&CancellationToken)->Result<(),String>{tokio::select!{_=cancel.cancelled()=>Err("Native DASH session cancelled".into()),x=socket.write_all(bytes)=>x.map_err(|_|"Native DASH packet bridge disconnected".into())}}
 async fn fetch(client:&reqwest::Client,url:Url,c:&CancellationToken,label:&str)->Result<Vec<u8>,String>{fetch_final(client,url,c,label).await.map(|x|x.0)}
+async fn fetch_media_segment(client:&reqwest::Client,url:Url,c:&CancellationToken,representation_id:&str)->Result<(Vec<u8>,DownloadMeasurement),String>{
+    let request_start=Instant::now();
+    let mut response=tokio::select!{_=c.cancelled()=>return Err("Native DASH session cancelled".into()),x=client.get(url).send()=>x.map_err(|_|"Segment fetch failed".to_string())?};
+    if !response.status().is_success(){return Err(format!("Segment fetch failed: HTTP {}",response.status().as_u16()))}
+    let mut bytes=Vec::new();let mut first_byte_time=None;
+    loop{
+        let chunk=tokio::select!{_=c.cancelled()=>return Err("Native DASH session cancelled".into()),x=response.chunk()=>x.map_err(|_|"Segment fetch failed".to_string())?};
+        let Some(chunk)=chunk else{break};if chunk.is_empty(){continue}if first_byte_time.is_none(){first_byte_time=Some(Instant::now())}bytes.extend_from_slice(&chunk);
+    }
+    let request_end=Instant::now();
+    if bytes.is_empty(){return Err("Segment fetch failed: empty response".into())}
+    let measurement=DownloadMeasurement{representation_id:representation_id.to_string(),bytes:bytes.len(),request_start,first_byte_time,request_end};
+    Ok((bytes,measurement))
+}
 async fn fetch_final(client:&reqwest::Client,url:Url,c:&CancellationToken,label:&str)->Result<(Vec<u8>,Url),String>{let r=tokio::select!{_=c.cancelled()=>return Err("Native DASH session cancelled".into()),x=client.get(url).send()=>x.map_err(|_|label.to_string())?};if !r.status().is_success(){return Err(format!("{}: HTTP {}",label,r.status().as_u16()))}let u=r.url().clone();let b=tokio::select!{_=c.cancelled()=>return Err("Native DASH session cancelled".into()),x=r.bytes()=>x.map_err(|_|label.to_string())?};Ok((b.to_vec(),u))}
 fn log_snapshot(s:&ManifestSnapshot){log::info!("DASH manifest generation={} type={} publishTime={}",s.generation,if s.dynamic{"dynamic"}else{"static"},s.publish_time.map(|x|x.to_rfc3339()).unwrap_or_else(||"none".into()));log::info!("DASH video representations:");for track in &s.video_tracks{for r in &track.representations{log::info!("  id={} {}x{} {} codec={} frame_rate={}",r.identity.representation,r.width.map(|v|v.to_string()).unwrap_or_else(||"?".into()),r.height.map(|v|v.to_string()).unwrap_or_else(||"?".into()),r.bandwidth,r.codecs,r.frame_rate.as_deref().unwrap_or("?"));}}log::info!("DASH audio tracks:");for track in &s.audio_tracks{log::info!("  id={} lang={} role={} representation={}",track.adaptation_set_id,track.language,track.roles.join(","),track.selected.identity.representation);}}
 fn log_merge(s:&ManifestSnapshot,m:&MergeStats){log::info!("DASH refresh representation={} old_refs={} new_refs={} added={} retained={} expired={}",s.video.identity.representation,m.retained,m.added+m.retained,m.added,m.retained,m.expired)}
@@ -694,6 +793,21 @@ mod tests {
         let data=std::fs::read(path).unwrap();let snapshot=parse_snapshot(&data,Url::parse("http://127.0.0.1/fixtures/c8-manual-switch.mpd").unwrap(),1,None).unwrap();let catalog=build_catalog(&snapshot);
         assert_eq!(catalog.video_representations.iter().map(|r|r.label.as_str()).collect::<Vec<_>>(),vec!["320×180","640×360"]);assert!(catalog.video_representations.iter().all(|r|r.compatible));
         assert_eq!(catalog.audio_tracks.iter().map(|a|a.language.as_str()).collect::<Vec<_>>(),vec!["en","zh"]);assert_eq!(catalog.audio_tracks[0].label,"English 440 Hz");assert_eq!(catalog.audio_tracks[1].label,"中文 880 Hz");
+    }
+
+    #[test]
+    fn auto_startup_uses_lower_middle_compatible_representation() {
+        let reps=(1..=5).map(|n|format!(r#"<Representation id="v{n}" bandwidth="{}" codecs="avc1.64001f"/>"#,n*500_000)).collect::<String>();
+        let data=format!(r#"<MPD type="dynamic"><Period id="p" duration="PT20S"><AdaptationSet id="v" contentType="video" mimeType="video/mp4"><SegmentTemplate timescale="1" initialization="$RepresentationID$/init" media="$RepresentationID$/$Time$"><SegmentTimeline><S t="0" d="5" r="2"/></SegmentTimeline></SegmentTemplate>{reps}</AdaptationSet><AdaptationSet id="a" contentType="audio" mimeType="audio/mp4"><SegmentTemplate timescale="1" initialization="a" media="a-$Time$"><SegmentTimeline><S t="0" d="5" r="2"/></SegmentTimeline></SegmentTemplate><Representation id="a1"/></AdaptationSet></Period></MPD>"#);
+        let snapshot=snap(data.as_bytes(),1);assert_eq!(snapshot.video.identity.representation,"v3");assert!(matches!(build_catalog(&snapshot).video_quality_mode,VideoQualityMode::Auto));
+    }
+
+    #[tokio::test]
+    async fn media_measurement_uses_complete_http_transfer_and_records_first_byte() {
+        let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();let address=listener.local_addr().unwrap();
+        tokio::spawn(async move{let(mut socket,_)=listener.accept().await.unwrap();let mut request=[0u8;1024];let _=socket.read(&mut request).await.unwrap();socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2000\r\nConnection: close\r\n\r\n").await.unwrap();socket.write_all(&vec![1u8;1000]).await.unwrap();tokio::time::sleep(Duration::from_millis(40)).await;socket.write_all(&vec![2u8;1000]).await.unwrap();});
+        let client=reqwest::Client::new();let(data,measurement)=fetch_media_segment(&client,Url::parse(&format!("http://{address}/segment.m4s")).unwrap(),&CancellationToken::new(),"v-test").await.unwrap();
+        assert_eq!(data.len(),2000);assert_eq!(measurement.bytes,2000);assert_eq!(measurement.representation_id,"v-test");assert!(measurement.first_byte_time.is_some());assert!(measurement.request_end.duration_since(measurement.request_start)>=Duration::from_millis(35));
     }
 
     #[test]

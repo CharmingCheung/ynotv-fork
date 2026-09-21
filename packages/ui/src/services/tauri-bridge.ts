@@ -545,6 +545,10 @@ export const Bridge = {
         return invoke('native_dash_select_video_representation', { representationId });
     },
 
+    async setNativeDashAutoVideoQuality() {
+        return invoke('native_dash_select_auto_video_quality');
+    },
+
     async setAudioTrack(id: number) {
         return invoke('mpv_set_audio', { id });
     },

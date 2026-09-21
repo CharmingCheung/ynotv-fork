@@ -219,7 +219,17 @@ export function TrackSelectionModal({ isOpen, type, onClose, channel }: TrackSel
     setQualityError(null);
     try {
       await Bridge.setNativeDashVideoRepresentation(representationId);
-      setDashCatalog(current => current ? { ...current, selectedVideoRepresentationId: representationId } : current);
+      setDashCatalog(current => current ? { ...current, selectedVideoRepresentationId: representationId, videoQualityMode: { type: 'manual', representationId } } : current);
+    } catch (e) {
+      setQualityError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const handleAutoQualitySelect = async () => {
+    setQualityError(null);
+    try {
+      await Bridge.setNativeDashAutoVideoQuality();
+      setDashCatalog(current => current ? { ...current, videoQualityMode: { type: 'auto' } } : current);
     } catch (e) {
       setQualityError(e instanceof Error ? e.message : String(e));
     }
@@ -574,9 +584,14 @@ export function TrackSelectionModal({ isOpen, type, onClose, channel }: TrackSel
 
               {type === 'audio' && activeTab === 'quality' && dashCatalog ? (
                 <>
-                  <div className="track-section-title">Manual DASH Video Quality</div>
+                  <div className="track-section-title">DASH Video Quality</div>
                   {qualityError && <div className="track-modal-empty">{qualityError}</div>}
                   <ul className="track-list">
+                    <li role="button" tabIndex={0} className={`track-item ${dashCatalog.videoQualityMode.type === 'auto' ? 'selected' : ''}`}
+                      onClick={handleAutoQualitySelect} onKeyDown={(e) => handleTrackKeyDown(e, handleAutoQualitySelect)}>
+                      <span className="track-name">Auto</span>
+                      <span className="track-info"><span className="track-lang">{dashCatalog.videoRepresentations.find((representation) => representation.representationId === dashCatalog.selectedVideoRepresentationId)?.label}</span></span>
+                    </li>
                     {dashCatalog.videoRepresentations.map((representation) => {
                       const selected = dashCatalog.selectedVideoRepresentationId === representation.representationId;
                       return (
@@ -585,7 +600,7 @@ export function TrackSelectionModal({ isOpen, type, onClose, channel }: TrackSel
                           role="button"
                           tabIndex={representation.compatible ? 0 : -1}
                           aria-disabled={!representation.compatible}
-                          className={`track-item ${selected ? 'selected' : ''} ${!representation.compatible ? 'disabled' : ''}`}
+                          className={`track-item ${selected && dashCatalog.videoQualityMode.type === 'manual' ? 'selected' : ''} ${!representation.compatible ? 'disabled' : ''}`}
                           onClick={() => representation.compatible && handleQualitySelect(representation.representationId)}
                           onKeyDown={(e) => representation.compatible && handleTrackKeyDown(e, () => handleQualitySelect(representation.representationId))}
                         >

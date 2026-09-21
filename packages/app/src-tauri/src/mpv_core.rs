@@ -400,6 +400,7 @@ fn spawn_status_monitor<R: Runtime>(
 
             // Timeshift / Live buffer updates
             if let Ok(demuxer_cache) = mpv.get_property::<f64>("demuxer-cache-duration") {
+                crate::native_dash::observe_buffered_seconds(Some(demuxer_cache.max(0.0)));
                 let cache_start: f64 = mpv.get_property("demuxer-cache-state/cache-start").unwrap_or(0.0);
                 let cache_end: f64 = mpv.get_property("demuxer-cache-state/cache-end").unwrap_or(position + demuxer_cache);
                 let cached_duration = (cache_end - cache_start).max(demuxer_cache);
