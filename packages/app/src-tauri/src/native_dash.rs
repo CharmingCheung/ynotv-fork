@@ -16,9 +16,13 @@ use tokio_util::sync::CancellationToken;
 use url::Url;
 
 const MAX_STATIC_SEGMENTS: u128 = 20_000;
-const DYNAMIC_COMPLETE_WINDOW: usize = 1;
+// Start one complete segment behind the live edge.  We still fetch only one
+// segment before exposing the packet source, so startup stays fast, while the
+// newest complete segment can be prepared during playback of the first one.
+const DYNAMIC_STARTUP_LAG_SEGMENTS: usize = 1;
 const FALLBACK_MUP: Duration = Duration::from_secs(2);
 const MIN_MUP: Duration = Duration::from_millis(250);
+const MAX_INFERRED_MUP: Duration = Duration::from_secs(4);
 
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -339,7 +343,8 @@ fn parse_snapshot(bytes: &[u8], final_url: Url, generation: u64, selected: Optio
     let audio=audio_track.selected.clone();
     let subtitles=select_subtitles(period,None)?.into_iter().map(|choice|make_rep(base.clone(),period_id.clone(),choice,start,duration)).collect::<Result<Vec<_>,_>>()?;
     let publish_time=mpd.publish_time.as_deref().map(|v|chrono::DateTime::parse_from_rfc3339(v).map(|v|v.with_timezone(&chrono::Utc)).map_err(|_|"Unsupported DASH manifest shape: publishTime")).transpose()?;
-    let minimum_update_period=mpd.minimum_update_period.as_deref().map(parse_std_duration).transpose()?.filter(|v|!v.is_zero()).unwrap_or(FALLBACK_MUP).max(MIN_MUP);
+    let declared_mup=mpd.minimum_update_period.as_deref().map(parse_std_duration).transpose()?.filter(|v|!v.is_zero());
+    let minimum_update_period=declared_mup.unwrap_or_else(||inferred_update_period(&video)).max(MIN_MUP);
     Ok(ManifestSnapshot { generation,fetched_at:SystemTime::now(),published_at:Instant::now(),publish_time,minimum_update_period,dynamic,periods:vec![period_id],video_tracks,audio_tracks,video,audio,subtitles })
 }
 
@@ -495,10 +500,18 @@ async fn build_live(url:&str,request_headers:&HashMap<String,String>,kid:[u8;16]
 }
 fn initial_segments(rep:&RepresentationSnapshot,dynamic:bool)->Result<Vec<SegmentDescriptor>,String>{
     let mut segments=descriptors(rep,dynamic)?;
-    if dynamic&&segments.len()>DYNAMIC_COMPLETE_WINDOW{segments.drain(..segments.len()-DYNAMIC_COMPLETE_WINDOW);}
+    if dynamic{
+        let start=segments.len().saturating_sub(DYNAMIC_STARTUP_LAG_SEGMENTS+1);
+        segments.drain(..start);
+        segments.truncate(1);
+    }
     if !dynamic&&segments.len()>1{segments.truncate(1);}
     if segments.is_empty(){return Err("Unsupported DASH manifest shape: no complete segments".into())}
     Ok(segments)
+}
+fn inferred_update_period(rep:&RepresentationSnapshot)->Duration{
+    let segment_duration=rep.index.last_position().and_then(|last|rep.index.first_position().map(|first|if last>first{last-1}else{last})).and_then(|position|rep.index.get(position).ok().flatten()).and_then(|segment|segment.presentation_end.checked_sub(segment.presentation_start).ok()).and_then(|duration|duration.rescale(1_000_000,crate::dash_timeline::Rounding::Ceil).ok()).and_then(|micros|u64::try_from(micros).ok()).filter(|micros|*micros>0).map(Duration::from_micros);
+    segment_duration.map(|duration|duration.div_f64(2.0).clamp(MIN_MUP,MAX_INFERRED_MUP)).unwrap_or(FALLBACK_MUP)
 }
 async fn fetch_init(client:&reqwest::Client,rep:&RepresentationSnapshot,cancel:&CancellationToken)->Result<Vec<u8>,String>{
     let init=expand(rep.template.initialization.as_deref().unwrap(),&rep.identity.representation,None,None)?;
@@ -688,12 +701,35 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_initial_snapshot_keeps_latest_complete_segment() {
+    fn dynamic_initial_snapshot_starts_one_segment_behind_live_edge() {
         let snapshot=snap(&xml(r#"<S t="100" d="20" r="5"/>"#,100,"PT40S","2026-09-20T00:00:00Z"),1);
         let segments=initial_segments(&snapshot.video,true).unwrap();
         assert_eq!(segments.len(),1);
-        assert_eq!(segments[0].identity.media_time,180);
-        assert_eq!(segments[0].number,104);
+        assert_eq!(segments[0].identity.media_time,160);
+        assert_eq!(segments[0].number,103);
+    }
+
+    #[test]
+    fn dynamic_initial_snapshot_falls_back_to_only_complete_segment() {
+        let snapshot=snap(&xml(r#"<S t="100" d="20" r="1"/>"#,100,"PT40S","2026-09-20T00:00:00Z"),1);
+        let segments=initial_segments(&snapshot.video,true).unwrap();
+        assert_eq!(segments.len(),1);
+        assert_eq!(segments[0].identity.media_time,100);
+        assert_eq!(segments[0].number,100);
+    }
+
+    #[test]
+    fn absent_mup_is_inferred_from_segment_duration() {
+        let two_second=String::from_utf8(xml(r#"<S t="100" d="20" r="3"/>"#,1,"PT40S","2026-09-20T00:00:00Z")).unwrap().replace(" minimumUpdatePeriod=\"PT0.05S\"","");
+        let eight_second=String::from_utf8(xml(r#"<S t="100" d="80" r="3"/>"#,1,"PT40S","2026-09-20T00:00:00Z")).unwrap().replace(" minimumUpdatePeriod=\"PT0.05S\"","");
+        assert_eq!(snap(two_second.as_bytes(),1).minimum_update_period,Duration::from_secs(1));
+        assert_eq!(snap(eight_second.as_bytes(),1).minimum_update_period,Duration::from_secs(4));
+    }
+
+    #[test]
+    fn declared_mup_remains_authoritative() {
+        let manifest=String::from_utf8(xml(r#"<S t="100" d="20" r="3"/>"#,1,"PT40S","2026-09-20T00:00:00Z")).unwrap().replace("PT0.05S","PT3S");
+        assert_eq!(snap(manifest.as_bytes(),1).minimum_update_period,Duration::from_secs(3));
     }
 
     #[test]
