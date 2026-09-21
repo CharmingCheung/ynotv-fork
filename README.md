@@ -132,6 +132,24 @@ Native DASH runtime.
 If a previous development session was not stopped and still owns port 5173,
 use `pnpm dev:clean` to replace it.
 
+### Developing the mpv patch
+
+Application changes continue to use the cached released runtime with ordinary
+`pnpm dev`; they do not require pushing or rebuilding `ynotv-native`. When the
+two repositories are sibling directories and you are actively changing the mpv
+patch, use:
+
+```bash
+pnpm native:dev
+pnpm dev:clean
+```
+
+The first command incrementally rebuilds the local `../ynotv-native` patch,
+runs its native tests, and installs it into the gitignored ynoTV cache. The
+second restarts the app with that dylib. Iterate locally as often as needed;
+only increment `ynotv-native/VERSION` and push after the patch and real playback
+tests are stable.
+
 **4. Build for production**
 
 ```bash

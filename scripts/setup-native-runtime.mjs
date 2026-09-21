@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -42,8 +42,37 @@ function syncTauriFrameworks() {
   }
 }
 
+function installFromDirectory(sourceDirectory) {
+  const source = resolve(sourceDirectory);
+  if (source === resolve(destination)) {
+    console.error('[native-runtime] local source and installation destination must differ');
+    process.exit(1);
+  }
+  if (!compatible(join(source, 'libmpv.2.dylib'))) {
+    console.error(`[native-runtime] incompatible local runtime: ${source}`);
+    process.exit(1);
+  }
+  const staging = `${destination}.new`;
+  rmSync(staging, { recursive: true, force: true });
+  cpSync(source, staging, { recursive: true });
+  rmSync(destination, { recursive: true, force: true });
+  renameSync(staging, destination);
+  syncTauriFrameworks();
+  console.log(`[native-runtime] installed local runtime from ${source}`);
+}
+
 if (process.platform !== 'darwin' || process.arch !== 'arm64') {
   console.log(`[native-runtime] no Native DASH runtime is published for ${process.platform}/${process.arch}`);
+  process.exit(0);
+}
+const fromIndex = process.argv.indexOf('--from');
+if (fromIndex >= 0) {
+  const source = process.argv[fromIndex + 1];
+  if (!source) {
+    console.error('[native-runtime] --from requires a runtime directory');
+    process.exit(2);
+  }
+  installFromDirectory(source);
   process.exit(0);
 }
 if (compatible(library) && !process.argv.includes('--force')) {

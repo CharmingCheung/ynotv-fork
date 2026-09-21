@@ -82,6 +82,12 @@ The pinned source, patch, regression fixtures, macOS build script, and release
 workflow live in `CharmingCheung/ynotv-native`. Application developers consume
 its release artifact and do not compile mpv locally.
 
+Maintainers changing that patch can keep `ynotv-native` beside this checkout and
+run `pnpm native:dev`. It uses a persistent Meson build directory for incremental
+compilation, runs native tests, and installs the result into the same gitignored
+cache used by `pnpm dev`. Restart with `pnpm dev:clean`. No push or Release is
+needed during the edit/compile/test loop.
+
 Windows currently uses the mpv sidecar playback backend. The Rust command
 returns an explicit error for Native DASH on Windows, so supporting it requires
 a separately built patched Windows mpv/libmpv and backend integration; copying
