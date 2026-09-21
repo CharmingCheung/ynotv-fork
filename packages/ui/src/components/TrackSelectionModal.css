@@ -144,6 +144,11 @@
   border-left: 3px solid #3b82f6;
 }
 
+.track-item.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .track-name {
   display: flex;
   align-items: center;
@@ -456,4 +461,3 @@
   border-color: #3b82f6 !important;
   color: #60a5fa !important;
 }
-

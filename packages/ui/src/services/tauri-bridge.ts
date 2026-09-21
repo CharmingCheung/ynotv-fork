@@ -9,7 +9,7 @@ import { appLogDir, join } from '@tauri-apps/api/path';
 import { debug as logDebug, info as logInfo, warn as logWarn, error as logError } from '@tauri-apps/plugin-log';
 import i18n, { translateNativeError } from '../i18n';
 import { useSettingsStore } from '../stores/settingsStore';
-import type { NativeDashPlaybackConfig } from './native-dash';
+import type { DashTrackCatalog, NativeDashPlaybackConfig } from './native-dash';
 
 // Store instance for Tauri
 let store: Store | null = null;
@@ -535,6 +535,14 @@ export const Bridge = {
     async getTrackList(): Promise<any[]> {
         const result = await invoke('mpv_get_track_list');
         return result as any[] || [];
+    },
+
+    async getNativeDashTrackCatalog(): Promise<DashTrackCatalog | null> {
+        return invoke<DashTrackCatalog | null>('native_dash_get_track_catalog');
+    },
+
+    async setNativeDashVideoRepresentation(representationId: string) {
+        return invoke('native_dash_select_video_representation', { representationId });
     },
 
     async setAudioTrack(id: number) {

@@ -6,6 +6,38 @@ export interface NativeDashPlaybackConfig {
   drm: { type: 'clearkey'; kid: string; key: string };
 }
 
+export interface DashVideoRepresentation {
+  representationId: string;
+  width?: number;
+  height?: number;
+  bandwidth: number;
+  codec: string;
+  frameRate?: string;
+  label: string;
+  compatible: boolean;
+}
+
+export interface DashAudioTrack {
+  adaptationSetId: string;
+  mpvTrackId: number;
+  language: string;
+  label: string;
+  role: string[];
+  codec: string;
+  channels?: string;
+  sampleRate?: number;
+  representationId: string;
+}
+
+export interface DashTrackCatalog {
+  active: boolean;
+  videoAdaptationSetId: string;
+  selectedVideoRepresentationId: string;
+  selectedAudioAdaptationSetId: string;
+  videoRepresentations: DashVideoRepresentation[];
+  audioTracks: DashAudioTrack[];
+}
+
 export type NativeDashRoute =
   | { kind: 'normal' }
   | { kind: 'native'; config: NativeDashPlaybackConfig }

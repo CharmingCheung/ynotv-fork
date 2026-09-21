@@ -255,10 +255,21 @@ int main(int argc, char **argv)
     struct cenc_key_store store = {&entry, 1};
 
     int component_count = argc - 2;
+    int audio_components = 1;
+    const char *audio_components_env = getenv("RUSTDASH_AUDIO_COMPONENTS");
+    if (audio_components_env && audio_components_env[0]) {
+        char *end = NULL;
+        long parsed = strtol(audio_components_env, &end, 10);
+        if (!end || *end || parsed < 1 || parsed >= component_count)
+            fail("RUSTDASH_AUDIO_COMPONENTS is invalid");
+        audio_components = (int)parsed;
+    }
     struct component components[8];
     open_component(&components[0], argv[1], AVMEDIA_TYPE_VIDEO, 1, RDP_TRACK_VIDEO);
-    open_component(&components[1], argv[2], AVMEDIA_TYPE_AUDIO, 2, RDP_TRACK_AUDIO);
-    for (int n = 2; n < component_count; n++)
+    for (int n = 1; n <= audio_components; n++)
+        open_component(&components[n], argv[n + 1], AVMEDIA_TYPE_AUDIO,
+                       (uint32_t)n + 1, RDP_TRACK_AUDIO);
+    for (int n = audio_components + 1; n < component_count; n++)
         open_component(&components[n], argv[n + 1], AVMEDIA_TYPE_SUBTITLE,
                        (uint32_t)n + 1, RDP_TRACK_SUBTITLE);
     FILE *output = fopen(argv[argc - 1], "wb");

@@ -1678,43 +1678,65 @@ async fn mpv_get_track_list<R: Runtime>(app: AppHandle<R>) -> Result<serde_json:
 }
 
 #[tauri::command]
+async fn native_dash_get_track_catalog() -> Result<Option<native_dash::DashTrackCatalog>, String> {
+    Ok(native_dash::track_catalog())
+}
+
+#[tauri::command]
+async fn native_dash_select_video_representation(representation_id: String) -> Result<(), String> {
+    native_dash::request_video_representation(&representation_id)
+}
+
+#[tauri::command]
 async fn mpv_set_audio<R: Runtime>(app: AppHandle<R>, id: i64) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        mpv_core::set_audio_track(&app, id).await
-    }
-    #[cfg(target_os = "windows")]
-    {
-        if get_player_engine(&app).await == PlayerEngine::LibMpv {
+    let result = {
+        #[cfg(target_os = "macos")]
+        {
             mpv_core::set_audio_track(&app, id).await
-        } else {
-            mpv_windows::set_audio_track(&app, id).await
         }
+        #[cfg(target_os = "windows")]
+        {
+            if get_player_engine(&app).await == PlayerEngine::LibMpv {
+                mpv_core::set_audio_track(&app, id).await
+            } else {
+                mpv_windows::set_audio_track(&app, id).await
+            }
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            mpv_core::set_audio_track(&app, id).await
+        }
+    };
+    if result.is_ok() {
+        native_dash::note_audio_track_selection(id);
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        mpv_core::set_audio_track(&app, id).await
-    }
+    result
 }
 
 #[tauri::command]
 async fn mpv_set_subtitle<R: Runtime>(app: AppHandle<R>, id: i64) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        mpv_core::set_subtitle_track(&app, id).await
-    }
-    #[cfg(target_os = "windows")]
-    {
-        if get_player_engine(&app).await == PlayerEngine::LibMpv {
+    let result = {
+        #[cfg(target_os = "macos")]
+        {
             mpv_core::set_subtitle_track(&app, id).await
-        } else {
-            mpv_windows::set_subtitle_track(&app, id).await
         }
+        #[cfg(target_os = "windows")]
+        {
+            if get_player_engine(&app).await == PlayerEngine::LibMpv {
+                mpv_core::set_subtitle_track(&app, id).await
+            } else {
+                mpv_windows::set_subtitle_track(&app, id).await
+            }
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            mpv_core::set_subtitle_track(&app, id).await
+        }
+    };
+    if result.is_ok() {
+        native_dash::note_subtitle_track_selection(id);
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        mpv_core::set_subtitle_track(&app, id).await
-    }
+    result
 }
 
 #[tauri::command]
@@ -5615,6 +5637,8 @@ pub fn run() {
             mpv_toggle_stats,
             mpv_toggle_fullscreen,
             mpv_get_track_list,
+            native_dash_get_track_catalog,
+            native_dash_select_video_representation,
             mpv_set_audio,
             mpv_set_subtitle,
             mpv_add_subtitle,

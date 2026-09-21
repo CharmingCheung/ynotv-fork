@@ -57,6 +57,7 @@ interface NowPlayingBarProps {
   onToggleFullscreen: () => void;
   onShowSubtitleModal: () => void;
   onShowAudioModal: () => void;
+  onShowQualityModal?: () => void;
   onCatchupSeek?: (channel: StoredChannel, programTitle: string, startTimeMs: number, durationMinutes: number, seekSeconds: number, programDesc?: string) => void;
   onGoToLive?: () => void;
   timeshiftEnabled?: boolean;
@@ -135,6 +136,7 @@ export function NowPlayingBar({
   onToggleFullscreen,
   onShowSubtitleModal,
   onShowAudioModal,
+  onShowQualityModal,
   onCatchupSeek,
   onGoToLive,
   timeshiftEnabled,
@@ -1054,6 +1056,7 @@ export function NowPlayingBar({
                 >
                   <TranslateIcon />
                 </button>
+                {onShowQualityModal && <button className="npb-clean-btn" onClick={onShowQualityModal} disabled={!canControl} title="Video Quality"><span style={{ fontWeight: 700 }}>Q</span></button>}
 
                 <button
                   className="npb-clean-btn"
@@ -1505,6 +1508,7 @@ export function NowPlayingBar({
                 >
                   <AudioIcon />
                 </button>
+                {onShowQualityModal && <button className="npb-btn" onClick={onShowQualityModal} disabled={!canControl} title="Video Quality"><span style={{ fontWeight: 700 }}>Q</span></button>}
                 <button
                   className="npb-btn"
                   onClick={onToggleStats}

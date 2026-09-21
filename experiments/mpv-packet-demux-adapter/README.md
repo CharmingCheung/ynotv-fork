@@ -20,7 +20,14 @@ After building that checkout, run the validation suite:
 ./run-tests.sh /path/to/mpv/build/mpv
 ./run-live-generation-tests.sh /path/to/mpv/build/mpv \
   /optional/dylib/directory /path/to/mpv/source
+./run-track-switch-tests.sh /path/to/mpv/build/mpv /optional/dylib/directory
 ```
+
+The C8 command generates two aligned H.264 qualities plus 440/880 Hz logical
+audio tracks, exercises the `RDPKT005` runtime codec-generation record, checks
+the decoded `320x180 -> 640x360 -> 320x180` sequence on one video stream, and
+uses JSON IPC plus PCM frequency checks to prove both audio-track switches.
+`fixtures/c8-manual-switch.mpd` is the matching deterministic DASH catalog.
 
 An optional second argument supplies a directory to prepend to
 `DYLD_LIBRARY_PATH`; it was needed in the recorded run because the pinned mpv

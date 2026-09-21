@@ -8,3 +8,4 @@ results/*.log
 results/*.json
 results/*.mkv
 results/session_destroy
+results/c8/

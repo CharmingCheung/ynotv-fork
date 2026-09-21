@@ -30,6 +30,7 @@ import { NowPlayingBar } from './components/NowPlayingBar';
 import { PiPMediaBar } from './components/PiPMediaBar';
 import { ChannelInfoOverlay } from './components/ChannelInfoOverlay';
 import { TrackSelectionModal } from './components/TrackSelectionModal';
+import { DashQualityModal } from './components/DashQualityModal';
 import { SubtitleControlModal } from './components/SubtitleControlModal';
 import { StalkerSubtitleModal } from './components/StalkerSubtitleModal';
 import { ControllerSearchModal } from './components/ControllerSearchModal';
@@ -3336,6 +3337,7 @@ function useTmdbPresencePoster(
   // ==========================================================================
   const [showSubtitleModal, setShowSubtitleModal] = useState(false);
   const [showAudioModal, setShowAudioModal] = useState(false);
+  const [showQualityModal, setShowQualityModal] = useState(false);
   // Reactive store read — no IPC round-trip per channel change, and the
   // indicator updates live when a delay is set in the audio modal.
   const channelAudioDelays = useSettingsStore((s) => s.channelAudioDelays);
@@ -3350,6 +3352,10 @@ function useTmdbPresencePoster(
   const handleShowAudioModal = useCallback(() => {
     controlsHoveredRef.current = false;
     setShowAudioModal(true);
+  }, [controlsHoveredRef]);
+  const handleShowQualityModal = useCallback(() => {
+    controlsHoveredRef.current = false;
+    setShowQualityModal(true);
   }, [controlsHoveredRef]);
 
   // ==========================================================================
@@ -6651,6 +6657,7 @@ function useTmdbPresencePoster(
         onToggleFullscreen={handleToggleFullscreen}
         onShowSubtitleModal={handleShowSubtitleModal}
         onShowAudioModal={handleShowAudioModal}
+        onShowQualityModal={handleShowQualityModal}
         onGoToLive={() => currentChannel && handlePlayChannelWrapper(currentChannel)}
         onCatchupSeek={handleCatchupSeek}
         timeshiftEnabled={timeshiftEnabled}
@@ -6822,6 +6829,7 @@ function useTmdbPresencePoster(
           handleMouseMove();
         }}
       />
+      <DashQualityModal isOpen={showQualityModal} onClose={() => { controlsHoveredRef.current = false; setShowQualityModal(false); handleMouseMove(); }} />
 
       {/* Advanced Search Modal */}
       <AdvancedSearchModal
@@ -7085,6 +7093,7 @@ function useTmdbPresencePoster(
         onToggleFullscreen={handleToggleFullscreen}
         onShowSubtitleModal={handleShowSubtitleModal}
         onShowAudioModal={handleShowAudioModal}
+        onShowQualityModal={handleShowQualityModal}
         retryState={retryState}
         failoverState={failoverState}
         loadingState={loadingState}

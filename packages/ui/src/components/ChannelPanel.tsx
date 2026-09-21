@@ -365,6 +365,7 @@ interface ChannelPanelProps {
   onToggleFullscreen?: () => void;
   onShowSubtitleModal?: () => void;
   onShowAudioModal?: () => void;
+  onShowQualityModal?: () => void;
   onCatchupSeek?: (channel: StoredChannel, programTitle: string, startTimeMs: number, durationMinutes: number, seekSeconds: number, programDesc?: string) => void;
   timeshiftEnabled?: boolean;
   timeshiftState?: {
@@ -458,6 +459,7 @@ export function ChannelPanel({
   onToggleFullscreen,
   onShowSubtitleModal,
   onShowAudioModal,
+  onShowQualityModal,
   onCatchupSeek,
   timeshiftEnabled = false,
   timeshiftState = null,
@@ -3190,6 +3192,7 @@ export function ChannelPanel({
           onToggleFullscreen={onToggleFullscreen || (() => {})}
           onShowSubtitleModal={onShowSubtitleModal || (() => {})}
           onShowAudioModal={onShowAudioModal || (() => {})}
+          onShowQualityModal={onShowQualityModal}
           onCatchupSeek={onCatchupSeek}
           onGoToLive={() => {
             if (selectedChannel) onPlayChannel(selectedChannel);

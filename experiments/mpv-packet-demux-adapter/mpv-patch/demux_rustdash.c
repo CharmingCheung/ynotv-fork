@@ -25,9 +25,12 @@
 #define RDP_LIVE_VERSION 3u
 #define RDP_SUBTITLE_MAGIC "RDPKT004"
 #define RDP_SUBTITLE_VERSION 4u
+#define RDP_SWITCH_MAGIC "RDPKT005"
+#define RDP_SWITCH_VERSION 5u
 #define RDP_CODEC_NAME_BYTES 32u
 #define RDP_RECORD_PACKET 0x31544b50u
 #define RDP_RECORD_EOF    0x31464f45u
+#define RDP_RECORD_CONFIG 0x31474643u
 #define RDP_TRACK_VIDEO 1u
 #define RDP_TRACK_AUDIO 2u
 #define RDP_TRACK_SUBTITLE 3u
@@ -38,7 +41,7 @@
 #define RDP_MAX_EXTRADATA (1024u * 1024u)
 #define RDP_MAX_PACKET (64u * 1024u * 1024u)
 #define RDP_MAX_TRACKS 8
-#define RDP_MAX_GENERATIONS 16
+#define RDP_MAX_GENERATIONS 64
 #define RDP_QUEUE_PACKETS 8
 #define RDP_QUEUE_BYTES (128u * 1024u)
 
@@ -86,6 +89,7 @@ struct priv {
     int num_packets;
     bool generation_fixture;
     bool live_source;
+    bool switch_source;
 
     FILE *source;
     mp_thread producer_thread;
@@ -216,6 +220,8 @@ static bool read_config(struct demuxer *demuxer, struct priv *p, bool publish,
     } else if (!track || track->type != type) {
         return false;
     }
+    if (find_generation(p, id, generation))
+        return false;
 
     struct mp_codec_params *codec = publish ? track->sh->codec
                                              : talloc_zero(demuxer, struct mp_codec_params);
@@ -340,11 +346,21 @@ static bool read_live_packet_header(struct priv *p, struct rdp_packet_index *pac
     struct rdp_track *track = find_track(p, packet->track);
     struct rdp_generation *generation =
         find_generation(p, packet->track, packet->generation);
-    return track && generation && packet->tb_num == generation->tb_num &&
-           packet->tb_den == generation->tb_den &&
-           packet->payload_size <= RDP_MAX_PACKET &&
-           packet->payload_size <= RDP_QUEUE_BYTES && packet->duration >= 0 &&
-           !(packet->flags & ~RDP_FLAG_KEYFRAME);
+    bool valid = track && generation && packet->tb_num == generation->tb_num &&
+                 packet->tb_den == generation->tb_den &&
+                 packet->payload_size <= RDP_MAX_PACKET && packet->duration >= 0 &&
+                 !(packet->flags & ~RDP_FLAG_KEYFRAME);
+    if (!valid) {
+        MP_ERR(p->demuxer, "invalid live packet track=%u generation=%u "
+               "tb=%d/%d expected=%d/%d size=%u duration=%" PRId64
+               " flags=0x%x track_found=%d generation_found=%d\n",
+               packet->track, packet->generation, packet->tb_num, packet->tb_den,
+               generation ? generation->tb_num : 0,
+               generation ? generation->tb_den : 0,
+               packet->payload_size, packet->duration, packet->flags,
+               !!track, !!generation);
+    }
+    return valid;
 }
 
 static MP_THREAD_VOID live_producer_thread(void *ctx)
@@ -383,6 +399,18 @@ static MP_THREAD_VOID live_producer_thread(void *ctx)
             mp_mutex_unlock(&p->lock);
             break;
         }
+        if (record == RDP_RECORD_CONFIG && p->switch_source) {
+            if (!read_config(p->demuxer, p, false, false)) {
+                mp_mutex_lock(&p->lock);
+                p->producer_failed = true;
+                p->producer_error = "invalid runtime codec generation";
+                mp_cond_broadcast(&p->wakeup);
+                mp_mutex_unlock(&p->lock);
+                break;
+            }
+            MP_INFO(p->demuxer, "runtime codec generation registered\n");
+            continue;
+        }
         struct rdp_ready_packet *ready = calloc(1, sizeof(*ready));
         if (record != RDP_RECORD_PACKET || !ready ||
             !read_live_packet_header(p, &ready->live_packet)) {
@@ -399,7 +427,8 @@ static MP_THREAD_VOID live_producer_thread(void *ctx)
         mp_mutex_lock(&p->lock);
         while (!p->stopping &&
                (p->queue_count == RDP_QUEUE_PACKETS ||
-                p->queue_bytes + packet->payload_size > RDP_QUEUE_BYTES))
+                (p->queue_count > 0 &&
+                 p->queue_bytes + packet->payload_size > RDP_QUEUE_BYTES)))
             mp_cond_wait(&p->wakeup, &p->lock);
         stopping = p->stopping;
         mp_mutex_unlock(&p->lock);
@@ -571,7 +600,9 @@ static int rustdash_open(struct demuxer *demuxer, enum demux_check check)
                        version == RDP_LIVE_VERSION;
     bool live_v4 = !memcmp(magic, RDP_SUBTITLE_MAGIC, 8) &&
                    version == RDP_SUBTITLE_VERSION;
-    bool live_source = live_v3 || live_v4;
+    bool live_v5 = !memcmp(magic, RDP_SWITCH_MAGIC, 8) &&
+                   version == RDP_SWITCH_VERSION;
+    bool live_source = live_v3 || live_v4 || live_v5;
     if (generation_fixture) {
         if (!get_u32(s, &num_generations) || num_tracks != 1 || num_generations != 2)
             return -1;
@@ -591,8 +622,9 @@ static int rustdash_open(struct demuxer *demuxer, enum demux_check check)
     p->demuxer = demuxer;
     p->generation_fixture = generation_fixture;
     p->live_source = live_source;
+    p->switch_source = live_v5;
     for (uint32_t n = 0; n < num_generations; n++) {
-        if (!read_config(demuxer, p, !generation_fixture || n == 0, live_v4))
+        if (!read_config(demuxer, p, !generation_fixture || n == 0, live_v4 || live_v5))
             return -1;
     }
     if (p->num_tracks != (int)num_tracks)
@@ -641,7 +673,7 @@ static int rustdash_open(struct demuxer *demuxer, enum demux_check check)
     p->producer_started = true;
 
     demuxer->seekable = !live_source;
-    demuxer->filetype = live_v4 ? "rustdash-live-v4" : live_source ? "rustdash-live-v3" :
+    demuxer->filetype = live_v5 ? "rustdash-live-v5" : live_v4 ? "rustdash-live-v4" : live_source ? "rustdash-live-v3" :
         (generation_fixture ? "rustdash-generation-v2" : "rustdash-live-v1");
     MP_INFO(demuxer, "bounded producer started packets=%d groups=%d "
             "queue_packets=%d queue_bytes=%u delay_ms=%d\n",
@@ -718,7 +750,7 @@ static bool rustdash_read_packet(struct demuxer *demuxer, struct demux_packet **
         packet->duration = to_seconds(src->duration, src->tb_num, src->tb_den);
         packet->keyframe = src->flags & RDP_FLAG_KEYFRAME;
         packet->pos = src->payload_offset;
-        if (p->generation_fixture) {
+        if (p->generation_fixture || p->switch_source) {
             packet->segmented = true;
             packet->codec = generation->codec;
         }
