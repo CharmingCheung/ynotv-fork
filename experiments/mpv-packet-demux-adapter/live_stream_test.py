@@ -23,14 +23,20 @@ while struct.unpack_from("<I", data, pos)[0] != 0x31464F45:
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *_): pass
+    def write_fragmented(self, payload):
+        # A live TCP read may legally return fewer bytes than requested. Keep
+        # the first byte in a separate flushed write so this regression fails
+        # with the old one-shot read_exact implementation.
+        self.wfile.write(payload[:1]); self.wfile.flush(); time.sleep(0.002)
+        self.wfile.write(payload[1:]); self.wfile.flush()
     def do_GET(self):
         self.send_response(200); self.send_header("Content-Type", "application/octet-stream"); self.end_headers()
-        self.wfile.write(b"RDPKT003" + struct.pack("<II", 3, 2) + b"".join(configs))
+        self.write_fragmented(b"RDPKT003" + struct.pack("<II", 3, 2) + b"".join(configs))
         cut = len(records) // 2
-        for record in records[:cut]: self.wfile.write(record)
+        for record in records[:cut]: self.write_fragmented(record)
         self.wfile.flush(); time.sleep(1.0)
-        for record in records[cut:]: self.wfile.write(record)
-        self.wfile.write(struct.pack("<I", 0x31464F45)); self.wfile.flush()
+        for record in records[cut:]: self.write_fragmented(record)
+        self.write_fragmented(struct.pack("<I", 0x31464F45))
 
 with socketserver.TCPServer(("127.0.0.1", 0), Handler) as server:
     thread = threading.Thread(target=server.handle_request); thread.start()

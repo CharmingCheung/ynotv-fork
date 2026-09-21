@@ -20,14 +20,17 @@ if (process.platform === 'darwin' && existsSync('/private/tmp')) {
 
 const patched = candidates
   .filter((directory) => existsSync(join(directory, libraryName)))
-  // C7 sends the metadata-bearing live-v4 header.  Accepting the older C6
-  // marker here makes mpv reject RDPKT004 at demux open and immediately close
-  // the loopback packet bridge, which looks like a network playback failure.
-  .filter((directory) => readFileSync(join(directory, libraryName)).includes(Buffer.from('RDPKT004')))
+  // Require both the live-v4 demux ABI and the bitmap packet decoder. A build
+  // with only RDPKT004 accepts the stream but feeds YNOIMSC1 bytes to libass.
+  .filter((directory) => {
+    const library = readFileSync(join(directory, libraryName));
+    return library.includes(Buffer.from('RDPKT004')) &&
+      library.includes(Buffer.from('YNOIMSC1'));
+  })
   .sort((left, right) => statSync(join(right, libraryName)).mtimeMs - statSync(join(left, libraryName)).mtimeMs)[0];
 
 if (!patched) {
-  console.error('[native-dash] C7 (RDPKT004) UI libmpv was not found. Rebuild the mpv adapter build-ui target first.');
+  console.error('[native-dash] TTML bitmap-capable (RDPKT004/YNOIMSC1) UI libmpv was not found. Rebuild the mpv adapter build-ui target first.');
   process.exit(1);
 }
 

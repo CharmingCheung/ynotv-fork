@@ -1,0 +1,182 @@
+diff --git a/sub/sd_ass.c b/sub/sd_ass.c
+index b71a34e49b..a2847babc5 100644
+--- a/sub/sd_ass.c
++++ b/sub/sd_ass.c
+@@ -22,6 +22,7 @@
+ #include <limits.h>
+
+ #include <libavutil/common.h>
++#include <libavutil/intreadwrite.h>
+ #include <ass/ass.h>
+
+ #include "mpv_talloc.h"
+@@ -36,11 +37,19 @@
+ #include "demux/packet_pool.h"
+ #include "video/csputils.h"
+ #include "video/mp_image.h"
++#include "video/image_loader.h"
+ #include "dec_sub.h"
+ #include "ass_mp.h"
+ #include "packer.h"
+ #include "sd.h"
+
++struct ttml_bitmap {
++    struct mp_image *image;
++    double start, end;
++    uint32_t x, y, w, h;
++    int64_t id;
++};
++
+ struct sd_ass_priv {
+     struct ass_library *ass_library;
+     struct ass_renderer *ass_renderer;
+@@ -63,6 +72,13 @@ struct sd_ass_priv {
+     int *packets_animated;
+     int num_packets_animated;
+     bool check_animated;
++    struct ttml_bitmap *ttml_bitmaps;
++    int num_ttml_bitmaps;
++    int64_t next_ttml_bitmap_id;
++    struct sub_bitmap *ttml_parts;
++    struct sub_bitmaps ttml_result;
++    struct mp_image *ttml_packed;
++    unsigned ttml_packed_change_id;
+ };
+
+ struct seen_packet {
+@@ -471,6 +487,50 @@ static void decode(struct sd *sd, struct demux_packet *packet)
+
+     packet->sub_duration = packet->duration;
+
++    // Private ynoTV IMSC packet: normalized viewport followed by a PNG.  It is
++    // accepted only on the opt-in TTML/ASS bridge selected by codec-private
++    // data, so arbitrary ASS packets cannot enter this path.
++    if (packet->len >= 28 && !memcmp(packet->buffer, "YNOIMSC1", 8)) {
++        const uint8_t *p = packet->buffer + 8;
++        uint32_t x = AV_RL32(p + 0), y = AV_RL32(p + 4);
++        uint32_t w = AV_RL32(p + 8), h = AV_RL32(p + 12);
++        uint16_t opacity = AV_RL16(p + 16);
++        if (x > 1000000 || y > 1000000 || w > 1000000 || h > 1000000 ||
++            x + w > 1000000 || y + h > 1000000)
++            return;
++        struct mp_image *image = load_image_png_buf(packet->buffer + 28,
++                                                     packet->len - 28,
++                                                     IMGFMT_BGRA);
++        if (!image || !mp_image_make_writeable(image)) {
++            talloc_free(image);
++            return;
++        }
++        // SUBBITMAP_BGRA requires premultiplied alpha. Apply the TTML cue
++        // opacity at the same time, before GPU scaling/composition.
++        for (int row = 0; row < image->h; row++) {
++            uint8_t *px = image->planes[0] + row * image->stride[0];
++            for (int col = 0; col < image->w; col++, px += 4) {
++                unsigned a = px[3] * opacity / 65535;
++                px[0] = px[0] * a / 255;
++                px[1] = px[1] * a / 255;
++                px[2] = px[2] * a / 255;
++                px[3] = a;
++            }
++        }
++        for (int n = ctx->num_ttml_bitmaps - 1; n >= 0; n--) {
++            if (ctx->ttml_bitmaps[n].end < packet->pts - 60) {
++                talloc_free(ctx->ttml_bitmaps[n].image);
++                MP_TARRAY_REMOVE_AT(ctx->ttml_bitmaps, ctx->num_ttml_bitmaps, n);
++            }
++        }
++        talloc_steal(ctx, image);
++        MP_TARRAY_APPEND(ctx, ctx->ttml_bitmaps, ctx->num_ttml_bitmaps,
++            (struct ttml_bitmap){image, packet->pts,
++                packet->pts + packet->duration, x, y, w, h,
++                ctx->next_ttml_bitmap_id++});
++        return;
++    }
++
+     if (ctx->converter) {
+         if (!sd->opts->sub_clear_on_seek && packet->pos >= 0 &&
+             check_packet_seen(sd, packet))
+@@ -739,6 +799,71 @@ static struct sub_bitmaps *get_bitmaps(struct sd *sd, struct mp_osd_res dim,
+                                        int format, double pts)
+ {
+     struct sd_ass_priv *ctx = sd->priv;
++    int active = 0;
++    unsigned change_id = 0;
++    int packed_w = 0, packed_h = 0;
++    int vw = dim.w - dim.ml - dim.mr;
++    int vh = dim.h - dim.mt - dim.mb;
++    MP_TARRAY_GROW(ctx, ctx->ttml_parts, ctx->num_ttml_bitmaps);
++    for (int n = 0; n < ctx->num_ttml_bitmaps; n++) {
++        struct ttml_bitmap *cue = &ctx->ttml_bitmaps[n];
++        if (pts >= cue->start && pts < cue->end) {
++            packed_w += cue->image->w;
++            packed_h = MPMAX(packed_h, cue->image->h);
++            change_id = change_id * 33 + (unsigned)cue->id + 1;
++            active++;
++        }
++    }
++    if (active) {
++        if (!ctx->ttml_packed || ctx->ttml_packed_change_id != change_id ||
++            ctx->ttml_packed->w != packed_w || ctx->ttml_packed->h != packed_h)
++        {
++            talloc_free(ctx->ttml_packed);
++            ctx->ttml_packed = mp_image_alloc(IMGFMT_BGRA, packed_w, packed_h);
++            if (!ctx->ttml_packed)
++                return NULL;
++            talloc_steal(ctx, ctx->ttml_packed);
++            int dst_x = 0;
++            for (int n = 0; n < ctx->num_ttml_bitmaps; n++) {
++                struct ttml_bitmap *cue = &ctx->ttml_bitmaps[n];
++                if (pts < cue->start || pts >= cue->end)
++                    continue;
++                for (int row = 0; row < cue->image->h; row++) {
++                    memcpy(ctx->ttml_packed->planes[0] +
++                               row * ctx->ttml_packed->stride[0] + dst_x * 4,
++                           cue->image->planes[0] + row * cue->image->stride[0],
++                           cue->image->w * 4);
++                }
++                dst_x += cue->image->w;
++            }
++            ctx->ttml_packed_change_id = change_id;
++        }
++        active = 0;
++        int src_x = 0;
++        for (int n = 0; n < ctx->num_ttml_bitmaps; n++) {
++            struct ttml_bitmap *cue = &ctx->ttml_bitmaps[n];
++            if (pts < cue->start || pts >= cue->end)
++                continue;
++            ctx->ttml_parts[active++] = (struct sub_bitmap){
++                .bitmap = ctx->ttml_packed->planes[0] + src_x * 4,
++                .stride = ctx->ttml_packed->stride[0],
++                .w = cue->image->w, .h = cue->image->h,
++                .src_x = src_x,
++                .dw = (int)((int64_t)vw * cue->w / 1000000),
++                .dh = (int)((int64_t)vh * cue->h / 1000000),
++                .x = dim.ml + (int)((int64_t)vw * cue->x / 1000000),
++                .y = dim.mt + (int)((int64_t)vh * cue->y / 1000000),
++            };
++            src_x += cue->image->w;
++        }
++        ctx->ttml_result = (struct sub_bitmaps){
++            .format = SUBBITMAP_BGRA, .parts = ctx->ttml_parts,
++            .num_parts = active, .packed = ctx->ttml_packed,
++            .packed_w = packed_w, .packed_h = packed_h,
++            .change_id = change_id ? (int)change_id : 1,
++        };
++        return sub_bitmaps_copy(&ctx->copy_cache, &ctx->ttml_result);
++    }
+     struct mp_subtitle_opts *opts = sd->opts;
+     struct mp_subtitle_shared_opts *shared_opts = sd->shared_opts;
+     bool no_ass = !opts->ass_enabled ||
+@@ -1007,6 +1132,12 @@ static void fill_plaintext(struct sd *sd, double pts)
+ static void reset(struct sd *sd)
+ {
+     struct sd_ass_priv *ctx = sd->priv;
++    for (int n = 0; n < ctx->num_ttml_bitmaps; n++)
++        talloc_free(ctx->ttml_bitmaps[n].image);
++    ctx->num_ttml_bitmaps = 0;
++    talloc_free(ctx->ttml_packed);
++    ctx->ttml_packed = NULL;
++    ctx->ttml_packed_change_id = 0;
+     if (sd->opts->sub_clear_on_seek || ctx->clear_once) {
+         ass_flush_events(ctx->ass_track);
+         ctx->num_seen_packets = 0;

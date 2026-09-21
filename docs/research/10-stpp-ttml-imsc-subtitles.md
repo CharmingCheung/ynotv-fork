@@ -12,11 +12,12 @@ FFmpeg/mpv stack cannot decode TTML directly, so text TTML is semantically
 parsed with `quick-xml`, normalized, converted to timed ASS events, and rendered
 through mpv's existing libass subtitle path.
 
-The implementation detects embedded IMSC image cues and keeps them out of the
-text converter, but the required private mpv bitmap subtitle adapter is not
-implemented. Image cues therefore return an explicit unsupported-profile
-diagnostic. Live UI playback, live seeking, pixel-level styled rendering, and a
-multi-refresh real-session run were not completed. C7 cannot be declared YES.
+The implementation detects embedded and MP4-subsample IMSC image cues, keeps
+them out of the text converter, and sends normalized timed bitmap packets to a
+private mpv adapter. The adapter decodes PNG, applies cue opacity, and presents
+premultiplied BGRA at the TTML region through mpv's normal subtitle compositor.
+Live seeking, pixel-level styled text rendering, and a multi-refresh real-session
+run were not completed. C7 as a whole therefore remains partial.
 
 No SRT/WebVTT work, ABR, Widevine, PlayReady, player UI redesign, video decoder
 change, or video-output change was made.
@@ -257,18 +258,25 @@ source inspection alone.
 
 ## IMSC image behavior
 
-The parser recognizes SMPTE/IMSC `backgroundImage`/`image` references on a cue
-or ancestor. Embedded base64 image resources become `BitmapCue` values with
-exact start/end, region/origin/extent, opacity, MIME type, and encoded image
-bytes. They are never converted to text or ASS. External/unknown image resource
-modes return an explicit unsupported-resource error.
+The parser recognizes SMPTE/IMSC `backgroundImage`/`image` references on `p`
+and image-bearing `div` cues. It supports embedded Base64 PNG, PNG data URIs,
+and `urn:mpeg:14496-30:subs:N` references to image subsamples appended to an
+FFmpeg `stpp` packet. Exact nested timing follows Shaka's parent-relative rule.
+Percent, pixel (with root extent), and cell region geometry are normalized to
+an integer viewport before entering the renderer.
 
-The final `BitmapCue -> mpv subtitle bitmap compositor` adapter and PNG/JPEG
-decoding integration are not implemented. The open Shaka CMAF image fixture
-uses an image-resource arrangement that still needs to be carried from the
-MP4 parser to the private subtitle adapter. No mpv video decoder or video output
-code was modified. Because bitmap rendering is absent, IMSC image acceptance
-is not met.
+Bitmap packets carry timing, viewport, opacity, and PNG bytes. The opt-in mpv
+TTML bridge queues them, decodes PNG with mpv's image loader, premultiplies
+alpha, packs all simultaneously active cues into a reference-counted BGRA
+atlas, and returns `SUBBITMAP_BGRA`; text packets on the same track continue
+through libass. Unsupported external image URLs and non-PNG image types fail
+explicitly. No mpv video decoder or video-output code was modified.
+
+The bridge publishes converted text/bitmap packets and their track config at
+the same `1/1000` time base. This is required for sources whose original STPP
+track uses another scale (the bitmap Astro sample uses `1/90000`); retaining the
+source scale while emitting millisecond packets makes the strict live demuxer
+reject the first subtitle packet as an invalid header.
 
 ## Track selection, refresh, and seek
 
@@ -323,6 +331,7 @@ measured sequence of application refresh generations.
 - `experiments/mpv-packet-demux-adapter/rustdash_packet_abi.h`
 - `experiments/mpv-packet-demux-adapter/mpv-patch/demux_rustdash.c`
 - `experiments/mpv-packet-demux-adapter/mpv-patch/ttml-ass-bridge.patch`
+- `experiments/mpv-packet-demux-adapter/mpv-patch/ttml-bitmap-bridge.patch`
 - `experiments/mpv-packet-demux-adapter/apply-to-mpv.sh`
 - `scripts/dev-native-dash.mjs`
 - `docs/research/10-stpp-ttml-imsc-subtitles.md`
@@ -380,7 +389,7 @@ git diff --check
 node scripts/dev-native-dash.mjs --print-libmpv
 ```
 
-Results: Rust 94/94; native DASH focused 12/12; TTML 3/3; UI routing
+Original C7 results: Rust 94/94; native DASH focused 12/12; TTML 3/3; UI routing
 6/6; M3U KODIPROP 1/1; C2 playback PASS; C3 generation/cancellation PASS;
 C4 local equivalence/error and software/VideoToolbox playback PASS; C6 delayed
 live starvation PASS; pinned mpv 39/39; `git diff --check` PASS. The live-v4
@@ -391,12 +400,11 @@ throughout unrelated files; no bulk formatting was applied.
 
 ## Known unsupported or unaccepted behavior
 
-- IMSC image bitmap composition and image decoding through mpv's subtitle OSD;
 - Shaka-normalized automated equivalence output;
 - ruby rendering, vertical writing, complete region extent/clipping,
   displayAlign/textAlign mapping, font family/size, per-span background/opacity,
   line height, EBU line padding, and wrap behavior;
-- non-embedded and auxiliary-sample IMSC image resources;
+- external-URL and non-PNG IMSC image resources;
 - encrypted STPP fixture coverage;
 - live DVR seek and pending subtitle fetch cancellation;
 - full UI subtitle off/A/B switching and real multi-generation acceptance;
@@ -410,11 +418,11 @@ STPP/TTML and IMSC image subtitle tracks through the native pipeline?
 PARTIAL
 
 Evidence:
-The supplied MPD's two STPP tracks are discovered with stable identities and
+The supplied MPD's STPP tracks are discovered with stable identities and
 metadata; FFmpeg MOV emits `AV_CODEC_ID_TTML` packets; the negative direct mpv
 probe is documented; the semantic text bridge produces deduplicated,
-presentation-timeline ASS events; and the pinned mpv publishes/selects the
-result as a normal metadata-rich subtitle track and initializes libass while
-all C0-C6 regressions remain green. However, IMSC image cues are only detected
-and preserved, not rendered through mpv's bitmap compositor, and normal-UI live
-refresh/seek/track-switch acceptance was not completed.
+presentation-timeline ASS events; and IMSC PNG cues now traverse the same track
+into mpv's BGRA subtitle compositor. Shaka's public auxiliary-image CMAF sample
+parses with the expected time and pixel-normalized region, all 98 Rust library
+tests pass, and the patched `sd_ass.c` compiles. Normal-UI live
+refresh/seek/track-switch and screenshot acceptance are still not completed.

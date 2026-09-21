@@ -106,6 +106,7 @@ struct priv {
     bool stopping;
     bool producer_done;
     bool producer_failed;
+    const char *producer_error;
     bool producer_failure_reported;
     int delay_ms;
     int waits;
@@ -116,7 +117,16 @@ struct priv {
 
 static bool read_exact(struct stream *s, void *dst, size_t size)
 {
-    return size <= INT_MAX && stream_read(s, dst, size) == size;
+    uint8_t *out = dst;
+    while (size) {
+        int request = size > INT_MAX ? INT_MAX : (int)size;
+        int read = stream_read(s, out, request);
+        if (read <= 0)
+            return false;
+        out += read;
+        size -= read;
+    }
+    return true;
 }
 
 static bool get_u32(struct stream *s, uint32_t *value)
@@ -358,8 +368,10 @@ static MP_THREAD_VOID live_producer_thread(void *ctx)
         uint32_t record = 0;
         if (!get_u32(p->demuxer->stream, &record)) {
             mp_mutex_lock(&p->lock);
-            if (!p->stopping)
+            if (!p->stopping) {
                 p->producer_failed = true;
+                p->producer_error = "record header ended before EOF marker";
+            }
             mp_cond_broadcast(&p->wakeup);
             mp_mutex_unlock(&p->lock);
             break;
@@ -377,6 +389,7 @@ static MP_THREAD_VOID live_producer_thread(void *ctx)
             free_ready(ready);
             mp_mutex_lock(&p->lock);
             p->producer_failed = true;
+            p->producer_error = "invalid live packet header";
             mp_cond_broadcast(&p->wakeup);
             mp_mutex_unlock(&p->lock);
             break;
@@ -401,6 +414,7 @@ static MP_THREAD_VOID live_producer_thread(void *ctx)
             mp_mutex_lock(&p->lock);
             if (!p->stopping)
                 p->producer_failed = true;
+            p->producer_error = "live packet payload ended early";
             mp_cond_broadcast(&p->wakeup);
             mp_mutex_unlock(&p->lock);
             break;
@@ -660,7 +674,8 @@ static bool rustdash_read_packet(struct demuxer *demuxer, struct demux_packet **
             mp_mutex_unlock(&p->lock);
             if (report) {
                 MP_ERR(demuxer, "fatal producer error; mpv's boolean demux API "
-                       "will represent this terminal failure as EOF\n");
+                       "will represent this terminal failure as EOF; reason=%s\n",
+                       p->producer_error ? p->producer_error : "unknown");
             }
             return false;
         }

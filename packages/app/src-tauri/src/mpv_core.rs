@@ -464,6 +464,9 @@ fn spawn_log_capture<R: Runtime>(
                         ..
                     }) => {
                         let line = format!("[{}:{}] {}", prefix, level, text.trim_end());
+                        if prefix.contains("rustdash") || text.contains("fatal producer error") {
+                            log::warn!("[libmpv] {}", line);
+                        }
                         let mut buf = log_lines.lock().unwrap();
                         if buf.len() >= MAX_LOG_LINES {
                             buf.pop_front();
