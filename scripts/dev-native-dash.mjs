@@ -2,8 +2,9 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 
-if (process.platform !== 'darwin') {
-  console.error('[native-dash] Native DASH is currently implemented only for macOS in-process libmpv.');
+if (!((process.platform === 'darwin' && process.arch === 'arm64') ||
+      (process.platform === 'win32' && process.arch === 'x64'))) {
+  console.error(`[native-dash] no Native DASH runtime is available for ${process.platform}/${process.arch}.`);
   process.exit(1);
 }
 
@@ -22,8 +23,10 @@ if (!library.includes(Buffer.from('RDPKT006')) || !library.includes(Buffer.from(
   process.exit(1);
 }
 
-const producer = join(process.cwd(), 'experiments/clearkey-cenc-packet-transform/cenc_component_producer');
-if (!existsSync(producer)) {
+const producer = process.platform === 'win32'
+  ? join(patched, 'cenc_component_producer.exe')
+  : join(process.cwd(), 'experiments/clearkey-cenc-packet-transform/cenc_component_producer');
+if (process.platform === 'darwin' && !existsSync(producer)) {
   console.log('[native-dash] building the repository-local ClearKey packet producer');
   const result = spawnSync('bash', ['experiments/clearkey-cenc-packet-transform/build.sh'], { stdio: 'inherit' });
   if (result.error) throw result.error;

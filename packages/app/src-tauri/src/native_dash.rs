@@ -83,6 +83,11 @@ pub(crate) fn cancel_active() {
     observe_buffered_seconds(None);
 }
 
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn is_active() -> bool {
+    ACTIVE.lock().files.is_some()
+}
+
 const LIVE_EDGE_TOLERANCE_SECONDS: f64 = 3.0;
 
 #[derive(Clone, Debug)]
@@ -162,8 +167,8 @@ pub(crate) fn note_eof() {
 }
 
 pub(crate) async fn prepare(config: NativeDashPlaybackConfig) -> Result<String, String> {
-    #[cfg(not(target_os = "macos"))]
-    return Err("Native DASH requires macOS in-process libmpv in C6".into());
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    return Err("Native DASH requires the in-process libmpv backend on macOS or Windows".into());
     let (kid, key) = match &config.drm { NativeDashDrm::ClearKey { kid, key } => (decode_hex_16(kid)?, decode_hex_16(key)?) };
     let generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
     let cancellation = CancellationToken::new();
@@ -1008,7 +1013,8 @@ fn u32_at(bytes:&[u8],at:usize)->Result<u32,String>{Ok(u32::from_le_bytes(bytes.
 fn i32_at(bytes:&[u8],at:usize)->Result<i32,String>{Ok(i32::from_le_bytes(bytes.get(at..at+4).ok_or("Native DASH packet output truncated")?.try_into().unwrap()))}
 fn i64_at(bytes:&[u8],at:usize)->Result<i64,String>{Ok(i64::from_le_bytes(bytes.get(at..at+8).ok_or("Native DASH packet output truncated")?.try_into().unwrap()))}
 
-async fn run_packet_producer(components:&[PathBuf],audio_components:usize,output:&Path,kid:[u8;16],key:[u8;16],c:&CancellationToken)->Result<(),String>{let default=Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../experiments/clearkey-cenc-packet-transform/cenc_component_producer");let producer=std::env::var_os("YNOTV_NATIVE_DASH_PACKET_PRODUCER").map(PathBuf::from).unwrap_or(default);if !producer.is_file(){return Err("Native DASH FFmpeg/ClearKey packet producer is unavailable".into())}let hex=|b:[u8;16]|b.iter().map(|x|format!("{x:02x}")).collect::<String>();let mut cmd=Command::new(producer);cmd.args(components).arg(output).env("RUSTDASH_AUDIO_COMPONENTS",audio_components.to_string()).env("RUSTDASH_TEST_KID",hex(kid)).env("RUSTDASH_TEST_KEY",hex(key)).kill_on_drop(true).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::piped());let x=tokio::select!{_=c.cancelled()=>return Err("Native DASH session cancelled".into()),x=cmd.output()=>x.map_err(|_|"Native DASH FFmpeg/ClearKey packet producer is unavailable")?};if x.status.success(){Ok(())}else{let d=String::from_utf8_lossy(&x.stderr);Err(if d.contains("UnsupportedScheme"){"Unsupported CENC scheme"}else if d.contains("Unsupported IMSC"){"Unsupported IMSC image profile"}else if x.status.code()==Some(3){"ClearKey KID unavailable"}else{"CENC decrypt failed"}.into())}}
+fn default_packet_producer()->PathBuf{if cfg!(windows){return std::env::current_exe().ok().and_then(|p|p.parent().map(|p|p.join("cenc_component_producer.exe"))).unwrap_or_else(||PathBuf::from("cenc_component_producer.exe"))}if cfg!(target_os="macos"){if let Some(path)=std::env::current_exe().ok().and_then(|p|p.parent().and_then(Path::parent).map(|p|p.join("Resources/cenc_component_producer"))).filter(|p|p.is_file()){return path}}Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../experiments/clearkey-cenc-packet-transform/cenc_component_producer")}
+async fn run_packet_producer(components:&[PathBuf],audio_components:usize,output:&Path,kid:[u8;16],key:[u8;16],c:&CancellationToken)->Result<(),String>{let producer=std::env::var_os("YNOTV_NATIVE_DASH_PACKET_PRODUCER").map(PathBuf::from).unwrap_or_else(default_packet_producer);if !producer.is_file(){return Err("Native DASH FFmpeg/ClearKey packet producer is unavailable".into())}let hex=|b:[u8;16]|b.iter().map(|x|format!("{x:02x}")).collect::<String>();let mut cmd=Command::new(producer);cmd.args(components).arg(output).env("RUSTDASH_AUDIO_COMPONENTS",audio_components.to_string()).env("RUSTDASH_TEST_KID",hex(kid)).env("RUSTDASH_TEST_KEY",hex(key)).kill_on_drop(true).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::piped());let x=tokio::select!{_=c.cancelled()=>return Err("Native DASH session cancelled".into()),x=cmd.output()=>x.map_err(|_|"Native DASH FFmpeg/ClearKey packet producer is unavailable")?};if x.status.success(){Ok(())}else{let d=String::from_utf8_lossy(&x.stderr);Err(if d.contains("UnsupportedScheme"){"Unsupported CENC scheme"}else if d.contains("Unsupported IMSC"){"Unsupported IMSC image profile"}else if x.status.code()==Some(3){"ClearKey KID unavailable"}else{"CENC decrypt failed"}.into())}}
 
 #[cfg(test)]
 mod tests {

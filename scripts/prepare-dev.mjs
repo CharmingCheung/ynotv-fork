@@ -43,22 +43,14 @@ if (!existsSync(ffmpeg)) {
   run(process.execPath, ['packages/app/scripts/download-ffmpeg.js']);
 }
 
-if (process.platform === 'win32') {
-  const dll = join(tauri, 'libmpv', 'libmpv-2.dll');
-  if (!existsSync(dll)) {
-    console.log('[dev-setup] downloading and verifying the Windows libmpv runtime');
-    run('powershell.exe', [
-      '-NoProfile', '-ExecutionPolicy', 'Bypass',
-      '-File', 'packages/app/src-tauri/setup-libmpv.ps1',
-    ]);
-  }
-}
-
-if (process.platform === 'darwin' && process.arch === 'arm64') {
+if ((process.platform === 'darwin' && process.arch === 'arm64') ||
+    (process.platform === 'win32' && process.arch === 'x64')) {
   run(process.execPath, ['scripts/setup-native-runtime.mjs']);
 
-  const producer = join(root, 'experiments/clearkey-cenc-packet-transform/cenc_component_producer');
-  if (!existsSync(producer)) {
+  const producer = process.platform === 'win32'
+    ? join(tauri, 'native-dash-libmpv/cenc_component_producer.exe')
+    : join(root, 'experiments/clearkey-cenc-packet-transform/cenc_component_producer');
+  if (process.platform === 'darwin' && !existsSync(producer)) {
     console.log('[dev-setup] building the Native DASH packet producer');
     run('bash', ['experiments/clearkey-cenc-packet-transform/build.sh']);
   }

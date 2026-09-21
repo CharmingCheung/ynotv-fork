@@ -30,10 +30,9 @@ jobs:
       - name: Install macOS native headers
         if: runner.os == 'macOS'
         run: brew install mpv pkg-config
-      - name: Prepare Windows libmpv
+      - name: Prepare Windows Native DASH runtime
         if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./packages/app/src-tauri/setup-libmpv.ps1
+        run: node scripts/setup-native-runtime.mjs
       - name: Compile Rust backend
         working-directory: packages/app/src-tauri
         run: cargo check --locked

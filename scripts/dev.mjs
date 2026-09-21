@@ -44,15 +44,22 @@ if ((await Promise.all([
 await run(process.execPath, ['scripts/prepare-dev.mjs']);
 
 const env = { ...process.env, YNOTV_DEV_CENTER_WINDOW: '1' };
-if (process.platform === 'darwin' && process.arch === 'arm64') {
+if ((process.platform === 'darwin' && process.arch === 'arm64') ||
+    (process.platform === 'win32' && process.arch === 'x64')) {
   const nativeRuntime = join(root, 'packages/app/src-tauri/native-dash-libmpv');
-  const nativeLibmpv = join(nativeRuntime, 'libmpv.2.dylib');
-  if (!existsSync(nativeLibmpv)) throw new Error('Native runtime setup completed without libmpv.2.dylib');
+  const libraryName = process.platform === 'win32' ? 'libmpv-2.dll' : 'libmpv.2.dylib';
+  const producerName = process.platform === 'win32' ? 'cenc_component_producer.exe' : 'cenc_component_producer';
+  const nativeLibmpv = join(nativeRuntime, libraryName);
+  if (!existsSync(nativeLibmpv)) throw new Error(`Native runtime setup completed without ${libraryName}`);
   env.YNOTV_NATIVE_DASH_LIBMPV_DIR = nativeRuntime;
-  env.YNOTV_NATIVE_DASH_PACKET_PRODUCER = join(
-    root, 'experiments/clearkey-cenc-packet-transform/cenc_component_producer',
-  );
-  env.DYLD_LIBRARY_PATH = `${nativeRuntime}${delimiter}${env.DYLD_LIBRARY_PATH ?? ''}`;
+  env.YNOTV_NATIVE_DASH_PACKET_PRODUCER = process.platform === 'win32'
+    ? join(nativeRuntime, producerName)
+    : join(root, 'experiments/clearkey-cenc-packet-transform', producerName);
+  if (process.platform === 'darwin') {
+    env.DYLD_LIBRARY_PATH = `${nativeRuntime}${delimiter}${env.DYLD_LIBRARY_PATH ?? ''}`;
+  } else {
+    env.PATH = `${nativeRuntime}${delimiter}${env.PATH ?? ''}`;
+  }
   console.log(`[native-runtime] using ${nativeRuntime}`);
 }
 if (process.platform === 'win32') {

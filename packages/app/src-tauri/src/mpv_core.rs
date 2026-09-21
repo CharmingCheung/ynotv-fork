@@ -635,8 +635,18 @@ pub async fn load_native_dash_packet_source<R: Runtime>(
     app: &AppHandle<R>, source: &str,
 ) -> Result<(), String> {
     let state = app.state::<MpvCoreState>();
-    let mpv = { state.mpv.lock().unwrap().clone() }
-        .ok_or("Native DASH requires initialized in-process libmpv")?;
+    let existing = { state.mpv.lock().unwrap().clone() };
+    let mpv = match existing {
+        Some(mpv) => mpv,
+        None => {
+            log::info!("[native-dash] initializing the in-process libmpv backend");
+            let params = crate::get_mpv_params_from_store(app).await;
+            let safe_params = crate::sanitize_mpv_args(params);
+            init_mpv_with_params(app.clone(), safe_params).await?;
+            state.mpv.lock().unwrap().clone()
+                .ok_or("Native DASH failed to initialize in-process libmpv")?
+        }
+    };
     // Native DASH owns the full DVR index.  mpv's packet-cache seek must not
     // satisfy a request internally, because that bypasses demux_rustdash's
     // low-level seek callback and leaves the prepared RDPKT006 epoch held.

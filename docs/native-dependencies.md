@@ -20,7 +20,7 @@ pnpm dev
 | Platform | Prepared automatically | Still required from the machine |
 | --- | --- | --- |
 | Apple Silicon macOS | versioned Native DASH libmpv/libplacebo runtime, mpv sidecar, yt-dlp; copies FFmpeg into ignored caches; builds the packet producer | Xcode CLI tools and Homebrew `mpv`, `ffmpeg`, `pkg-config` |
-| Windows x64 | mpv, FFmpeg, yt-dlp, Vulkan loader, SHA-256-verified libmpv DLL | Visual Studio C++ tools, Windows SDK, WebView2, Git Bash, 7-Zip |
+| Windows x64 | versioned Native DASH libmpv runtime and packet producer, mpv, FFmpeg, yt-dlp, Vulkan loader | Visual Studio C++ tools, Windows SDK, WebView2, Git Bash, 7-Zip |
 | Linux x64 | wrapper around `/usr/bin/mpv`, FFmpeg and yt-dlp | Experimental only; the desktop playback backend is not implemented for Linux |
 
 The preparation step needs network access to GitHub and the other download
@@ -43,8 +43,7 @@ can be called hermetic:
 
 | Input | Current source | Reproducibility status |
 | --- | --- | --- |
-| Native DASH libmpv/libplacebo | `CharmingCheung/ynotv-native` release `v0.1.0` | Source commits and release URL pinned; SHA-256 verified on download |
-| Windows libmpv | `tbeezy/ynotv` release `v-assets`, with fallbacks in `setup-libmpv.ps1` | Pinned by SHA-256 |
+| Native DASH runtime | `CharmingCheung/ynotv-native` release `v0.2.0` | Platform asset and release URL pinned; SHA-256 verified on download |
 | Windows/macOS mpv sidecar | shinchiro GitHub releases / laboratory.stolendata.net | Uses a moving `latest` artifact |
 | FFmpeg | BtbN GitHub release on Windows; Homebrew binary copied on macOS | Moving/latest or local Homebrew build |
 | yt-dlp | official GitHub `latest` release | Moving artifact |
@@ -57,7 +56,7 @@ bit-for-bit reproducible release. Release CI should migrate them to a dedicated
 native-assets repository/release with immutable versioned URLs, SHA-256 files,
 license files, and one manifest recording the mpv, FFmpeg, and toolchain commits.
 
-## Native DASH development (macOS only)
+## Native DASH development
 
 The `RDPKT001` through `RDPKT006` strings are historical protocol revisions in
 one experimental mpv patch, not six installed libraries. Production ynoTV emits
@@ -78,7 +77,7 @@ producer when missing, and injects the cached runtime into both the Rust linker
 and the launched process. `pnpm setup:native-runtime -- --force` refreshes a
 damaged cache.
 
-The pinned source, patch, regression fixtures, macOS build script, and release
+The pinned source, patch, regression fixtures, platform build scripts, and release
 workflow live in `CharmingCheung/ynotv-native`. Application developers consume
 its release artifact and do not compile mpv locally.
 
@@ -86,19 +85,23 @@ Maintainers changing that patch can keep `ynotv-native` beside this checkout and
 run `pnpm native:dev`. It uses a persistent Meson build directory for incremental
 compilation, runs native tests, and installs the result into the same gitignored
 cache used by `pnpm dev`. Restart with `pnpm dev:clean`. No push or Release is
-needed during the edit/compile/test loop.
+needed during the edit/compile/test loop. On Windows this command expects MSYS2
+at `C:\msys64` with the UCRT64 compiler, Meson, FFmpeg, OpenSSL, libplacebo,
+LLVM, and MinGW tools installed. The native repository CI uses the same package
+set and is the reference setup.
 
-Windows currently uses the mpv sidecar playback backend. The Rust command
-returns an explicit error for Native DASH on Windows, so supporting it requires
-a separately built patched Windows mpv/libmpv and backend integration; copying
-the macOS dylib workflow is not sufficient.
+Windows keeps the sidecar backend for ordinary playback. A Native DASH session
+automatically initializes the bundled in-process patched libmpv, routes playback
+commands to it for the life of that session, then restores sidecar playback when
+a normal stream is loaded.
 
 ## DMG and EXE portability
 
-The Windows configuration bundles `libmpv-2.dll`, the mpv/FFmpeg/yt-dlp
-sidecars, and the Vulkan loader. GitHub Actions now fails when a native download
-fails instead of silently continuing. It still needs a clean Windows VM smoke
-test to prove that no transitive DLL is missing.
+The Windows configuration bundles the patched `libmpv-2.dll`, its discovered
+UCRT64 DLL closure, the ClearKey packet producer, the mpv/FFmpeg/yt-dlp
+sidecars, and the Vulkan loader. GitHub Actions fails when a native download
+or ABI marker check fails. A clean Windows VM playback smoke test is still
+required before treating the first Windows artifact as production-proven.
 
 The current macOS bundle is **not yet portable**. Inspection of the generated
 app shows absolute `/opt/homebrew/...` references from the main executable and

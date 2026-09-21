@@ -11,7 +11,7 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "dev:native-dash": "node scripts/dev-native-dash.mjs",
-    "native:dev": "bash ../ynotv-native/scripts/dev-macos.sh .",
+    "native:dev": "node scripts/native-dev.mjs",
     "setup:native-runtime": "node scripts/setup-native-runtime.mjs",
     "dev:clean": "node scripts/kill-dev.js && pnpm dev",
     "kill-port": "node scripts/kill-dev.js",

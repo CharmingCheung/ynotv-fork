@@ -146,7 +146,7 @@ pnpm dev:clean
 
 The first command incrementally rebuilds the local `../ynotv-native` patch,
 runs its native tests, and installs it into the gitignored ynoTV cache. The
-second restarts the app with that dylib. Iterate locally as often as needed;
+second restarts the app with that native library. Iterate locally as often as needed;
 only increment `ynotv-native/VERSION` and push after the patch and real playback
 tests are stable.
 
@@ -166,14 +166,21 @@ pnpm build:macos
 > The current macOS output still contains Homebrew-linked native libraries, so
 > `pnpm build:macos` intentionally fails its final portability audit. For a
 > local-only package use `pnpm build:macos:local`; do not publish that DMG.
-> Windows Native DASH is not yet implemented. Details are in the
-> native-dependencies document above.
+> Native DASH is supported on Apple Silicon macOS and Windows x64. Windows
+> runtime builds use MSYS2 UCRT64; see the native-dependencies document above.
 
 Build output is located at:
 
 ```
 packages/app/src-tauri/target/release/bundle/
 ```
+
+To build both desktop packages against current `ynotv-native` source, open
+GitHub Actions, run **Build app with latest native source**, and optionally set
+`native_ref` to a branch, tag, or commit. The macOS and Windows jobs compile the
+selected native checkout inside the same run and upload DMG/NSIS artifacts plus
+the exact application and native commit IDs. They do not consume a
+`ynotv-native` Release artifact.
 
 > **Recovery builds**: if a user's database is too large and the app fails to
 > start, there is a one-off database recovery screen (export → rebuild →

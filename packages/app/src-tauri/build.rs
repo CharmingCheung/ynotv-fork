@@ -5,10 +5,17 @@ fn main() {
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
 
     if target_os == "windows" {
-        let libmpv = manifest.join("libmpv");
+        println!("cargo:rerun-if-env-changed=YNOTV_NATIVE_DASH_LIBMPV_DIR");
+        let libmpv = std::env::var_os("YNOTV_NATIVE_DASH_LIBMPV_DIR")
+            .map(PathBuf::from)
+            .filter(|dir| dir.join("mpv.lib").is_file())
+            .unwrap_or_else(|| manifest.join("libmpv"));
         if libmpv.join("mpv.lib").exists() {
             println!("cargo:rustc-link-search=native={}", libmpv.display());
-            println!("cargo:rerun-if-changed={}", libmpv.join("mpv.lib").display());
+            println!(
+                "cargo:rerun-if-changed={}",
+                libmpv.join("mpv.lib").display()
+            );
         }
     }
 

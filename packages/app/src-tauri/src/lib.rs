@@ -275,6 +275,9 @@ pub(crate) async fn get_player_engine<R: Runtime>(app: &AppHandle<R>) -> PlayerE
     }
     #[cfg(not(target_os = "macos"))]
     {
+        if native_dash::is_active() {
+            return PlayerEngine::LibMpv;
+        }
         if let Some(val) = read_store_setting(app, "playerEngine") {
             if let Some(s) = val.as_str() {
                 if s.eq_ignore_ascii_case("libmpv") {
@@ -1432,12 +1435,10 @@ async fn mpv_load<R: Runtime>(
     user_agent: Option<String>,
     native_dash: Option<native_dash::NativeDashPlaybackConfig>,
 ) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let native_dash_was_active = native_dash::is_active();
     native_dash::cancel_active();
     if let Some(config) = native_dash {
-        #[cfg(target_os = "windows")]
-        if get_player_engine(&app).await != PlayerEngine::LibMpv {
-            return Err("Native DASH custom demux adapter is unavailable in Windows sidecar playback mode".into());
-        }
         if config.manifest_url != url {
             return Err("Native DASH manifest configuration mismatch".into());
         }
@@ -1464,6 +1465,12 @@ async fn mpv_load<R: Runtime>(
             let _ = mpv_core::set_property(&app, "audio-delay".to_string(), serde_json::json!(0.0)).await;
             mpv_core::load_file(&app, url, force_hls).await
         } else {
+            if native_dash_was_active {
+                log::info!("[native-dash] restoring Windows sidecar playback");
+                let params = sanitize_mpv_args(get_mpv_params_from_store(&app).await);
+                let state = app.state::<MpvState>();
+                mpv_windows::init_mpv_with_params(app.clone(), state, params).await?;
+            }
             apply_quality_profile_on_load(&app, PlayerEngine::Sidecar).await;
             let _ = mpv_windows::set_property(&app, "audio-delay".to_string(), serde_json::json!(0.0)).await;
             mpv_windows::load_file(&app, url, force_hls).await
@@ -1542,6 +1549,8 @@ async fn mpv_resume<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
 
 #[tauri::command]
 async fn mpv_stop<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let engine = get_player_engine(&app).await;
     native_dash::cancel_active();
     #[cfg(target_os = "macos")]
     {
@@ -1549,7 +1558,7 @@ async fn mpv_stop<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
     }
     #[cfg(target_os = "windows")]
     {
-        if get_player_engine(&app).await == PlayerEngine::LibMpv {
+        if engine == PlayerEngine::LibMpv {
             mpv_core::stop(&app).await
         } else {
             mpv_windows::stop(&app).await
