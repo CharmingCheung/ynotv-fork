@@ -17,17 +17,15 @@ fn main() {
     println!("cargo:rerun-if-changed=icons/icon.png");
 
     if target_os == "macos" {
-        // C5 development builds may point at the C2/C3 patched libmpv. Merely
-        // setting DYLD_LIBRARY_PATH is insufficient when Homebrew's absolute
-        // install name was recorded at link time, so prefer this directory for
-        // both link lookup and runtime rpath.
+        // Native DASH development may explicitly point at a patched libmpv.
+        // This is a build-time search path only: embedding the developer's
+        // absolute directory as an rpath makes the resulting app non-portable.
         println!("cargo:rerun-if-env-changed=YNOTV_NATIVE_DASH_LIBMPV_DIR");
         let native_dash_libmpv = std::env::var_os("YNOTV_NATIVE_DASH_LIBMPV_DIR")
             .map(PathBuf::from)
             .filter(|dir| dir.join("libmpv.2.dylib").is_file());
         if let Some(dir) = &native_dash_libmpv {
             println!("cargo:rustc-link-search=native={}", dir.display());
-            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", dir.display());
         }
 
         let mut prefixes: Vec<String> = Vec::new();
@@ -49,16 +47,6 @@ fn main() {
         }
         println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/../Frameworks");
         println!("cargo:rustc-link-arg=-Wl,-rpath,@loader_path/../Frameworks");
-        #[cfg(target_arch = "aarch64")]
-        {
-            println!("cargo:rustc-link-arg=-Wl,-rpath,/opt/homebrew/lib");
-            println!("cargo:rustc-link-arg=-Wl,-rpath,/opt/homebrew/opt/mpv/lib");
-        }
-        #[cfg(target_arch = "x86_64")]
-        {
-            println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/local/lib");
-            println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/local/opt/mpv/lib");
-        }
     }
 
     tauri_build::build()

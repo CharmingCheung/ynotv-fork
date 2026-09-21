@@ -45,7 +45,6 @@ jobs:
           echo "Checking if mpv binary was created:"
           ls -la packages/app/src-tauri/bin/ || echo "bin directory not found or empty"
         shell: bash
-        continue-on-error: true
 
       - name: Download FFmpeg (Tauri Sidecar)
         run: |
@@ -55,7 +54,6 @@ jobs:
           echo "Checking if FFmpeg binary was created:"
           ls -la packages/app/src-tauri/bin/ || echo "bin directory not found or empty"
         shell: bash
-        continue-on-error: true
 
       - name: Setup libmpv (Windows)
         if: runner.os == 'Windows'

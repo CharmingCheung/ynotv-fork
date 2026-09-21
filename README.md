@@ -93,6 +93,7 @@ A feature-rich, open source IPTV player for Windows built on [Tauri v2](https://
 - [Microsoft Edge WebView2](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) — required for Tauri's rendering engine
 - Visual Studio 2022 with C++ build tools
 - Windows 10 SDK
+- Git Bash and 7-Zip (used to prepare the native sidecars)
 
 **macOS additional requirements:**
 - Xcode Command Line Tools (`xcode-select --install`)
@@ -113,41 +114,39 @@ cd ynotv
 pnpm install
 ```
 
-**3. Download mpv sidecar**
-
-FFmpeg is downloaded automatically during the build step, but mpv (and yt-dlp) must be downloaded manually first:
-
-```bash
-bash scripts/download-mpv-tauri.sh
-```
-
-*(Optional)* If you also want to pre-download FFmpeg manually:
-```bash
-cd packages/app
-node scripts/download-ffmpeg.js
-cd ../..
-```
-
-**4. Run in development mode**
+**3. Run in development mode**
 
 ```bash
 pnpm dev
 ```
 
-This starts both the Vite UI dev server and the Tauri app concurrently.
+This downloads and verifies the versioned Native DASH runtime, prepares any
+missing sidecars and packet producer, then starts the Vite UI server and Tauri
+app. No local libmpv path or environment variable is required. The first run
+needs network access and can take several minutes.
+Apple Silicon macOS and Windows x64 are the supported clean-clone development
+targets. See [Native dependencies and reproducible builds](docs/native-dependencies.md)
+for every external input, platform limitation, and the separately maintained
+Native DASH runtime.
 
-**5. Build for production**
+**4. Build for production**
 
 ```bash
 pnpm tauri build
 ```
 
-On Apple Silicon macOS, the following command prepares all native sidecars and
-builds a DMG in one step:
+On Apple Silicon macOS, the following command prepares all native sidecars,
+builds a DMG, and rejects it if it still contains machine-local dylib links:
 
 ```bash
 pnpm build:macos
 ```
+
+> The current macOS output still contains Homebrew-linked native libraries, so
+> `pnpm build:macos` intentionally fails its final portability audit. For a
+> local-only package use `pnpm build:macos:local`; do not publish that DMG.
+> Windows Native DASH is not yet implemented. Details are in the
+> native-dependencies document above.
 
 Build output is located at:
 

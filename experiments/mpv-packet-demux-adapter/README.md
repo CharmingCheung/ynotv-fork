@@ -1,10 +1,10 @@
 # mpv packet demux adapter experiment
 
-This directory contains the isolated Phase C2 proof and the follow-on bounded
-producer/runtime-generation experiment. It does not participate in ynoTV
-playback. The standalone producers use libavformat to turn synthetic C1 media
-into deterministic packet fixtures; the patched mpv demuxer never receives or
-parses MP4.
+This directory began as the isolated Phase C2 proof and now contains the source
+patch required by ynoTV's opt-in Native DASH development path. It is not used by
+normal `pnpm dev` or by the current release bundles. The standalone producers
+use libavformat to turn synthetic C1 media into deterministic packet fixtures;
+the patched mpv demuxer never receives or parses MP4.
 
 The mpv patch is intentionally represented as one new source file, one small
 endian helper header, and a small registration/interrupt patch. Apply it only to mpv commit
@@ -13,6 +13,17 @@ endian helper header, and a small registration/interrupt patch. Apply it only to
 ```sh
 ./apply-to-mpv.sh /path/to/mpv
 ```
+
+The maintained copy and release build live in the separate `ynotv-native`
+repository. Normal application development downloads that versioned artifact
+automatically:
+
+```sh
+pnpm dev
+```
+
+See `docs/native-dependencies.md` for the complete dependency and packaging
+status.
 
 After building that checkout, run the validation suite:
 
