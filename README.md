@@ -192,6 +192,78 @@ the exact application and native commit IDs. They do not consume a
 ---
 
 <details>
+<summary>Windows startup troubleshooting</summary>
+
+## Windows startup troubleshooting
+
+### App closes immediately after launch
+
+ynoTV uses Microsoft Edge WebView2 for its interface. If the app closes as
+soon as it is opened, first inspect the application log:
+
+```powershell
+Get-Content "$env:LOCALAPPDATA\com.ynotv.app\logs\ynotv.log" `
+  -Tail 200 `
+  -ErrorAction SilentlyContinue
+```
+
+An error similar to the following indicates that the installed WebView2
+Runtime is too old or damaged:
+
+```text
+failed to create webview: WebView2 error: WindowsError(
+  Error { code: HRESULT(0x80004002), message: "No such interface supported" }
+)
+```
+
+`0x80004002` is `E_NOINTERFACE`. Check the installed WebView2 versions:
+
+```powershell
+$paths = @(
+  "${env:ProgramFiles(x86)}\Microsoft\EdgeWebView\Application",
+  "$env:LOCALAPPDATA\Microsoft\EdgeWebView\Application"
+)
+
+Get-ChildItem $paths -Directory -ErrorAction SilentlyContinue |
+  Sort-Object { [version]$_.Name } -Descending |
+  Select-Object FullName, Name
+```
+
+Also make sure no environment variable forces the app to use another runtime:
+
+```powershell
+Get-ChildItem Env:WEBVIEW2* -ErrorAction SilentlyContinue
+```
+
+Install or repair the current Microsoft Evergreen WebView2 Runtime. The
+following commands download Microsoft's architecture-detecting bootstrapper
+and run it as administrator:
+
+```powershell
+$installer = "$env:TEMP\MicrosoftEdgeWebView2Setup.exe"
+
+Invoke-WebRequest `
+  -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" `
+  -OutFile $installer
+
+Start-Process `
+  -FilePath $installer `
+  -ArgumentList "/silent /install" `
+  -Verb RunAs `
+  -Wait
+```
+
+Restart Windows after installation and verify that the newest directory under
+`Microsoft\EdgeWebView\Application` is no longer the old version. If the
+bootstrapper cannot update the runtime, use **Installed apps > Microsoft Edge
+WebView2 Runtime > Modify/Repair**, or download the x64 Evergreen Standalone
+Installer from the [official WebView2 download page](https://developer.microsoft.com/en-us/microsoft-edge/webview2/).
+
+</details>
+
+---
+
+<details>
 <summary>Data & File Locations</summary>
 
 ## Data & File Locations
@@ -217,7 +289,7 @@ The database stores channels, categories, EPG programs (7-day window), VOD movie
 Debug logging can be enabled in Settings > Debug. Log output is written to:
 
 ```
-%APPDATA%\com.ynotv.app\logs\app.log
+%LOCALAPPDATA%\com.ynotv.app\logs\ynotv.log
 ```
 
 ### DVR Recordings
