@@ -18,6 +18,7 @@ export const DEFAULT_SHORTCUTS: Record<ShortcutAction, string> = {
     cycleAudio: 'a',
     selectSubtitle: 'j',
     selectAudio: 'a',
+    selectVideo: 'v',
     toggleStats: 'i',
     toggleFullscreen: 'f',
     toggleGuide: 'g',

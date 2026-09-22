@@ -21,6 +21,7 @@ import { getLocalEpisodeList } from '../services/local-library/local-library';
 import { TeamChannelOverlay } from './sports/TeamChannelOverlay';
 import { FailoverChannelOverlay } from './FailoverChannelOverlay';
 import { dvrProgressPercent } from '../hooks/useTimeshift';
+import { AudioTrackIcon, SubtitleTrackIcon, VideoTrackIcon } from './PlayerTrackIcons';
 import './NowPlayingBar.css';
 
 interface NowPlayingBarProps {
@@ -1055,19 +1056,28 @@ export function NowPlayingBar({
                   className={`npb-clean-btn${hasAudioDelay ? ' has-badge' : ''}`}
                   onClick={onShowAudioModal}
                   disabled={!canControl}
-                  title={t('audioLanguage')}
+                  title={t('selectAudioTrack')}
                 >
-                  <TranslateIcon />
+                  <AudioTrackIcon />
                 </button>
-                {onShowQualityModal && <button className="npb-clean-btn" onClick={onShowQualityModal} disabled={!canControl} title="Video Quality"><span style={{ fontWeight: 700 }}>Q</span></button>}
+                {onShowQualityModal && (
+                  <button
+                    className="npb-clean-btn"
+                    onClick={onShowQualityModal}
+                    disabled={!canControl}
+                    title={t('selectVideoTrack')}
+                  >
+                    <VideoTrackIcon />
+                  </button>
+                )}
 
                 <button
                   className="npb-clean-btn"
                   onClick={onShowSubtitleModal}
                   disabled={!canControl}
-                  title={t('subtitlesTracks')}
+                  title={t('selectSubtitle')}
                 >
-                  <SubtitleIcon />
+                  <SubtitleTrackIcon />
                 </button>
 
                 {showHdrQuickToggle && (
@@ -1476,7 +1486,7 @@ export function NowPlayingBar({
                   disabled={!canControl}
                   title={t('selectSubtitle')}
                 >
-                  <SubtitleIcon />
+                  <SubtitleTrackIcon />
                 </button>
                 {showHdrQuickToggle && (
                   <button
@@ -1509,9 +1519,18 @@ export function NowPlayingBar({
                   disabled={!canControl}
                   title={t('selectAudioTrack')}
                 >
-                  <AudioIcon />
+                  <AudioTrackIcon />
                 </button>
-                {onShowQualityModal && <button className="npb-btn" onClick={onShowQualityModal} disabled={!canControl} title="Video Quality"><span style={{ fontWeight: 700 }}>Q</span></button>}
+                {onShowQualityModal && (
+                  <button
+                    className="npb-btn"
+                    onClick={onShowQualityModal}
+                    disabled={!canControl}
+                    title={t('selectVideoTrack')}
+                  >
+                    <VideoTrackIcon />
+                  </button>
+                )}
                 <button
                   className="npb-btn"
                   onClick={onToggleStats}
@@ -1884,41 +1903,6 @@ function StopIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
       <rect x="6" y="6" width="12" height="12" rx="1" />
-    </svg>
-  );
-}
-
-function TranslateIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="m5 8 6 6" />
-      <path d="m4 14 6-6 2-3" />
-      <path d="M2 5h12" />
-      <path d="M7 2v3" />
-      <path d="M11 19h7" />
-      <path d="m13 22 4-8 4 8" />
-      <path d="m15 18 3.5-1.5" />
-    </svg>
-  );
-}
-
-function SubtitleIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="2" y="4" width="20" height="16" rx="2" />
-      <line x1="6" y1="10" x2="12" y2="10" />
-      <line x1="14" y1="10" x2="18" y2="10" />
-      <line x1="6" y1="14" x2="15" y2="14" />
-    </svg>
-  );
-}
-
-function AudioIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M11 5L6 9H2V15H6L11 19V5Z" />
-      <path d="M15.54 8.46C16.4774 9.39764 17.0039 10.6692 17.0039 11.995C17.0039 13.3208 16.4774 14.5924 15.54 15.53" />
-      <path d="M18.13 5.87C19.7981 7.53809 20.744 9.79441 20.744 12.145C20.744 14.4956 19.7981 16.7519 18.13 18.42" />
     </svg>
   );
 }

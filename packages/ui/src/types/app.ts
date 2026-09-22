@@ -47,6 +47,7 @@ export type ShortcutAction =
     | 'cycleAudio'
     | 'selectSubtitle'
     | 'selectAudio'
+    | 'selectVideo'
     | 'toggleStats'
     | 'toggleFullscreen'
     | 'toggleGuide'

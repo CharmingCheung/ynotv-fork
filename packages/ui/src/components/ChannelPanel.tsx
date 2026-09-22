@@ -74,6 +74,7 @@ import { EpgShiftModal } from './EpgShiftModal';
 import { dbEvents } from '../db/sqlite-adapter';
 import { primaryRect } from '../hooks/useMultiview';
 import type { LayoutMode, ViewerSlot, MultiviewEngineMode } from '../hooks/useMultiview';
+import { AudioTrackIcon, SubtitleTrackIcon, VideoTrackIcon } from './PlayerTrackIcons';
 import './ChannelPanel.css';
 
 
@@ -3129,8 +3130,41 @@ export function ChannelPanel({
               )}
             </div>
 
-            {/* Right group: volume, PiP */}
+            {/* Right group: track pickers, volume, PiP */}
             <div className="guide-minibar-group guide-minibar-group-right">
+              {onShowAudioModal && (
+                <button
+                  className="guide-minibar-btn"
+                  onClick={onShowAudioModal}
+                  onDoubleClick={(e) => e.stopPropagation()}
+                  disabled={!mpvReady}
+                  title={i18n.t('player:selectAudioTrack')}
+                >
+                  <AudioTrackIcon size={14} />
+                </button>
+              )}
+              {onShowQualityModal && (
+                <button
+                  className="guide-minibar-btn"
+                  onClick={onShowQualityModal}
+                  onDoubleClick={(e) => e.stopPropagation()}
+                  disabled={!mpvReady}
+                  title={i18n.t('player:selectVideoTrack')}
+                >
+                  <VideoTrackIcon size={14} />
+                </button>
+              )}
+              {onShowSubtitleModal && (
+                <button
+                  className="guide-minibar-btn"
+                  onClick={onShowSubtitleModal}
+                  onDoubleClick={(e) => e.stopPropagation()}
+                  disabled={!mpvReady}
+                  title={i18n.t('player:selectSubtitle')}
+                >
+                  <SubtitleTrackIcon size={14} />
+                </button>
+              )}
               <div className="guide-minibar-volume" onDoubleClick={(e) => e.stopPropagation()}>
                 <button
                   className="guide-minibar-btn"

@@ -470,6 +470,15 @@
   transform: scale(1.1);
   box-shadow: 0 8px 20px rgba(0, 212, 255, 0.3), 0 0 10px rgba(0, 212, 255, 0.2);
 }
+
+.guide-minibar-btn:disabled,
+.guide-minibar-btn:disabled:hover,
+.guide-minibar-btn:disabled:active {
+  cursor: default;
+  opacity: 0.45;
+  transform: none;
+  box-shadow: none;
+}
 .guide-minibar-aspect-item {
   border-radius: 4px;
   cursor: pointer;

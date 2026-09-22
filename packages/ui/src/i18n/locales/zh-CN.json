@@ -4003,6 +4003,7 @@
     "refreshStreams": "刷新流",
     "reloadChannel": "重新加载频道（Q）",
     "selectAudioTrack": "选择音轨（A）",
+    "selectVideoTrack": "选择视频轨（V）",
     "selectSubtitle": "选择字幕（J）",
     "shuffle": "随机播放",
     "startRecording": "开始录制",

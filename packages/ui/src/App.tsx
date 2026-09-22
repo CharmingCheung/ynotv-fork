@@ -4898,6 +4898,7 @@ function useTmdbPresencePoster(
     handleToggleFullscreen,
     handleShowSubtitleModal,
     handleShowAudioModal,
+    handleShowQualityModal,
     handleSeek,
     handleToggleEpgView,
     setActiveView,

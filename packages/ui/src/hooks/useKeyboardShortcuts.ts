@@ -46,6 +46,7 @@ export interface UseKeyboardShortcutsOptions {
     handleToggleFullscreen: () => void;
     handleShowSubtitleModal: () => void;
     handleShowAudioModal: () => void;
+    handleShowQualityModal: () => void;
     handleSeek: (position: number) => void;
     handleToggleEpgView: () => void;
     setActiveView: React.Dispatch<React.SetStateAction<View>>;
@@ -130,6 +131,7 @@ export function useKeyboardShortcuts(options: UseKeyboardShortcutsOptions): void
                 handleToggleFullscreen,
                 handleShowSubtitleModal,
                 handleShowAudioModal,
+                handleShowQualityModal,
                 handleSeek,
                 handleToggleEpgView,
                 setActiveView,
@@ -164,6 +166,9 @@ export function useKeyboardShortcuts(options: UseKeyboardShortcutsOptions): void
             } else if (matches('selectAudio', key, code)) {
                 e.preventDefault();
                 handleShowAudioModal();
+            } else if (matches('selectVideo', key, code)) {
+                e.preventDefault();
+                handleShowQualityModal();
             } else if (matches('toggleGuide', key, code)) {
                 e.preventDefault();
                 setShowControls(true);

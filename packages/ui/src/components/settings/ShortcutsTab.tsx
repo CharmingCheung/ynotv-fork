@@ -18,6 +18,7 @@ const ACTION_LABELS: Record<ShortcutAction, string> = {
     cycleAudio: 'Cycle Audio Track (Legacy)',
     selectSubtitle: 'Select Subtitle (Modal)',
     selectAudio: 'Select Audio Track (Modal)',
+    selectVideo: 'Select Video Track (Modal)',
     toggleStats: 'Show / Hide Stats',
     toggleFullscreen: 'Toggle Fullscreen',
     toggleGuide: 'Toggle Guide',
@@ -48,7 +49,7 @@ const ACTION_LABELS: Record<ShortcutAction, string> = {
 };
 
 const GROUPS: Record<string, ShortcutAction[]> = {
-    'Playback': ['togglePlay', 'seekForward', 'seekBackward', 'toggleMute', 'selectSubtitle', 'selectAudio', 'toggleFullscreen', 'replayLastStream'],
+    'Playback': ['togglePlay', 'seekForward', 'seekBackward', 'toggleMute', 'selectSubtitle', 'selectAudio', 'selectVideo', 'toggleFullscreen', 'replayLastStream'],
     'Navigation': ['channelUp', 'channelDown'],
     'Interface': ['toggleShortcutsOverlay', 'toggleLiveTV', 'toggleGuide', 'toggleTransparentGuide', 'toggleCategories', 'toggleDvr', 'toggleSports', 'toggleCalendar', 'toggleSettings', 'toggleStats', 'focusSearch', 'toggleEpgView', 'close', 'mouseBackNavigation', 'toggleNuvio', 'toggleStrem', 'toggleJellyfin'],
     'Layout': ['layoutMain', 'layoutPip', 'layoutBigBottom', 'layout2x2']
@@ -138,7 +139,11 @@ export function ShortcutsTab({ shortcuts, onShortcutsChange }: ShortcutsTabProps
                             <div className="shortcuts-list">
                                 {actions.map(action => (
                                     <div key={action} className="shortcut-row">
-                                        <span className="shortcut-label">{i18n.t(`settings:shortcuts.actions.${action}`, { defaultValue: ACTION_LABELS[action] })}</span>
+                                        <span className="shortcut-label">
+                                            {action === 'selectVideo'
+                                                ? i18n.t('player:selectVideoTrack').replace(/\s*(?:\(V\)|（V）)$/, '')
+                                                : i18n.t(`settings:shortcuts.actions.${action}`, { defaultValue: ACTION_LABELS[action] })}
+                                        </span>
                                         <button
                                             className={`shortcut-btn ${listeningFor === action ? 'listening' : ''}`}
                                             onClick={() => setListeningFor(action)}

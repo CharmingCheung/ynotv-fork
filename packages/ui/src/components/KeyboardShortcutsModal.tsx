@@ -31,6 +31,7 @@ const GROUPS: ShortcutGroup[] = [
             { action: 'seekBackward', label: 'Seek Backward 10s' },
             { action: 'selectSubtitle', label: 'Select Subtitle' },
             { action: 'selectAudio', label: 'Select Audio Track' },
+            { action: 'selectVideo', label: 'Select Video Track' },
             { action: 'toggleFullscreen', label: 'Toggle Fullscreen' },
             { action: 'toggleStats', label: 'Stream Statistics' },
             { action: 'replayLastStream', label: 'Replay Last Stream' }

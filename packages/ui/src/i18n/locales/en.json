@@ -4003,6 +4003,7 @@
     "refreshStreams": "Refresh streams",
     "reloadChannel": "Reload channel (Q)",
     "selectAudioTrack": "Select audio track (A)",
+    "selectVideoTrack": "Select video track (V)",
     "selectSubtitle": "Select subtitle (J)",
     "shuffle": "Shuffle",
     "startRecording": "Start recording",
