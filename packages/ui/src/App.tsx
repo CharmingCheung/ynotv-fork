@@ -2775,6 +2775,17 @@ function useTmdbPresencePoster(
       setCategoriesOpen(false);
     }
   }, [categorySidebarAutohide, activeView, setCategoriesOpen]);
+
+  // Starting a search used to force the category sidebar open so the filtered category
+  // list was on screen. With auto-hide on that sidebar is supposed to stay out of the way
+  // until the user reaches for the left edge, so a search (typing, history, remote or the
+  // search modals) must not slide it out over the guide — only the hover handle opens it.
+  // When auto-hide is off, the classic persistent sidebar still opens exactly as before.
+  // Reads the setting imperatively so the listener-style call site (the phone remote's
+  // search input) can't capture a stale value from its empty-dep effect.
+  const revealCategoriesForSearch = useCallback(() => {
+    if (!useSettingsStore.getState().categorySidebarAutohide) setCategoriesOpen(true);
+  }, [setCategoriesOpen]);
   const [isTransparentGuideZapActive, setIsTransparentGuideZapActive] = useState(false);
   const [liveTvDesign, setLiveTvDesign] = useState<'v1' | 'v2' | 'v3'>('v3');
   // Design version comes from the settings store (hydration latches the
@@ -3269,7 +3280,7 @@ function useTmdbPresencePoster(
       setSearchQuery(q);
       setShowControllerSearch(false);
       if (q.trim()) {
-        setCategoriesOpen(true);
+        revealCategoriesForSearch();
         if (activeViewRef.current !== 'guide') {
           setActiveView('guide');
         }
@@ -6112,7 +6123,7 @@ function useTmdbPresencePoster(
                     setForceAdvancedFilters(false);
                   }
                   if (value.length >= 1) {
-                    setCategoriesOpen(true);
+                    revealCategoriesForSearch();
                     if (activeView !== 'guide') {
                       setActiveView('guide');
                     }
@@ -6121,7 +6132,7 @@ function useTmdbPresencePoster(
                 onFocus={() => {
                   setShowTitlebarHistory(true);
                   if (!isSearchMode && activeView !== 'guide') {
-                    setCategoriesOpen(true);
+                    revealCategoriesForSearch();
                     setActiveView('guide');
                   }
                 }}
@@ -6168,7 +6179,7 @@ function useTmdbPresencePoster(
                       onMouseDown={() => {
                         setSearchQuery(item);
                         setShowTitlebarHistory(false);
-                        setCategoriesOpen(true);
+                        revealCategoriesForSearch();
                         if (activeView !== 'guide') {
                           setActiveView('guide');
                         }
@@ -6865,7 +6876,7 @@ function useTmdbPresencePoster(
           setForceAdvancedFilters(true);
           // Set the search query and activate search
           setSearchQuery(config.query);
-          setCategoriesOpen(true);
+          revealCategoriesForSearch();
           if (activeView !== 'guide') {
             setActiveView('guide');
           }
@@ -6896,7 +6907,7 @@ function useTmdbPresencePoster(
           }
           setForceAdvancedFilters(false);
           setSearchQuery(query);
-          setCategoriesOpen(true);
+          revealCategoriesForSearch();
           if (activeView !== 'guide') {
             setActiveView('guide');
           }
@@ -7317,7 +7328,7 @@ function useTmdbPresencePoster(
           onSearchChannels={(query) => {
             setSearchQuery(query);
             setActiveView('guide');
-            setCategoriesOpen(true);
+            revealCategoriesForSearch();
             setTimeout(() => {
               if (titleBarSearchRef.current) {
                 titleBarSearchRef.current.focus();

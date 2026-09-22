@@ -17,6 +17,7 @@ import type { LayoutMode } from './useMultiview';
 import type { View } from './useNavigation';
 import { Bridge } from '../services/tauri-bridge';
 import { parseCategoryIds } from './useChannels';
+import { useSettingsStore } from '../stores/settingsStore';
 
 export interface UseKeyboardShortcutsOptions {
     // --- Current state values (accessed via latest ref pattern) ---
@@ -274,7 +275,12 @@ export function useKeyboardShortcuts(options: UseKeyboardShortcutsOptions): void
                 if (activeView !== 'guide') {
                     setActiveView('guide');
                 }
-                setCategoriesOpen(true);
+                // Auto-hide keeps the category sidebar out of the way until the user reaches
+                // for the left edge, so focusing search must not slide it open. Read from the
+                // store directly: this listener is mounted once and would capture a stale value.
+                if (!useSettingsStore.getState().categorySidebarAutohide) {
+                    setCategoriesOpen(true);
+                }
                 if (titleBarSearchRef.current) {
                     titleBarSearchRef.current.focus();
                 }
