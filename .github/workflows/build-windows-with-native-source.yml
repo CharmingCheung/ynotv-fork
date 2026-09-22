@@ -1,0 +1,145 @@
+name: Build Windows app with native source
+
+on:
+  workflow_dispatch:
+    inputs:
+      native_ref:
+        description: ynotv-native branch, tag, or commit to build
+        required: true
+        default: master
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  YNOTV_NATIVE_REF: ${{ inputs.native_ref }}
+
+concurrency:
+  group: native-source-windows-${{ github.ref }}-${{ inputs.native_ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-x64:
+    name: Windows x64 app
+    runs-on: windows-2025
+    steps:
+      - name: Checkout ynoTV
+        uses: actions/checkout@v5
+
+      - name: Checkout ynotv-native source
+        uses: actions/checkout@v5
+        with:
+          repository: CharmingCheung/ynotv-native
+          ref: ${{ inputs.native_ref }}
+          path: ynotv-native
+
+      - name: Resolve native source revision
+        id: native-revision
+        shell: pwsh
+        run: |
+          "sha=$(git -C ynotv-native rev-parse HEAD)" >> $env:GITHUB_OUTPUT
+
+      - name: Restore Native DASH runtime
+        id: native-runtime-cache
+        uses: actions/cache@v4
+        with:
+          path: ynotv-native/.work/windows/stage
+          key: native-runtime-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.native-revision.outputs.sha }}
+
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/app/src-tauri -> target
+          cache-on-failure: true
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            git
+            p7zip
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-meson
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-libgfortran
+            mingw-w64-ucrt-x86_64-ffmpeg
+            mingw-w64-ucrt-x86_64-libplacebo
+            mingw-w64-ucrt-x86_64-openssl
+            mingw-w64-ucrt-x86_64-vulkan-headers
+            mingw-w64-ucrt-x86_64-vulkan-loader
+            mingw-w64-ucrt-x86_64-tools
+            mingw-w64-ucrt-x86_64-llvm-tools
+
+      - name: Verify FFmpeg development files
+        if: steps.native-runtime-cache.outputs.cache-hit != 'true'
+        shell: msys2 {0}
+        run: |
+          if ! pkg-config --exists libavcodec libavformat libavutil; then
+            pacman --noconfirm -S --overwrite '*' \
+              mingw-w64-ucrt-x86_64-libgfortran \
+              mingw-w64-ucrt-x86_64-ffmpeg
+          fi
+          pkg-config --print-errors --exists libavcodec libavformat libavutil
+
+      - name: Install JavaScript dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Build Native DASH runtime from source
+        if: steps.native-runtime-cache.outputs.cache-hit != 'true'
+        shell: msys2 {0}
+        run: |
+          version=$(tr -d '[:space:]' < ynotv-native/VERSION)
+          ./ynotv-native/scripts/build-windows.sh "$version"
+
+      - name: Install locally built Native DASH runtime
+        shell: pwsh
+        run: node scripts/setup-native-runtime.mjs --from ynotv-native/.work/windows/stage
+
+      - name: Build sidecars
+        shell: msys2 {0}
+        run: bash scripts/download-mpv-tauri.sh
+
+      - name: Build FFmpeg sidecar
+        shell: pwsh
+        run: node packages/app/scripts/download-ffmpeg.js
+
+      - name: Record native source revision
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build-metadata | Out-Null
+          @(
+            "app=$(git rev-parse HEAD)"
+            "native=$(git -C ynotv-native rev-parse HEAD)"
+            "native_ref=$env:YNOTV_NATIVE_REF"
+          ) | Set-Content build-metadata/revisions.txt
+
+      - name: Build Windows app
+        shell: pwsh
+        env:
+          YNOTV_NATIVE_DASH_LIBMPV_DIR: ${{ github.workspace }}/packages/app/src-tauri/native-dash-libmpv
+          YNOTV_NATIVE_DASH_PACKET_PRODUCER: ${{ github.workspace }}/packages/app/src-tauri/native-dash-libmpv/cenc_component_producer.exe
+          VITE_TRAKT_CLIENT_ID: ${{ secrets.TRAKT_CLIENT_ID }}
+          VITE_TRAKT_CLIENT_SECRET: ${{ secrets.TRAKT_CLIENT_SECRET }}
+          VITE_OPENSUBTITLES_API_KEY: ${{ secrets.OPENSUBTITLES_API_KEY }}
+        run: |
+          $configPath = Join-Path $env:RUNNER_TEMP 'tauri-ci.conf.json'
+          '{"bundle":{"createUpdaterArtifacts":false}}' | Set-Content -Path $configPath -Encoding utf8
+          pnpm tauri build --bundles nsis --ci --config $configPath
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v6
+        with:
+          name: ynotv-windows-x64-native-source
+          path: |
+            packages/app/src-tauri/target/release/bundle/nsis/*.exe
+            build-metadata/revisions.txt
+          if-no-files-found: error
+          retention-days: 14

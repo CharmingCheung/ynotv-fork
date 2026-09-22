@@ -5,9 +5,53 @@ on:
     branches: [custom_dev, main]
   pull_request:
 
+permissions:
+  contents: read
+  pull-requests: read
+
+# A push to a branch with an open PR fires both events. Give both runs the same
+# key so the newer PR run cancels the duplicate push run (and stale commits).
+concurrency:
+  group: ci-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
-  frontend:
+  changes:
     runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+      rust: ${{ steps.filter.outputs.rust }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            frontend:
+              - '.github/workflows/ci.yml'
+              - 'package.json'
+              - '.npmrc'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - 'tsconfig.json'
+              - 'scripts/**'
+              - 'packages/*/package.json'
+              - 'packages/app/src/**'
+              - 'packages/app/tsconfig*.json'
+              - 'packages/app/vite.config.ts'
+              - 'packages/core/**'
+              - 'packages/local-adapter/**'
+              - 'packages/ui/**'
+            rust:
+              - '.github/workflows/ci.yml'
+              - 'scripts/setup-native-runtime.mjs'
+              - 'packages/app/src-tauri/**'
+
+  frontend:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -15,18 +59,25 @@ jobs:
         with:
           node-version: 20
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - run: pnpm install --frozen-lockfile --prefer-offline
       - run: pnpm typecheck
 
   rust:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     strategy:
       fail-fast: false
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/app/src-tauri -> target
+          cache-on-failure: true
       - name: Install macOS native headers
         if: runner.os == 'macOS'
         run: brew install mpv pkg-config
