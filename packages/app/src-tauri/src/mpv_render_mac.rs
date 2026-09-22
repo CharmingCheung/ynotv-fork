@@ -297,7 +297,21 @@ pub fn resize_to(css: MpvGeometry) -> Result<(), String> {
             },
         };
         view_as_view.setFrame(frame);
-        let mask: usize = 0;
+        // Preview/multiview surfaces must keep their explicitly calculated
+        // frame, but a full-window surface should follow its parent natively.
+        // resize_to used to clear the autoresizing mask unconditionally. After
+        // returning from an embedded preview that left the GL view frozen at
+        // the then-current window size, so later window resizes exposed a
+        // cropped or enlarged video until another mode switch recalculated it.
+        let fills_parent = native.x.abs() <= 0.5
+            && native.y.abs() <= 0.5
+            && (native.width - parent_bounds.size.width).abs() <= 0.5
+            && (native.height - parent_bounds.size.height).abs() <= 0.5;
+        let mask = if fills_parent {
+            NS_VIEW_AUTORESIZE_WIDTH | NS_VIEW_AUTORESIZE_HEIGHT
+        } else {
+            0
+        };
         let _: () = msg_send![view_as_view, setAutoresizingMask: mask];
         if let Some(gl_ctx) = embed.view.openGLContext() {
             let _: () = msg_send![&*gl_ctx, update];
