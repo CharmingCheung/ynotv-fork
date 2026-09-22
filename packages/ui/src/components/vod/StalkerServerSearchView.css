@@ -1,0 +1,147 @@
+/* Inline portal-search view: pickers, provider counts and a virtualized result grid,
+   rendered as the Movies/Series page content (not a modal). */
+.stalker-search-view {
+    display: flex;
+    flex-direction: column;
+    /* Fill the page content box rather than a percentage of it, so the footer is
+       always laid out inside the visible area. */
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: hidden;
+    color: var(--text-primary, #fff);
+}
+
+.stalker-search-empty {
+    padding: 2rem 1.1rem;
+    color: var(--text-secondary, #aaa);
+}
+
+.stalker-search-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 0.75rem;
+    padding: 0.9rem 1.1rem;
+    border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
+    flex-shrink: 0;
+}
+
+.stalker-search-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    font-size: 0.78rem;
+    color: var(--text-secondary, #aaa);
+    min-width: 180px;
+}
+
+.stalker-search-field select,
+.stalker-search-field input {
+    background: var(--bg-tertiary, #121212);
+    color: var(--text-primary, #fff);
+    border: 1px solid var(--border-color, rgba(255, 255, 255, 0.15));
+    border-radius: 8px;
+    padding: 0.45rem 0.6rem;
+    font-size: 0.9rem;
+    outline: none;
+}
+
+.stalker-search-field select option {
+    background: var(--bg-tertiary, #121212);
+    color: var(--text-primary, #fff);
+}
+
+.stalker-search-field input:focus,
+.stalker-search-field select:focus {
+    border-color: var(--accent-color, #4a9eff);
+}
+
+.stalker-search-query {
+    flex: 1 1 260px;
+}
+
+.stalker-search-go {
+    height: 36px;
+    padding: 0 1.1rem;
+    border-radius: 8px;
+    border: 1px solid var(--accent-color, #4a9eff);
+    background: var(--accent-color, #4a9eff);
+    color: #fff;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.stalker-search-go:disabled {
+    opacity: 0.55;
+    cursor: default;
+}
+
+.stalker-search-status {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.6rem 1.1rem;
+    font-size: 0.85rem;
+    color: var(--text-secondary, #aaa);
+    min-height: 1.6rem;
+    flex-shrink: 0;
+}
+
+.stalker-search-note {
+    opacity: 0.75;
+}
+
+.stalker-search-warning {
+    color: var(--warning-color, #d9a521);
+}
+
+.stalker-search-error {
+    color: var(--danger-color, #e5484d);
+}
+
+.stalker-search-results {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 0.9rem 1.1rem;
+}
+
+/* Cards fill their grid column. Without this they keep the size-variant width
+   (medium = 160px), which is wider than the column and produced a horizontal
+   scrollbar plus overlapping cards. */
+.stalker-search-results .media-card {
+    width: 100%;
+    height: 100%;
+}
+
+.stalker-search-footer {
+    display: flex;
+    justify-content: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1.1rem;
+    border-top: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
+    min-height: 1rem;
+    flex-shrink: 0;
+}
+
+.stalker-search-more {
+    padding: 0.5rem 1.1rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color, rgba(255, 255, 255, 0.2));
+    background: var(--bg-tertiary, #121212);
+    color: var(--text-primary, #fff);
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.stalker-search-more:hover:not(:disabled) {
+    background: var(--bg-hover, rgba(255, 255, 255, 0.1));
+}
+
+.stalker-search-more:disabled {
+    opacity: 0.55;
+    cursor: default;
+}

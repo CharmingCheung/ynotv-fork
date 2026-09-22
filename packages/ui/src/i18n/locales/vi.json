@@ -2875,7 +2875,11 @@
         "pageConcurrencyDesc": "Số trang nội dung được tải song song khi bạn mở một danh mục phim hoặc bộ phim VOD. Cổng Stalker trả về 14 mục mỗi trang và 4 là giá trị mặc định an toàn được khuyến nghị. Giá trị cao hơn tải nhanh hơn nhưng gửi nhiều yêu cầu đồng thời hơn tới nhà cung cấp và có thể dẫn đến việc tài khoản của bạn bị khóa hoặc cấm — bạn chịu trách nhiệm về giá trị đã đặt.",
         "categoryCache": "Thời gian bộ nhớ đệm danh mục VOD",
         "categoryCacheDesc": "Thời gian các mục của danh mục đã mở được tái sử dụng trước khi làm mới lại từ cổng.",
-        "cacheAlwaysRefresh": "Luôn làm mới khi mở (không dùng bộ nhớ đệm)"
+        "cacheAlwaysRefresh": "Luôn làm mới khi mở (không dùng bộ nhớ đệm)",
+        "serverSearch": "Tìm kiếm trên máy chủ",
+        "serverSearchConsTitle": "Lưu ý",
+        "serverSearchDesc": "Thêm thẻ “Stalker Server Search” vào thanh bên của Phim và Series, tìm trong danh mục của chính cổng thay vì chỉ những gì đã tải cục bộ. Chỉ dành cho cổng MAC (Stalker).",
+        "serverSearchCons": "• Không phải cổng nào cũng hỗ trợ; cổng bỏ qua tham số tìm kiếm sẽ được báo là không hỗ trợ thay vì đoán (phát hiện ở lần tìm đầu tiên).\n• Chỉ phim và series — không thể tìm kênh trực tiếp theo cách này.\n• Truy vấn nhiều từ được so khớp nguyên văn: các từ không nằm cạnh nhau trong tiêu đề, hoặc khác thứ tự, có thể trả về ít kết quả hoặc không có; khi đó sẽ tìm theo từ dài nhất (gần đúng).\n• Tìm kiếm gửi tới cổng nên chậm hơn tìm kiếm cục bộ, cần cổng trực tuyến và có thể hết thời gian chờ trên máy chủ bận hoặc giới hạn.\n• Kết quả không được lọc theo danh mục bạn đã tắt, và các tiêu đề trả về được lưu vào thư viện của bạn để có thể phát."
       },
       "sourcesTitle": "Nguồn",
       "syncChannels": "Đồng Bộ Kênh",
@@ -5114,7 +5118,21 @@
     "cleanAllUnavailableBtn": "Xóa {{count}} mục bị thiếu",
     "episodeAlreadyInPlaylistMsg": "{{title}} đã có trong {{name}}. Vẫn thêm?",
     "allEpisodesAlreadyInPlaylistMsg": "Tất cả {{count}} tập đã chọn đều đã có trong {{name}}. Vẫn thêm?",
-    "someEpisodesAlreadyInPlaylistMsg": "{{count}} trong {{total}} tập đã chọn đã có trong {{name}}. Vẫn thêm?"
+    "someEpisodesAlreadyInPlaylistMsg": "{{count}} trong {{total}} tập đã chọn đã có trong {{name}}. Vẫn thêm?",
+    "stalkerServerSearchTitle": "Tìm kiếm trên máy chủ",
+    "stalkerServerSearchSource": "Máy chủ",
+    "stalkerServerSearchCategory": "Danh mục",
+    "stalkerServerSearchQuery": "Tìm kiếm",
+    "stalkerServerSearchMoreOnServer": "Thêm kết quả trên máy chủ này",
+    "stalkerServerSearchMore": "Hiện thêm kết quả",
+    "stalkerServerSearchTooMany": "Quá nhiều kết quả — hãy chọn danh mục hoặc từ dài hơn",
+    "stalkerServerSearchUnsupported": "Máy chủ này không hỗ trợ tìm kiếm nên đã trả về toàn bộ danh mục",
+    "stalkerServerSearchNoMatches": "Không có gì trên máy chủ này khớp với \"{{query}}\"",
+    "stalkerServerSearchMatchingPhrase": "Không có kết quả khớp chính xác — đang hiển thị \"{{phrase}}\"",
+    "stalkerServerSearchMatchingAllWords": "Không có kết quả khớp chính xác cho các từ của bạn — đang hiển thị tiêu đề chứa tất cả các từ đó",
+    "stalkerServerSearchNoSources": "Không tìm thấy nguồn Stalker nào đang bật. Hãy thêm trong Cài đặt hoặc tắt tính năng này.",
+    "stalkerServerSearchTab": "Stalker Tìm kiếm trên máy chủ",
+    "stalkerServerSearchLoadAllResults": "Tải tất cả kết quả"
   },
   "probe": {
     "title": "Kiểm tra luồng phát kênh và trình kiểm tra IPTV",

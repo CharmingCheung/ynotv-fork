@@ -334,6 +334,34 @@
 }
 
 /* Small size adjustments */
+/*
+ * Category line (Stalker Server Search only): one extra line under the meta row, so the
+ * strip is taller and the card with it. `--with-category` is what carries that height so
+ * a grid that passes no category labels keeps the exact geometry it had — and the grid
+ * that does pass them has to add the same amount to its row estimate.
+ */
+.media-card--with-category .media-card__info {
+  height: 46px;
+}
+
+.media-card__category {
+  font-size: 0.625rem;
+  color: var(--text-muted, rgba(255, 255, 255, 0.55));
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.media-card--small.media-card--with-category .media-card__info {
+  height: 44px;
+}
+
+.media-card--small .media-card__category {
+  font-size: 0.5625rem;
+}
+
 .media-card--small .media-card__info {
   height: 30px;
   padding: 4px 6px 2px;

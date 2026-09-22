@@ -1149,7 +1149,11 @@
         "pageConcurrencyDesc": "عدد صفحات المحتوى التي يتم جلبها بالتوازي عند فتح فئة أفلام أو مسلسلات VOD. تُرجع بوابات Stalker 14 عنصرًا في كل صفحة، و4 هي القيمة الآمنة الافتراضية الموصى بها. القيم الأعلى تحمّل أسرع لكنها ترسل طلبات متزامنة أكثر إلى مزوّدك وقد تؤدي إلى حظر حسابك أو منعه — أنت مسؤول عن القيمة التي تضبطها.",
         "categoryCache": "مؤقّت تخزين فئات VOD",
         "categoryCacheDesc": "المدة التي تُعاد فيها استخدام عناصر الفئة المفتوحة قبل تحديثها من البوابة مرة أخرى.",
-        "cacheAlwaysRefresh": "التحديث دائمًا عند الفتح (بدون تخزين مؤقت)"
+        "cacheAlwaysRefresh": "التحديث دائمًا عند الفتح (بدون تخزين مؤقت)",
+        "serverSearch": "البحث في الخادم",
+        "serverSearchConsTitle": "ضع في الحسبان",
+        "serverSearchDesc": "يضيف تبويب «Stalker Server Search» إلى الشريط الجانبي لصفحتي الأفلام والمسلسلات، ليبحث في كتالوج البوابة نفسها بدلًا من المحتوى المحمّل محليًا فقط. يعمل مع بوابات MAC (Stalker) فقط.",
+        "serverSearchCons": "• ليست كل بوابة تدعمها؛ البوابة التي تتجاهل معامل البحث يُبلّغ عنها كغير مدعومة بدلًا من التخمين (يُكتشف ذلك عند أول بحث).\n• للأفلام والمسلسلات فقط — لا يمكن البحث في القنوات المباشرة بهذه الطريقة.\n• تُطابق الاستعلامات متعددة الكلمات حرفيًا: الكلمات غير المتجاورة في العنوان، أو بترتيب مختلف، قد تُرجع نتائج أقل أو لا شيء، وعندها يُبحث بأطول كلمة (تقريبي).\n• البحث يجري على البوابة، لذا هو أبطأ من البحث المحلي، ويتطلب أن تكون البوابة متاحة، وقد ينتهي بمهلة على خادم مزدحم أو محدود الطلبات.\n• لا تُفلتر النتائج حسب الفئات المعطّلة لديك، وتُحفظ العناوين التي تُرجعها في مكتبتك حتى يمكن تشغيلها."
       },
       "sourcesTitle": "المصادر",
       "syncChannels": "مزامنة القنوات",
@@ -3539,7 +3543,21 @@
     "cleanAllUnavailableBtn": "إزالة {{count}} عنصر مفقود",
     "episodeAlreadyInPlaylistMsg": "{{title}} موجود بالفعل في {{name}}. هل تريد إضافته على أي حال؟",
     "allEpisodesAlreadyInPlaylistMsg": "جميع الحلقات {{count}} المحددة موجودة بالفعل في {{name}}. هل تريد إضافتها على أي حال؟",
-    "someEpisodesAlreadyInPlaylistMsg": "{{count}} من أصل {{total}} حلقة محددة موجودة بالفعل في {{name}}. هل تريد الإضافة على أي حال؟"
+    "someEpisodesAlreadyInPlaylistMsg": "{{count}} من أصل {{total}} حلقة محددة موجودة بالفعل في {{name}}. هل تريد الإضافة على أي حال؟",
+    "stalkerServerSearchTitle": "البحث في الخادم",
+    "stalkerServerSearchSource": "الخادم",
+    "stalkerServerSearchCategory": "الفئة",
+    "stalkerServerSearchQuery": "بحث",
+    "stalkerServerSearchMoreOnServer": "مزيد من النتائج على هذا الخادم",
+    "stalkerServerSearchMore": "عرض مزيد من النتائج",
+    "stalkerServerSearchTooMany": "نتائج كثيرة جدًا للتحميل — اختر فئة أو كلمة أطول",
+    "stalkerServerSearchUnsupported": "هذا الخادم لا يدعم البحث، لذلك تم إرجاع كتالوجه بالكامل",
+    "stalkerServerSearchNoMatches": "لا شيء على هذا الخادم يطابق \"{{query}}\"",
+    "stalkerServerSearchMatchingPhrase": "لا تطابق تام لكلماتك — يتم عرض \"{{phrase}}\"",
+    "stalkerServerSearchMatchingAllWords": "لا تطابق تام لكلماتك — يتم عرض العناوين التي تحتوي على كل هذه الكلمات",
+    "stalkerServerSearchNoSources": "لم يتم العثور على مصدر Stalker مُفعَّل. أضف واحدًا في الإعدادات أو أوقف هذا الخيار.",
+    "stalkerServerSearchTab": "Stalker البحث في الخادم",
+    "stalkerServerSearchLoadAllResults": "تحميل كل النتائج"
   },
   "dvr": {
     "scheduleOptionsTitle": "جدولة التسجيل",

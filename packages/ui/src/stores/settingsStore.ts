@@ -633,6 +633,8 @@ export interface SettingsState {
   setStalkerVodPageConcurrency: (concurrency: number) => void;
   stalkerCategoryCacheMinutes: number;
   setStalkerCategoryCacheMinutes: (minutes: number) => void;
+  stalkerServerSearchEnabled: boolean;
+  setStalkerServerSearchEnabled: (enabled: boolean) => void;
   failoverGroupShowSource: boolean;
   setFailoverGroupShowSource: (enabled: boolean) => void;
   failoverAlwaysPlayPrimary: boolean;
@@ -1630,6 +1632,13 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     const clamped = Math.min(10080, Math.max(0, Math.round(minutes) || 0));
     set({ stalkerCategoryCacheMinutes: clamped });
     persistSettings({ stalkerCategoryCacheMinutes: clamped });
+  },
+  // Off by default: this only means anything on MAC portals, and it puts an extra
+  // button on the Movies/Series pages, so it is opt-in per install.
+  stalkerServerSearchEnabled: false,
+  setStalkerServerSearchEnabled: (enabled) => {
+    set({ stalkerServerSearchEnabled: enabled });
+    persistSettings({ stalkerServerSearchEnabled: enabled });
   },
   failoverGroupShowSource: false,
   setFailoverGroupShowSource: (enabled) => {

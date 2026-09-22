@@ -1149,7 +1149,11 @@
         "pageConcurrencyDesc": "VOD मूवी या सीरीज़ श्रेणी खोलने पर कितने कंटेंट पेज एक साथ लाए जाते हैं। Stalker पोर्टल प्रति पेज 14 आइटम लौटाते हैं, और 4 अनुशंसित सुरक्षित डिफ़ॉल्ट है। अधिक मान तेज़ी से लोड होते हैं लेकिन आपके प्रदाता को अधिक एक साथ अनुरोध भेजते हैं और आपके खाते के ब्लॉक या प्रतिबंध का कारण बन सकते हैं — आप सेट किए गए मान के लिए स्वयं ज़िम्मेदार हैं।",
         "categoryCache": "VOD श्रेणी कैश टाइमर",
         "categoryCacheDesc": "खुली श्रेणी के आइटम पोर्टल से दोबारा रीफ़्रेश होने से पहले कितने समय तक पुनः उपयोग किए जाते हैं।",
-        "cacheAlwaysRefresh": "खोलने पर हमेशा रीफ़्रेश करें (कोई कैश नहीं)"
+        "cacheAlwaysRefresh": "खोलने पर हमेशा रीफ़्रेश करें (कोई कैश नहीं)",
+        "serverSearch": "सर्वर खोज",
+        "serverSearchConsTitle": "ध्यान रखें",
+        "serverSearchDesc": "फ़िल्मों और सीरीज़ की साइडबार में «Stalker Server Search» टैब जोड़ता है, जो केवल लोकल में लोड की गई सामग्री के बजाय पोर्टल की अपनी सूची में खोजता है। केवल MAC (Stalker) पोर्टल के लिए।",
+        "serverSearchCons": "• हर पोर्टल इसका समर्थन नहीं करता; जो पोर्टल खोज पैरामीटर को अनदेखा करता है उसे अनुमान लगाने के बजाय असमर्थित बताया जाता है (पहली खोज पर पता चलता है)।\n• केवल फ़िल्में और सीरीज़ — लाइव चैनल इस तरह खोजे नहीं जा सकते।\n• कई शब्दों वाली क्वेरी का मिलान शब्दशः होता है: जो शब्द शीर्षक में एक-दूसरे के पास नहीं हैं, या अलग क्रम में हैं, वे कम या कोई परिणाम नहीं दे सकते; तब सबसे लंबे शब्द से खोजा जाता है (अनुमानित)।\n• खोज पोर्टल पर होती है, इसलिए यह लोकल खोज से धीमी है, पोर्टल के ऑनलाइन होने पर निर्भर है, और व्यस्त या सीमित सर्वर पर टाइमआउट हो सकती है।\n• परिणाम आपकी बंद श्रेणियों से नहीं छाँटे जाते, और लौटाए गए शीर्षक चलाने योग्य बनाने के लिए आपकी लाइब्रेरी में सहेजे जाते हैं।"
       },
       "sourcesTitle": "स्रोत",
       "syncChannels": "चैनल सिंक करें",
@@ -3539,7 +3543,21 @@
     "cleanAllUnavailableBtn": "{{count}} गुम आइटम हटाएँ",
     "episodeAlreadyInPlaylistMsg": "{{title}} पहले से {{name}} में मौजूद है। फिर भी जोड़ें?",
     "allEpisodesAlreadyInPlaylistMsg": "सभी {{count}} चयनित एपिसोड पहले से {{name}} में मौजूद हैं। फिर भी जोड़ें?",
-    "someEpisodesAlreadyInPlaylistMsg": "{{total}} चयनित एपिसोड में से {{count}} पहले से {{name}} में मौजूद हैं। फिर भी जोड़ें?"
+    "someEpisodesAlreadyInPlaylistMsg": "{{total}} चयनित एपिसोड में से {{count}} पहले से {{name}} में मौजूद हैं। फिर भी जोड़ें?",
+    "stalkerServerSearchTitle": "सर्वर खोज",
+    "stalkerServerSearchSource": "सर्वर",
+    "stalkerServerSearchCategory": "श्रेणी",
+    "stalkerServerSearchQuery": "खोजें",
+    "stalkerServerSearchMoreOnServer": "इस सर्वर पर और परिणाम",
+    "stalkerServerSearchMore": "और परिणाम दिखाएँ",
+    "stalkerServerSearchTooMany": "लोड करने के लिए बहुत अधिक परिणाम — कोई श्रेणी या लंबा शब्द चुनें",
+    "stalkerServerSearchUnsupported": "यह सर्वर खोज का समर्थन नहीं करता, इसलिए पूरी सूची लौटाई गई",
+    "stalkerServerSearchNoMatches": "इस सर्वर पर \"{{query}}\" से कुछ मेल नहीं खाता",
+    "stalkerServerSearchMatchingPhrase": "सटीक मेल नहीं — \"{{phrase}}\" दिखाया जा रहा है",
+    "stalkerServerSearchMatchingAllWords": "आपके शब्दों का सटीक मेल नहीं मिला — ऐसे शीर्षक दिखाए जा रहे हैं जिनमें ये सभी शब्द हैं",
+    "stalkerServerSearchNoSources": "कोई सक्षम Stalker स्रोत नहीं मिला। सेटिंग्स में जोड़ें या इसे बंद करें।",
+    "stalkerServerSearchTab": "Stalker सर्वर खोज",
+    "stalkerServerSearchLoadAllResults": "सभी परिणाम लोड करें"
   },
   "dvr": {
     "scheduleOptionsTitle": "रिकॉर्डिंग शेड्यूल करें",

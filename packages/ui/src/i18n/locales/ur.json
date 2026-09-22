@@ -1149,7 +1149,11 @@
         "pageConcurrencyDesc": "VOD فلم یا سیریز کا زمرہ کھولنے پر کتنے مواد کے صفحات بیک وقت حاصل کیے جاتے ہیں۔ Stalker پورٹلز فی صفحہ 14 آئٹم لوٹاتے ہیں، اور 4 تجویز کردہ محفوظ ڈیفالٹ ہے۔ زیادہ اقدار تیزی سے لوڈ ہوتی ہیں لیکن آپ کے فراہم کنندہ کو زیادہ بیک وقت درخواستیں بھیجتی ہیں اور آپ کے اکاؤنٹ کے بلاک یا پابندی کا سبب بن سکتی ہیں — آپ خود سیٹ کی گئی قدر کے ذمہ دار ہیں۔",
         "categoryCache": "VOD زمرہ کیش ٹائمر",
         "categoryCacheDesc": "کھلے ہوئے زمرے کی آئٹمز پورٹل سے دوبارہ تازہ ہونے سے پہلے کتنی دیر تک دوبارہ استعمال ہوتی ہیں۔",
-        "cacheAlwaysRefresh": "کھولنے پر ہمیشہ تازہ کریں (کوئی کیش نہیں)"
+        "cacheAlwaysRefresh": "کھولنے پر ہمیشہ تازہ کریں (کوئی کیش نہیں)",
+        "serverSearch": "سرور تلاش",
+        "serverSearchConsTitle": "ذہن میں رکھیں",
+        "serverSearchDesc": "فلموں اور سیریز کی سائیڈبار میں «Stalker Server Search» ٹیب شامل کرتا ہے، جو صرف مقامی طور پر لوڈ شدہ مواد کے بجائے پورٹل کے اپنے کیٹلاگ میں تلاش کرتا ہے۔ صرف MAC (Stalker) پورٹلز کے لیے۔",
+        "serverSearchCons": "• ہر پورٹل اسے سپورٹ نہیں کرتا؛ جو پورٹل سرچ پیرامیٹر کو نظرانداز کرے اسے اندازہ لگانے کے بجائے غیر معاون بتا دیا جاتا ہے (پہلی تلاش پر پتہ چلتا ہے)۔\n• صرف فلمیں اور سیریز — لائیو چینلز اس طرح تلاش نہیں کیے جا سکتے۔\n• کئی الفاظ کی تلاش لفظی طور پر میچ ہوتی ہے: جو الفاظ عنوان میں ساتھ ساتھ نہ ہوں یا ترتیب مختلف ہو، وہ کم یا کوئی نتیجہ نہیں دے سکتے؛ پھر سب سے لمبے لفظ سے تلاش ہوتی ہے (تخمینی)۔\n• تلاش پورٹل پر ہوتی ہے، اس لیے یہ مقامی تلاش سے سست ہے، پورٹل کے دستیاب ہونے کی ضرورت ہے، اور مصروف یا محدود سرور پر وقت ختم ہو سکتا ہے۔\n• نتائج آپ کی بند کیٹیگریز کے مطابق نہیں چھانٹے جاتے، اور واپس آنے والے عنوانات آپ کی لائبریری میں محفوظ ہو جاتے ہیں تاکہ چلائے جا سکیں۔"
       },
       "sourcesTitle": "ذرائع",
       "syncChannels": "چینلز سنک کریں",
@@ -3539,7 +3543,21 @@
     "cleanAllUnavailableBtn": "{{count}} غائب آئٹمز ہٹائیں",
     "episodeAlreadyInPlaylistMsg": "{{title}} پہلے سے {{name}} میں موجود ہے۔ پھر بھی شامل کریں؟",
     "allEpisodesAlreadyInPlaylistMsg": "تمام {{count}} منتخب اقساط پہلے سے {{name}} میں موجود ہیں۔ پھر بھی شامل کریں؟",
-    "someEpisodesAlreadyInPlaylistMsg": "{{total}} منتخب اقساط میں سے {{count}} پہلے سے {{name}} میں موجود ہیں۔ پھر بھی شامل کریں؟"
+    "someEpisodesAlreadyInPlaylistMsg": "{{total}} منتخب اقساط میں سے {{count}} پہلے سے {{name}} میں موجود ہیں۔ پھر بھی شامل کریں؟",
+    "stalkerServerSearchTitle": "سرور تلاش",
+    "stalkerServerSearchSource": "سرور",
+    "stalkerServerSearchCategory": "زمرہ",
+    "stalkerServerSearchQuery": "تلاش",
+    "stalkerServerSearchMoreOnServer": "اس سرور پر مزید نتائج",
+    "stalkerServerSearchMore": "مزید نتائج دکھائیں",
+    "stalkerServerSearchTooMany": "لوڈ کرنے کے لیے بہت زیادہ نتائج — کوئی زمرہ یا لمبا لفظ منتخب کریں",
+    "stalkerServerSearchUnsupported": "یہ سرور تلاش کی حمایت نہیں کرتا، اس لیے پوری فہرست واپس کی گئی",
+    "stalkerServerSearchNoMatches": "اس سرور پر \"{{query}}\" سے کچھ مطابقت نہیں رکھتا",
+    "stalkerServerSearchMatchingPhrase": "مکمل مطابقت نہیں — \"{{phrase}}\" دکھایا جا رہا ہے",
+    "stalkerServerSearchMatchingAllWords": "آپ کے الفاظ کا عین مطابق میچ نہیں ملا — وہ عنوانات دکھائے جا رہے ہیں جن میں یہ سب شامل ہیں",
+    "stalkerServerSearchNoSources": "کوئی فعال Stalker ذریعہ نہیں ملا۔ ترتیبات میں شامل کریں یا اسے بند کر دیں۔",
+    "stalkerServerSearchTab": "Stalker سرور تلاش",
+    "stalkerServerSearchLoadAllResults": "تمام نتائج لوڈ کریں"
   },
   "dvr": {
     "scheduleOptionsTitle": "ریکارڈنگ شیڈول کریں",

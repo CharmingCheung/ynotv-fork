@@ -1149,7 +1149,11 @@
         "pageConcurrencyDesc": "How many content pages are fetched in parallel when you open a VOD Movies or Series category. Stalker portals return 14 items per page and 4 is the recommended safe default. Higher values load faster but send more simultaneous requests to your provider — increasing them can lead to your account being blocked or banned, so you are responsible for the value you set.",
         "categoryCache": "VOD category cache timer",
         "categoryCacheDesc": "How long an opened category's items are reused before they are refreshed from the portal again.",
-        "cacheAlwaysRefresh": "Always refresh on open (no cache)"
+        "cacheAlwaysRefresh": "Always refresh on open (no cache)",
+        "serverSearch": "Stalker Server Search",
+        "serverSearchConsTitle": "Keep in mind",
+        "serverSearchDesc": "Adds a Stalker Server Search tab to the Movies and Series sidebar, which searches the portal's own catalogue instead of only what is already loaded locally. MAC (Stalker) portals only.",
+        "serverSearchCons": "• Not every portal supports it; one that ignores the search parameter is reported as unsupported instead of guessed at (detected on the first search).\n• Movies and series only — live channels can't be searched this way.\n• Multi-word queries are matched literally: words that aren't next to each other in a title, or are in a different order, can return fewer results or none, and the longest word is then searched instead (approximate).\n• It asks the portal, so it's slower than the local search, needs the portal online, and can time out on a busy or rate-limited server.\n• Results aren't filtered by your disabled categories, and the titles it returns are saved to your library so they can be played."
       },
       "sourcesTitle": "Sources",
       "syncChannels": "Sync Channels",
@@ -3539,7 +3543,21 @@
     "resume": "Resume",
     "identifyFooterHint": "Skip keeps the item but stops matching it",
     "rating": "Rating",
-    "recentlyAdded": "Recently Added"
+    "recentlyAdded": "Recently Added",
+    "stalkerServerSearchTitle": "Server Search",
+    "stalkerServerSearchSource": "Server",
+    "stalkerServerSearchCategory": "Category",
+    "stalkerServerSearchQuery": "Search",
+    "stalkerServerSearchMoreOnServer": "More matches on this server",
+    "stalkerServerSearchMore": "Show more results",
+    "stalkerServerSearchTooMany": "Too many results to load — pick a category or a longer word",
+    "stalkerServerSearchUnsupported": "This server does not support searching, so its whole catalogue was returned",
+    "stalkerServerSearchNoMatches": "Nothing on this server matches \"{{query}}\"",
+    "stalkerServerSearchMatchingPhrase": "No exact match for your words — showing \"{{phrase}}\"",
+    "stalkerServerSearchMatchingAllWords": "No exact match for your words — showing titles that contain all of them",
+    "stalkerServerSearchNoSources": "No enabled Stalker source was found. Add one in Settings, or turn this off.",
+    "stalkerServerSearchTab": "Stalker Server Search",
+    "stalkerServerSearchLoadAllResults": "Load all results"
   },
   "dvr": {
     "scheduleOptionsTitle": "Schedule Recording",

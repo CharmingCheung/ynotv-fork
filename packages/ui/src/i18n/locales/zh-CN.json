@@ -1149,7 +1149,11 @@
         "pageConcurrencyDesc": "打开 VOD 电影或剧集类别时并行抓取的内容页数。Stalker 门户每页返回 14 个项目，4 是推荐的默认安全值。值越大加载越快，但会向您的提供商发送更多同时请求，并可能导致您的账户被封锁或封禁——您需对自行设置的值负责。",
         "categoryCache": "VOD 类别缓存计时器",
         "categoryCacheDesc": "已打开类别的项目在再次从门户刷新前会被复用多长时间。",
-        "cacheAlwaysRefresh": "打开时始终刷新（不使用缓存）"
+        "cacheAlwaysRefresh": "打开时始终刷新（不使用缓存）",
+        "serverSearch": "服务器搜索",
+        "serverSearchConsTitle": "请注意",
+        "serverSearchDesc": "在电影和剧集的侧边栏中添加“Stalker Server Search”标签页，直接搜索门户自身的片库，而不仅是本地已加载的内容。仅适用于 MAC（Stalker）门户。",
+        "serverSearchCons": "• 并非所有门户都支持；忽略搜索参数的门户会被标记为不支持，而不是靠猜测（首次搜索时检测）。\n• 仅限电影和剧集 — 直播频道无法这样搜索。\n• 多词查询按字面匹配：在标题中不相邻或顺序不同的词，可能返回较少结果或没有结果，此时会改用最长的词搜索（结果不精确）。\n• 搜索由门户执行，因此比本地搜索慢，需要门户在线，在繁忙或限流的服务器上可能超时。\n• 结果不会按你禁用的分类过滤，返回的片名会保存到你的媒体库中以便播放。"
       },
       "sourcesTitle": "源",
       "syncChannels": "同步频道",
@@ -3539,7 +3543,21 @@
     "cleanAllUnavailableBtn": "移除 {{count}} 个缺失项目",
     "episodeAlreadyInPlaylistMsg": "{{title}} 已在 {{name}} 中。仍然添加？",
     "allEpisodesAlreadyInPlaylistMsg": "所有选中的 {{count}} 集已在 {{name}} 中。仍然添加？",
-    "someEpisodesAlreadyInPlaylistMsg": "选中的 {{total}} 集中有 {{count}} 集已在 {{name}} 中。仍然添加？"
+    "someEpisodesAlreadyInPlaylistMsg": "选中的 {{total}} 集中有 {{count}} 集已在 {{name}} 中。仍然添加？",
+    "stalkerServerSearchTitle": "服务器搜索",
+    "stalkerServerSearchSource": "服务器",
+    "stalkerServerSearchCategory": "分类",
+    "stalkerServerSearchQuery": "搜索",
+    "stalkerServerSearchMoreOnServer": "此服务器上有更多结果",
+    "stalkerServerSearchMore": "显示更多结果",
+    "stalkerServerSearchTooMany": "结果过多 — 请选择分类或使用更长的词",
+    "stalkerServerSearchUnsupported": "此服务器不支持搜索，因此返回了完整目录",
+    "stalkerServerSearchNoMatches": "此服务器上没有与“{{query}}”匹配的内容",
+    "stalkerServerSearchMatchingPhrase": "没有精确匹配 — 正在显示“{{phrase}}”",
+    "stalkerServerSearchMatchingAllWords": "没有与您的关键词完全匹配的结果 — 显示包含全部关键词的标题",
+    "stalkerServerSearchNoSources": "未找到已启用的 Stalker 源。请在设置中添加，或关闭此功能。",
+    "stalkerServerSearchTab": "Stalker 服务器搜索",
+    "stalkerServerSearchLoadAllResults": "加载全部结果"
   },
   "dvr": {
     "scheduleOptionsTitle": "安排录制",

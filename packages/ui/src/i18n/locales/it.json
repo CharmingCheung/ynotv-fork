@@ -1149,7 +1149,11 @@
         "pageConcurrencyDesc": "Quante pagine di contenuti vengono recuperate in parallelo quando apri una categoria di film o serie VOD. I portali Stalker restituiscono 14 elementi per pagina e 4 è il valore sicuro consigliato predefinito. Valori più alti caricano più velocemente ma inviano più richieste simultanee al tuo provider, il che può portare al blocco o al bannamento del tuo account: sei tu il responsabile del valore impostato.",
         "categoryCache": "Durata cache categorie VOD",
         "categoryCacheDesc": "Per quanto tempo gli elementi di una categoria aperta vengono riutilizzati prima di essere aggiornati dal portale.",
-        "cacheAlwaysRefresh": "Aggiorna sempre all'apertura (senza cache)"
+        "cacheAlwaysRefresh": "Aggiorna sempre all'apertura (senza cache)",
+        "serverSearch": "Ricerca sul server",
+        "serverSearchConsTitle": "Da tenere presente",
+        "serverSearchDesc": "Aggiunge una scheda «Stalker Server Search» nella barra laterale di Film e Serie, che cerca nel catalogo del portale stesso invece che solo in ciò che è caricato localmente. Solo per portali MAC (Stalker).",
+        "serverSearchCons": "• Non tutti i portali la supportano; un portale che ignora il parametro di ricerca viene segnalato come non supportato invece di tirare a indovinare (rilevato alla prima ricerca).\n• Solo film e serie: i canali live non si possono cercare così.\n• Le query di più parole vengono confrontate alla lettera: parole che nel titolo non sono una accanto all'altra, o in ordine diverso, possono dare meno risultati o nessuno; in quel caso si cerca la parola più lunga (approssimativo).\n• La ricerca interroga il portale, quindi è più lenta di quella locale, richiede che il portale sia raggiungibile e può andare in timeout su un server occupato o con limiti.\n• I risultati non vengono filtrati in base alle categorie disattivate e i titoli restituiti vengono salvati nella tua libreria per poter essere riprodotti."
       },
       "sourcesTitle": "Fonti",
       "syncChannels": "Sincronizza canali",
@@ -3539,7 +3543,21 @@
     "cleanAllUnavailableBtn": "Rimuovi {{count}} elementi mancanti",
     "episodeAlreadyInPlaylistMsg": "{{title}} è già in {{name}}. Aggiungerlo comunque?",
     "allEpisodesAlreadyInPlaylistMsg": "Tutti i {{count}} episodi selezionati sono già in {{name}}. Aggiungerli comunque?",
-    "someEpisodesAlreadyInPlaylistMsg": "{{count}} dei {{total}} episodi selezionati sono già in {{name}}. Aggiungerli comunque?"
+    "someEpisodesAlreadyInPlaylistMsg": "{{count}} dei {{total}} episodi selezionati sono già in {{name}}. Aggiungerli comunque?",
+    "stalkerServerSearchTitle": "Ricerca sul server",
+    "stalkerServerSearchSource": "Server",
+    "stalkerServerSearchCategory": "Categoria",
+    "stalkerServerSearchQuery": "Cerca",
+    "stalkerServerSearchMoreOnServer": "Altri risultati su questo server",
+    "stalkerServerSearchMore": "Mostra altri risultati",
+    "stalkerServerSearchTooMany": "Troppi risultati — scegli una categoria o una parola più lunga",
+    "stalkerServerSearchUnsupported": "Questo server non supporta la ricerca, quindi è stato restituito l'intero catalogo",
+    "stalkerServerSearchNoMatches": "Su questo server nulla corrisponde a \"{{query}}\"",
+    "stalkerServerSearchMatchingPhrase": "Nessuna corrispondenza esatta — mostro \"{{phrase}}\"",
+    "stalkerServerSearchMatchingAllWords": "Nessuna corrispondenza esatta per le tue parole: vengono mostrati i titoli che le contengono tutte",
+    "stalkerServerSearchNoSources": "Nessuna sorgente Stalker attiva. Aggiungine una nelle impostazioni o disattiva questa opzione.",
+    "stalkerServerSearchTab": "Stalker Ricerca sul server",
+    "stalkerServerSearchLoadAllResults": "Carica tutti i risultati"
   },
   "dvr": {
     "scheduleOptionsTitle": "Programma registrazione",

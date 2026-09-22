@@ -18,4 +18,11 @@ export type {
 
 // Stalker Client
 export { StalkerClient } from './stalker-client';
-export type { StalkerConfig, StalkerCatchupOptions } from './stalker-client';
+export type {
+  StalkerConfig,
+  StalkerCatchupOptions,
+  StalkerSearchEndpoint,
+  StalkerSearchMatchKind,
+  StalkerSearchOptions,
+  StalkerSearchResult,
+} from './stalker-client';

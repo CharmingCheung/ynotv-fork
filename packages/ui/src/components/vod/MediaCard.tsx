@@ -31,16 +31,25 @@ export interface MediaCardProps {
   // Optional style for dynamic sizing (e.g., marquee animation)
   style?: React.CSSProperties;
   sourceName?: string;
+  /**
+   * Categories this item belongs to, first one shown and the rest in the tooltip.
+   * Only the Stalker Server Search grid passes it: that is the one list where a title's
+   * origin is not implied by the grid you are looking at.
+   */
+  categoryLabels?: string[];
   onPlayDirect?: (item: StoredMovie | StoredSeries) => void;
   index?: number;
 }
 
-export const MediaCard = memo(function MediaCard({ item, type, onClick, onRemove, size = 'medium', progressPercent, isRecentlyWatched, seasonNum, episodeNum, episodeTitle, isFavorited, onToggleFavorite, style, sourceName, onPlayDirect, index }: MediaCardProps) {
+export const MediaCard = memo(function MediaCard({ item, type, onClick, onRemove, size = 'medium', progressPercent, isRecentlyWatched, seasonNum, episodeNum, episodeTitle, isFavorited, onToggleFavorite, style, sourceName, categoryLabels, onPlayDirect, index }: MediaCardProps) {
   useTranslation();
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageError, setImageError] = useState(false);
   const [titleOverflows, setTitleOverflows] = useState(false);
   const titleRef = useRef<HTMLHeadingElement>(null);
+  // Adds a line to the info strip, so it also changes the card's height — the grid this
+  // is used from has to account for it (see StalkerServerSearchView's row estimate).
+  const showCategory = !!categoryLabels && categoryLabels.length > 0;
 
   // Merge user-corrected metadata (title/year/poster/plot/tmdb_id) on top of
   // the provider row. Overrides live in a table sync never writes, so edits
@@ -128,7 +137,7 @@ export const MediaCard = memo(function MediaCard({ item, type, onClick, onRemove
 
   return (
     <div
-      className={`media-card media-card--${size}`}
+      className={`media-card media-card--${size}${showCategory ? ' media-card--with-category' : ''}`}
       data-id={mediaId}
       data-index={index !== undefined ? index : undefined}
       onClick={handleClick}
@@ -223,8 +232,7 @@ export const MediaCard = memo(function MediaCard({ item, type, onClick, onRemove
         )}
       </div>
 
-      <div className="media-card__info">
-        <h3
+      <div className="media-card__info">        <h3
           ref={titleRef}
           className={`media-card__title${titleOverflows ? ' media-card__title--overflow' : ''}`}
           title={displayTitle || undefined}
@@ -242,6 +250,14 @@ export const MediaCard = memo(function MediaCard({ item, type, onClick, onRemove
             </span>
           )}
         </div>
+        {/* Which category this title came from. A search result can come from any category
+            the portal has, so without this an "all categories" search says nothing about
+            where a title lives. */}
+        {showCategory && (
+          <div className="media-card__category" title={categoryLabels.join(' · ')}>
+            {categoryLabels[0]}
+          </div>
+        )}
       </div>
     </div>
   );

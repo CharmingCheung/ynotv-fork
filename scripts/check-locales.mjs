@@ -133,6 +133,10 @@ const UNTRANSLATED_ALLOWLIST = new Set([
   // "Filter" is the same word in these languages, and French spells the strict
   // threshold preset "Strict" too — constants, not missed translations
   'bs:epg.filter', 'de:epg.filter', 'hr:epg.filter', 'nl:epg.filter', 'fr:epg.thresholdStrict',
+  // "Server" is the ordinary word for a server in these languages (a loanword), so the
+  // Stalker server-search label legitimately matches English there
+  'bs:vod.stalkerServerSearchSource', 'de:vod.stalkerServerSearchSource',
+  'it:vod.stalkerServerSearchSource', 'nl:vod.stalkerServerSearchSource',
   // controller hardware labels (printed on the physical buttons) + universal terms
   'settings.controllers.mapping.buttons.select', 'settings.controllers.mapping.buttons.start',
   'settings.controllers.mapping.groups.dpad', 'settings.controllers.mapping.groups.menu',

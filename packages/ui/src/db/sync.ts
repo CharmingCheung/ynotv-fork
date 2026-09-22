@@ -353,6 +353,149 @@ const VOD_SERIES_FIELDS = [
   'rating_5based', 'category_id'
 ];
 
+export function mapStalkerSeriesRow(item: any, categoryId: string | null): any {
+  // Destructure to exclude movie-specific fields from series object
+  const { stream_id: _stream_id, epg_channel_id: _epg_channel_id, channel_num: _channel_num, container_extension: _container_extension, ...rest } = item;
+  // Extract raw Stalker ID from direct_url for episode fetching
+  // Some portals use compound IDs like "15754:15754" - use first part
+  const rawIdFromUrl = item.direct_url?.replace('stalker_series:', '') || item.id;
+  const rawStalkerId = rawIdFromUrl?.toString().split(':')[0];
+
+  return {
+    ...rest,
+    series_id: item.series_id || item.stream_id?.toString() || '',
+    cover: item.cover || item.stream_icon || '',
+    plot: item.plot || '',
+    cast: item.cast || '',
+    director: item.director || '',
+    genre: item.genre || '',
+    releaseDate: item.releaseDate || '',
+    last_modified: item.last_modified || '',
+    rating: item.rating || '',
+    rating_5based: item.rating_5based || 0,
+    backdrop_path: item.backdrop_path || undefined,
+    youtube_trailer: item.youtube_trailer || '',
+    episode_run_time: item.episode_run_time || '',
+    // category_ids is already set by Stalker client as an array, just need to stringify it
+    category_ids: Array.isArray(item.category_ids)
+      ? JSON.stringify(item.category_ids)
+      : JSON.stringify([categoryId]),
+    // Store raw Stalker ID for episode fetching
+    _stalker_raw_id: rawStalkerId
+  };
+}
+
+/**
+ * Categories a search hit should end up in, given whatever the row already carried.
+ *
+ * A search is not a sync: the portal answers with one item per match, so writing
+ * `category_ids` straight through would drop a cached title out of every list it was
+ * in — and a whole-library search (no category selected) would leave it in none, which
+ * hides it from "All Movies" too, since that view requires the row to share at least one
+ * enabled category. Union instead: the row keeps what it had and gains what the hit
+ * brought. Exported for its own sake — this is the part that can silently lose a title.
+ */
+export function mergeSearchCategoryIds(existing: unknown, incoming: unknown): string {
+  const parse = (value: unknown): string[] => {
+    if (Array.isArray(value)) return value.map(String).filter(Boolean);
+    if (typeof value === 'string' && value.trim()) {
+      try {
+        const parsed = JSON.parse(value);
+        if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
+        return [];
+      } catch {
+        return [value.trim()];
+      }
+    }
+    return [];
+  };
+
+  const ids = new Set([...parse(existing), ...parse(incoming)]);
+  return JSON.stringify([...ids]);
+}
+
+/**
+ * Persist the rows a Stalker server search loaded, through the same mapping the
+ * lazy category loader uses.
+ *
+ * Writing them is what makes the results playable: the detail page, media-info
+ * probe and stream resolver all read the database, and `vodMovies.stream_id` /
+ * `vodSeries.series_id` are primary keys derived from the portal's own id, so a
+ * title that was already cached is updated in place rather than duplicated.
+ *
+ * Unlike the lazy loader, though, this runs against rows the user already has, so it
+ * reads them first: `category_ids` is unioned (see mergeSearchCategoryIds) and the
+ * cached row is handed to `sanitizeMovie`, which is what keeps a matched tmdb_id from
+ * being cleared by a search. A row's category membership and matches are not the
+ * search's to change.
+ */
+export async function storeStalkerServerSearchHits(
+  items: any[],
+  type: 'movies' | 'series',
+  categoryId: string | null
+): Promise<Array<StoredMovie | StoredSeries>> {
+  if (items.length === 0) return [];
+
+  const isMovies = type === 'movies';
+  const table = isMovies ? 'vodMovies' : 'vodSeries';
+  const primaryKey = isMovies ? 'stream_id' : 'series_id';
+
+  const existing = new Map<string, any>();
+  try {
+    const ids = items
+      .map((item: any) => item?.[primaryKey])
+      .filter((id: any): id is string => typeof id === 'string' && id.length > 0);
+    if (ids.length > 0) {
+      const dbInstance = await (db as any).dbPromise;
+      const placeholders = ids.map(() => '?').join(',');
+      const rows = await dbInstance.select(
+        `SELECT * FROM ${table} WHERE ${primaryKey} IN (${placeholders})`,
+        ids
+      );
+      for (const row of rows ?? []) existing.set(row[primaryKey], row);
+    }
+  } catch (e) {
+    // Non-fatal: without the cached rows the hits are written as new ones, which is
+    // exactly the behaviour before this lookup existed.
+    console.warn('[StalkerServerSearch] Could not read cached rows; hits will be written as-is:', e);
+  }
+
+  if (isMovies) {
+    const rows = items.map((item: any) => {
+      const previous = existing.get(item.stream_id);
+      const clean = sanitizeMovie(item, previous);
+      clean.category_ids = mergeSearchCategoryIds(previous?.category_ids, clean.category_ids);
+      return clean;
+    });
+    await db.vodMovies.bulkPut(rows);
+    return rows as StoredMovie[];
+  }
+
+  const rows = items.map((item: any) => {
+    const row = mapStalkerSeriesRow(item, categoryId);
+    const previous = existing.get(row.series_id);
+    // Enrichment (tmdb_id, imdb_id, backdrop_path, popularity, match_attempted) has to be
+    // carried over explicitly: `bulkPut` upserts every column in the row, so a hit with no
+    // tmdb_id of its own writes NULL over one the user already had. `sanitizeSeries` is the
+    // same helper the series sync uses, which is what makes a search hit and a synced row
+    // end up identical instead of merely similar.
+    const sanitized = sanitizeSeries({
+      ...row,
+      // Membership the portal's search rows cannot carry. Without these a cached series can
+      // drop out of the category it was browsed from — `useVod` matches on `category_id`
+      // and `_stalker_category` as well as on `category_ids`.
+      _stalker_category: row._stalker_category ?? previous?._stalker_category,
+      category_id: row.category_id ?? previous?.category_id,
+      added: row.added || previous?.added,
+      year: row.year || previous?.year,
+    }, previous);
+    sanitized.category_ids = mergeSearchCategoryIds(previous?.category_ids, sanitized.category_ids);
+    return sanitized;
+  });
+  await db.vodSeries.bulkPut(rows as any[]);
+  return rows as StoredSeries[];
+}
+
 function sanitizeMovie(movie: any, existingMovie?: any): any {
   const clean: any = {};
 
@@ -3109,37 +3252,7 @@ export async function syncStalkerCategory(
       await db.vodMovies.bulkPut(movieItems);
     } else {
       // Map Channel items to StoredSeries
-      const seriesItems = items.map((item: any) => {
-        // Destructure to exclude movie-specific fields from series object
-        const { stream_id: _stream_id, epg_channel_id: _epg_channel_id, channel_num: _channel_num, container_extension: _container_extension, ...rest } = item;
-        // Extract raw Stalker ID from direct_url for episode fetching
-        // Some portals use compound IDs like "15754:15754" - use first part
-        const rawIdFromUrl = item.direct_url?.replace('stalker_series:', '') || item.id;
-        const rawStalkerId = rawIdFromUrl?.toString().split(':')[0];
-
-        return {
-          ...rest,
-          series_id: item.series_id || item.stream_id?.toString() || '',
-          cover: item.cover || item.stream_icon || '',
-          plot: item.plot || '',
-          cast: item.cast || '',
-          director: item.director || '',
-          genre: item.genre || '',
-          releaseDate: item.releaseDate || '',
-          last_modified: item.last_modified || '',
-          rating: item.rating || '',
-          rating_5based: item.rating_5based || 0,
-          backdrop_path: item.backdrop_path || undefined,
-          youtube_trailer: item.youtube_trailer || '',
-          episode_run_time: item.episode_run_time || '',
-          // category_ids is already set by Stalker client as an array, just need to stringify it
-          category_ids: Array.isArray(item.category_ids)
-            ? JSON.stringify(item.category_ids)
-            : JSON.stringify([categoryId]),
-          // Store raw Stalker ID for episode fetching
-          _stalker_raw_id: rawStalkerId
-        };
-      });
+      const seriesItems = items.map((item: any) => mapStalkerSeriesRow(item, categoryId));
 
       await db.vodSeries.bulkPut(seriesItems as any[]);
     }

@@ -1149,7 +1149,11 @@
         "pageConcurrencyDesc": "Koliko se stranica sadržaja dohvaća paralelno kada otvorite kategoriju VOD filmova ili serija. Stalker portali vraćaju 14 stavki po stranici, a 4 je preporučena sigurna zadana vrijednost. Veće vrijednosti učitavaju brže, ali šalju više istovremenih zahtjeva vašem pružatelju i mogu dovesti do blokade ili bana vašeg računa — odgovorni ste za vrijednost koju postavite.",
         "categoryCache": "Vrijeme keširanja VOD kategorija",
         "categoryCacheDesc": "Koliko se dugo stavke otvorene kategorije ponovo koriste prije nego se ponovo osvježe s portala.",
-        "cacheAlwaysRefresh": "Uvijek osvježi pri otvaranju (bez keša)"
+        "cacheAlwaysRefresh": "Uvijek osvježi pri otvaranju (bez keša)",
+        "serverSearch": "Pretraga na serveru",
+        "serverSearchConsTitle": "Imajte na umu",
+        "serverSearchDesc": "Dodaje karticu „Stalker Server Search“ u bočnu traku za filmove i serije, koja pretražuje katalog samoga portala umjesto samo onoga što je lokalno učitano. Radi samo na MAC (Stalker) portalima.",
+        "serverSearchCons": "• Nemaju je svi portali; portal koji ignoriše parametar pretrage prijavljuje se kao nepodržan umjesto nagađanja (otkriva se pri prvoj pretrazi).\n• Samo filmovi i serije — TV kanali se ne mogu tako pretraživati.\n• Upiti s više riječi upoređuju se doslovno: riječi koje u naslovu nisu jedna uz drugu, ili su u drugom redu, mogu dati manje rezultata ili nijedan, a tada se traži najduža riječ (približno).\n• Pretraga ide na portal, pa je sporija od lokalne, zahtijeva da je portal dostupan i može isteći na zauzetom ili ograničenom serveru.\n• Rezultati se ne filtriraju po isključenim kategorijama, a naslovi koje vrati čuvaju se u tvojoj biblioteci da bi se mogli reproducirati."
       },
       "sourcesTitle": "Izvori",
       "syncChannels": "Sinhronizuj kanale",
@@ -3539,7 +3543,21 @@
     "cleanAllUnavailableBtn": "Ukloni {{count}} nedostajućih stavki",
     "episodeAlreadyInPlaylistMsg": "{{title}} je već u listi {{name}}. Dodaj svejedno?",
     "allEpisodesAlreadyInPlaylistMsg": "Svih {{count}} izabranih epizoda je već u listi {{name}}. Dodati ih svejedno?",
-    "someEpisodesAlreadyInPlaylistMsg": "{{count}} od {{total}} izabranih epizoda je već u listi {{name}}. Dodati svejedno?"
+    "someEpisodesAlreadyInPlaylistMsg": "{{count}} od {{total}} izabranih epizoda je već u listi {{name}}. Dodati svejedno?",
+    "stalkerServerSearchTitle": "Pretraga na serveru",
+    "stalkerServerSearchSource": "Server",
+    "stalkerServerSearchCategory": "Kategorija",
+    "stalkerServerSearchQuery": "Pretraga",
+    "stalkerServerSearchMoreOnServer": "Još rezultata na ovom serveru",
+    "stalkerServerSearchMore": "Prikaži još rezultata",
+    "stalkerServerSearchTooMany": "Previše rezultata za učitavanje — odaberite kategoriju ili dužu riječ",
+    "stalkerServerSearchUnsupported": "Ovaj server ne podržava pretragu, pa je vraćen cijeli katalog",
+    "stalkerServerSearchNoMatches": "Ništa na ovom serveru ne odgovara \"{{query}}\"",
+    "stalkerServerSearchMatchingPhrase": "Nema tačnog poklapanja — prikazujem \"{{phrase}}\"",
+    "stalkerServerSearchMatchingAllWords": "Nema tačnog poklapanja za vaše riječi — prikazani su naslovi koji ih sadrže sve",
+    "stalkerServerSearchNoSources": "Nije pronađen nijedan omogućen Stalker izvor. Dodajte ga u postavkama ili isključite ovu opciju.",
+    "stalkerServerSearchTab": "Stalker Pretraga na serveru",
+    "stalkerServerSearchLoadAllResults": "Učitaj sve rezultate"
   },
   "dvr": {
     "scheduleOptionsTitle": "Zakazivanje snimanja",

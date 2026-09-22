@@ -16,6 +16,7 @@ import { useLiveQuery } from '../../hooks/useSqliteLiveQuery';
 import { db } from '../../db';
 import { useSidebarDragHotkey } from '../../stores/uiStore';
 import { KeyboardSearchInput } from '../KeyboardSearchInput';
+import { STALKER_SERVER_SEARCH_ID } from '../../stores/stalkerSearchStore';
 import {
   DndContext,
   PointerSensor,
@@ -115,6 +116,8 @@ export interface VerticalSidebarProps {
     visible?: boolean;
     onClose?: () => void;
     onShow?: () => void;
+    /** Show the portal "Stalker Server Search" tab (opt-in setting + an enabled portal). */
+    showServerSearch?: boolean;
 }
 
 // Icons
@@ -171,6 +174,7 @@ export function VerticalSidebar({
     visible = true,
     onClose,
     onShow,
+    showServerSearch = false,
 }: VerticalSidebarProps) {
     useTranslation();
     const [sources, setSources] = useState<Record<string, string>>({});
@@ -653,6 +657,24 @@ export function VerticalSidebar({
             <div className="vertical-sidebar__top">
                 {isV3 ? (
                     <>
+                        {/* Stalker Server Search (opt-in, only with an enabled portal) */}
+                        {showServerSearch && (
+                            <button
+                                className={`vertical-sidebar__item category-list-bar ${selectedId === STALKER_SERVER_SEARCH_ID ? 'active' : ''}`}
+                                onClick={() => onSelect(STALKER_SERVER_SEARCH_ID)}
+                            >
+                                <div className="category-item-left">
+                                    <span className="category-icon stalker-search-icon">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                            <circle cx="11" cy="11" r="7" />
+                                            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                                        </svg>
+                                    </span>
+                                    <span className="category-name">{i18n.t('vod:stalkerServerSearchTab')}</span>
+                                </div>
+                            </button>
+                        )}
+
                         {/* Home Link */}
                         <button
                             className={`vertical-sidebar__item category-list-bar ${selectedId === null ? 'active' : ''}`}
@@ -763,6 +785,16 @@ export function VerticalSidebar({
                     </>
                 ) : (
                     <>
+                        {/* Stalker Server Search (opt-in, only with an enabled portal) */}
+                        {showServerSearch && (
+                            <button
+                                className={`vertical-sidebar__item ${selectedId === STALKER_SERVER_SEARCH_ID ? 'active' : ''}`}
+                                onClick={() => onSelect(STALKER_SERVER_SEARCH_ID)}
+                            >
+                                {i18n.t('vod:stalkerServerSearchTab')}
+                            </button>
+                        )}
+
                         {/* Home Link */}
                         <button
                             className={`vertical-sidebar__item ${selectedId === null ? 'active' : ''}`}

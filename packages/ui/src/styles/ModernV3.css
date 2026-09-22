@@ -2322,6 +2322,10 @@ html.modern-ui-v3[data-theme] .guide-channel-logo.logo-smart-trim img {
 
 .modern-ui-v3 .vod-page__content {
   margin: 16px;
+  /* Mirror the sidebar's inset (--vs-height: calc(100% - 32px)): with a plain 100%
+     the 16px top+bottom margins pushed the panel 16px past the viewport, so whatever
+     sat flush at the bottom of a VOD view was clipped by .vod-page's overflow:hidden. */
+  height: calc(100% - 32px);
   box-sizing: border-box;
   overflow: hidden;
 }

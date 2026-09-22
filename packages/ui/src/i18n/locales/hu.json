@@ -1149,7 +1149,11 @@
         "pageConcurrencyDesc": "Hány tartalomoldal kerül párhuzamosan lekérésre, amikor megnyit egy VOD film- vagy sorozatkategóriát. A Stalker portálok oldalanként 14 elemet adnak vissza, és a 4 az ajánlott biztonságos alapérték. A magasabb értékek gyorsabban töltenek, de több egyidejű kérést küldenek a szolgáltatónak, ami fiókja zárolásához vagy kitiltásához vezethet — Ön felelős a beállított értékért.",
         "categoryCache": "VOD kategória-gyorsítótár időzítő",
         "categoryCacheDesc": "Mennyi ideig használódnak újra egy megnyitott kategória elemei, mielőtt ismét frissülnek a portálról.",
-        "cacheAlwaysRefresh": "Mindig frissítés megnyitáskor (gyorsítótár nélkül)"
+        "cacheAlwaysRefresh": "Mindig frissítés megnyitáskor (gyorsítótár nélkül)",
+        "serverSearch": "Szerverkeresés",
+        "serverSearchConsTitle": "Ne feledje",
+        "serverSearchDesc": "„Stalker Server Search” fület ad a Filmek és Sorozatok oldalsávhoz, amely magának a portálnak a katalógusában keres a helyben betöltött tételek helyett. Csak MAC (Stalker) portálokkal működik.",
+        "serverSearchCons": "• Nem minden portál támogatja; amelyik figyelmen kívül hagyja a keresési paramétert, az „nem támogatott”-ként jelenik meg a találgatás helyett (az első keresésnél derül ki).\n• Csak filmek és sorozatok — élő csatornák így nem kereshetők.\n• A több szavas kereséseket szó szerint hasonlítja össze: a címben nem egymás mellett álló vagy más sorrendű szavak kevesebb találatot adhatnak, vagy egyet sem; ilyenkor a leghosszabb szóra keres (hozzávetőleges).\n• A keresés a portálon fut, így lassabb a helyinél, elérhető portált igényel, és túlterhelt vagy korlátozott szerveren időtúllépésbe futhat.\n• A találatokat nem szűri a letiltott kategóriáid szerint, a visszaadott címek pedig a könyvtáradba kerülnek, hogy lejátszhatók legyenek."
       },
       "sourcesTitle": "Források",
       "syncChannels": "Csatornák szinkronizálása",
@@ -3539,7 +3543,21 @@
     "cleanAllUnavailableBtn": "{{count}} hiányzó elem eltávolítása",
     "episodeAlreadyInPlaylistMsg": "A(z) {{title}} már szerepel ebben: {{name}}. Hozzáadja így is?",
     "allEpisodesAlreadyInPlaylistMsg": "Mind a {{count}} kijelölt epizód már szerepel ebben: {{name}}. Hozzáadja így is?",
-    "someEpisodesAlreadyInPlaylistMsg": "A kijelölt {{total}} epizódból {{count}} már szerepel ebben: {{name}}. Hozzáadja így is?"
+    "someEpisodesAlreadyInPlaylistMsg": "A kijelölt {{total}} epizódból {{count}} már szerepel ebben: {{name}}. Hozzáadja így is?",
+    "stalkerServerSearchTitle": "Szerverkeresés",
+    "stalkerServerSearchSource": "Szerver",
+    "stalkerServerSearchCategory": "Kategória",
+    "stalkerServerSearchQuery": "Keresés",
+    "stalkerServerSearchMoreOnServer": "További találatok ezen a szerveren",
+    "stalkerServerSearchMore": "További találatok",
+    "stalkerServerSearchTooMany": "Túl sok találat — válassz kategóriát vagy hosszabb szót",
+    "stalkerServerSearchUnsupported": "Ez a szerver nem támogatja a keresést, ezért a teljes katalógust adta vissza",
+    "stalkerServerSearchNoMatches": "Ezen a szerveren semmi sem illik erre: \"{{query}}\"",
+    "stalkerServerSearchMatchingPhrase": "Nincs pontos egyezés — \"{{phrase}}\" megjelenítése",
+    "stalkerServerSearchMatchingAllWords": "Nincs pontos találat a szavaira — az összes szót tartalmazó címek láthatók",
+    "stalkerServerSearchNoSources": "Nem található engedélyezett Stalker forrás. Adj hozzá egyet a beállításokban, vagy kapcsold ki ezt.",
+    "stalkerServerSearchTab": "Stalker Szerverkeresés",
+    "stalkerServerSearchLoadAllResults": "Összes találat betöltése"
   },
   "dvr": {
     "scheduleOptionsTitle": "Felvétel ütemezése",

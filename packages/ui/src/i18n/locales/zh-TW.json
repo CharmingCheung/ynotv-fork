@@ -1149,7 +1149,11 @@
         "pageConcurrencyDesc": "開啟 VOD 電影或劇集類別時並行擷取的內容頁數。Stalker 入口每頁會回傳 14 個項目，4 是建議的預設安全值。數值越高載入越快，但會向您的提供者傳送更多同時請求，並可能導致您的帳戶被封鎖或停用——您需對自行設定的數值負責。",
         "categoryCache": "VOD 類別快取計時器",
         "categoryCacheDesc": "已開啟類別的項目在再次從入口重新整理前會被重複使用多久。",
-        "cacheAlwaysRefresh": "開啟時一律重新整理（不使用快取）"
+        "cacheAlwaysRefresh": "開啟時一律重新整理（不使用快取）",
+        "serverSearch": "伺服器搜尋",
+        "serverSearchConsTitle": "請注意",
+        "serverSearchDesc": "在電影與影集的側邊欄中加入「Stalker Server Search」分頁，直接搜尋入口本身的片庫，而不只是本機已載入的內容。僅適用於 MAC（Stalker）入口。",
+        "serverSearchCons": "• 並非所有入口都支援；忽略搜尋參數的入口會被標示為不支援，而不是靠猜測（首次搜尋時偵測）。\n• 僅限電影與影集 — 直播頻道無法用這種方式搜尋。\n• 多詞查詢以字面比對：在標題中不相鄰或順序不同的詞，可能傳回較少結果或沒有結果，此時會改用最長的詞搜尋（結果不精確）。\n• 搜尋由入口執行，因此比本機搜尋慢，需要入口連線，在忙碌或限流的伺服器上可能逾時。\n• 結果不會依你停用的分類篩選，傳回的片名會儲存到你的媒體庫以便播放。"
       },
       "sourcesTitle": "源",
       "syncChannels": "同步頻道",
@@ -3539,7 +3543,21 @@
     "cleanAllUnavailableBtn": "移除 {{count}} 個缺失項目",
     "episodeAlreadyInPlaylistMsg": "{{title}} 已在 {{name}} 中。仍然新增？",
     "allEpisodesAlreadyInPlaylistMsg": "所有選取的 {{count}} 集已在 {{name}} 中。仍然新增？",
-    "someEpisodesAlreadyInPlaylistMsg": "選取的 {{total}} 集中有 {{count}} 集已在 {{name}} 中。仍然新增？"
+    "someEpisodesAlreadyInPlaylistMsg": "選取的 {{total}} 集中有 {{count}} 集已在 {{name}} 中。仍然新增？",
+    "stalkerServerSearchTitle": "伺服器搜尋",
+    "stalkerServerSearchSource": "伺服器",
+    "stalkerServerSearchCategory": "分類",
+    "stalkerServerSearchQuery": "搜尋",
+    "stalkerServerSearchMoreOnServer": "此伺服器上有更多結果",
+    "stalkerServerSearchMore": "顯示更多結果",
+    "stalkerServerSearchTooMany": "結果過多 — 請選擇分類或使用更長的詞",
+    "stalkerServerSearchUnsupported": "此伺服器不支援搜尋，因此回傳了完整目錄",
+    "stalkerServerSearchNoMatches": "此伺服器上沒有符合「{{query}}」的內容",
+    "stalkerServerSearchMatchingPhrase": "沒有精確符合 — 正在顯示「{{phrase}}」",
+    "stalkerServerSearchMatchingAllWords": "沒有與您的關鍵字完全相符的結果 — 顯示包含全部關鍵字的標題",
+    "stalkerServerSearchNoSources": "找不到已啟用的 Stalker 來源。請在設定中新增，或關閉此功能。",
+    "stalkerServerSearchTab": "Stalker 伺服器搜尋",
+    "stalkerServerSearchLoadAllResults": "載入全部結果"
   },
   "dvr": {
     "scheduleOptionsTitle": "安排錄製",

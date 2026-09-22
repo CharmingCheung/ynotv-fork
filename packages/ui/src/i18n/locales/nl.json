@@ -1149,7 +1149,11 @@
         "pageConcurrencyDesc": "Hoeveel contentpagina's tegelijk worden opgehaald wanneer je een VOD-film- of seriecategorie opent. Stalker-portals leveren 14 items per pagina en 4 is de aanbevolen veilige standaard. Hogere waarden laden sneller, maar sturen meer gelijktijdige verzoeken naar je provider, wat kan leiden tot blokkering of een ban van je account — jij bent verantwoordelijk voor de waarde die je instelt.",
         "categoryCache": "VOD-categoriecachetijd",
         "categoryCacheDesc": "Hoe lang de items van een geopende categorie worden hergebruikt voordat ze opnieuw van de portal worden ververst.",
-        "cacheAlwaysRefresh": "Altijd vernieuwen bij openen (geen cache)"
+        "cacheAlwaysRefresh": "Altijd vernieuwen bij openen (geen cache)",
+        "serverSearch": "Zoeken op server",
+        "serverSearchConsTitle": "Let op",
+        "serverSearchDesc": "Voegt een tab ‘Stalker Server Search’ toe aan de zijbalk van Films en Series, die de catalogus van het portaal zelf doorzoekt in plaats van alleen wat lokaal is geladen. Alleen voor MAC-portalen (Stalker).",
+        "serverSearchCons": "• Niet elk portaal ondersteunt het; een portaal dat de zoekparameter negeert wordt als niet-ondersteund gemeld in plaats van te gokken (ontdekt bij de eerste zoekopdracht).\n• Alleen films en series — livezenders kun je zo niet doorzoeken.\n• Zoekopdrachten met meerdere woorden worden letterlijk vergeleken: woorden die in de titel niet naast elkaar staan, of in een andere volgorde, kunnen minder of geen resultaten geven; er wordt dan op het langste woord gezocht (bij benadering).\n• De zoekopdracht gaat naar het portaal, dus trager dan de lokale zoekopdracht, vereist een bereikbaar portaal en kan time-outen op een drukke of gelimiteerde server.\n• Resultaten worden niet gefilterd op je uitgeschakelde categorieën, en gevonden titels worden in je bibliotheek opgeslagen zodat ze afspeelbaar zijn."
       },
       "sourcesTitle": "Bronnen",
       "syncChannels": "Kanalen synchroniseren",
@@ -3539,7 +3543,21 @@
     "cleanAllUnavailableBtn": "{{count}} ontbrekende items verwijderen",
     "episodeAlreadyInPlaylistMsg": "{{title}} staat al in {{name}}. Toch toevoegen?",
     "allEpisodesAlreadyInPlaylistMsg": "Alle {{count}} geselecteerde afleveringen staan al in {{name}}. Toch toevoegen?",
-    "someEpisodesAlreadyInPlaylistMsg": "{{count}} van de {{total}} geselecteerde afleveringen staan al in {{name}}. Toch toevoegen?"
+    "someEpisodesAlreadyInPlaylistMsg": "{{count}} van de {{total}} geselecteerde afleveringen staan al in {{name}}. Toch toevoegen?",
+    "stalkerServerSearchTitle": "Zoeken op server",
+    "stalkerServerSearchSource": "Server",
+    "stalkerServerSearchCategory": "Categorie",
+    "stalkerServerSearchQuery": "Zoeken",
+    "stalkerServerSearchMoreOnServer": "Meer resultaten op deze server",
+    "stalkerServerSearchMore": "Meer resultaten tonen",
+    "stalkerServerSearchTooMany": "Te veel resultaten — kies een categorie of een langer woord",
+    "stalkerServerSearchUnsupported": "Deze server ondersteunt geen zoeken, dus de volledige catalogus is teruggegeven",
+    "stalkerServerSearchNoMatches": "Niets op deze server komt overeen met \"{{query}}\"",
+    "stalkerServerSearchMatchingPhrase": "Geen exacte overeenkomst — ik toon \"{{phrase}}\"",
+    "stalkerServerSearchMatchingAllWords": "Geen exacte overeenkomst voor je woorden — titels met alle woorden worden getoond",
+    "stalkerServerSearchNoSources": "Geen ingeschakelde Stalker-bron gevonden. Voeg er een toe in Instellingen of schakel dit uit.",
+    "stalkerServerSearchTab": "Stalker Zoeken op server",
+    "stalkerServerSearchLoadAllResults": "Alle resultaten laden"
   },
   "dvr": {
     "scheduleOptionsTitle": "Opname plannen",

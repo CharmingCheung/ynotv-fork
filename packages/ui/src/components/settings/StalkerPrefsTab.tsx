@@ -23,6 +23,8 @@ export function StalkerPrefsTab() {
   const setConcurrency = useSettingsStore((s) => s.setStalkerVodPageConcurrency);
   const cacheMinutes = useSettingsStore((s) => s.stalkerCategoryCacheMinutes);
   const setCacheMinutes = useSettingsStore((s) => s.setStalkerCategoryCacheMinutes);
+  const serverSearchEnabled = useSettingsStore((s) => s.stalkerServerSearchEnabled);
+  const setServerSearchEnabled = useSettingsStore((s) => s.setStalkerServerSearchEnabled);
 
   // Local draft keeps the number input editable while focused; it commits on
   // blur / Enter so intermediate states (empty, "1", partial typing) never
@@ -99,6 +101,48 @@ export function StalkerPrefsTab() {
                 ))}
               </select>
             </div>
+          </div>
+
+          {/* Adds a "Server Search" button to the Movies/Series pages, which searches the
+              portal's own catalogue instead of only what has been cached locally. */}
+          <div className="form-group" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', cursor: 'pointer' }}>
+              <input
+                id="stalker-server-search"
+                type="checkbox"
+                checked={serverSearchEnabled}
+                onChange={(e) => setServerSearchEnabled(e.target.checked)}
+                style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+              />
+              <span style={labelStyle}>
+                {i18n.t('settings:sources.stalkerPrefs.serverSearch')}
+              </span>
+            </label>
+            <span style={hintStyle}>
+              {i18n.t('settings:sources.stalkerPrefs.serverSearchDesc')}
+            </span>
+            {/* What the feature can't do, before it is switched on: which portals answer,
+                what a multi-word query really matches, and what it costs to ask. */}
+            <span
+              style={{
+                ...hintStyle,
+                display: 'block',
+                marginTop: '0.75rem',
+                fontWeight: 600,
+              }}
+            >
+              {i18n.t('settings:sources.stalkerPrefs.serverSearchConsTitle')}
+            </span>
+            <span
+              style={{
+                ...hintStyle,
+                display: 'block',
+                marginTop: '0.15rem',
+                whiteSpace: 'pre-line',
+              }}
+            >
+              {i18n.t('settings:sources.stalkerPrefs.serverSearchCons')}
+            </span>
           </div>
         </div>
       </div>

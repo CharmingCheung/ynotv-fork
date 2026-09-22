@@ -60,6 +60,9 @@ import {
 import type { StoredMovie, StoredSeries, StoredEpisode } from '../db';
 import { removeFromRecentlyWatched, recordVodWatch, recordEpisodeWatch, getEpisodeProgress, type EpisodeWatchHistory, db } from '../db';
 import { type MediaItem, type VodType, type VodPlayInfo } from '../types/media';
+import { StalkerServerSearchView } from './vod/StalkerServerSearchView';
+import { STALKER_SERVER_SEARCH_ID } from '../stores/stalkerSearchStore';
+import { getStalkerSearchSources } from '../services/stalkerServerSearch';
 import { type VodPlayerMode } from './vod/SplitPlayButton';
 import { LocalTab } from './local/LocalTab';
 import { LocalDetail } from './local/LocalDetail';
@@ -218,9 +221,45 @@ export function VodPage({ type, onPlay, onClose, vodPlayerMode, onSelectVodPlaye
   // Local cast detail view state
   const [activePersonId, setActivePersonId] = useState<number | null>(null);
 
+  // Optional portal-side search (Stalker only, and off unless enabled in Settings).
+  const stalkerServerSearchEnabled = useSettingsStore((s) => s.stalkerServerSearchEnabled);
+  // null = not looked yet, so a stored Server Search selection is not thrown away before
+  // the source list has been read.
+  const [hasStalkerSource, setHasStalkerSource] = useState<boolean | null>(null);
+
+  // Only look for portals while the feature is on: a button that opens an empty
+  // picker is worse than no button, and non-Stalker installs should do no work at all.
+  useEffect(() => {
+    if (!stalkerServerSearchEnabled) {
+      setHasStalkerSource(false);
+      return;
+    }
+    let cancelled = false;
+    getStalkerSearchSources()
+      .then(list => {
+        if (!cancelled) setHasStalkerSource(list.length > 0);
+      })
+      .catch(() => {
+        if (!cancelled) setHasStalkerSource(false);
+      });
+    return () => { cancelled = true; };
+  }, [stalkerServerSearchEnabled]);
+
+  const showServerSearch = stalkerServerSearchEnabled && hasStalkerSource === true;
+
   // Use appropriate store values based on type
   const selectedCategoryId = type === 'movie' ? moviesCategory : seriesCategory;
   const setSelectedCategoryId = type === 'movie' ? setMoviesCategory : setSeriesCategory;
+
+  // The tab and the view are gated on the same condition, but that only keeps the view
+  // from opening a hidden tab — it does not clear a selection made while the tab existed.
+  // With the sentinel still selected and the tab gone, the sidebar highlights nothing
+  // while the page shows Home, so drop the selection and let both agree again.
+  useEffect(() => {
+    if (stalkerServerSearchEnabled && hasStalkerSource !== false) return;
+    if (selectedCategoryId === STALKER_SERVER_SEARCH_ID) setSelectedCategoryId(null);
+  }, [stalkerServerSearchEnabled, hasStalkerSource, selectedCategoryId, setSelectedCategoryId]);
+
   const selectedItem = type === 'movie' ? moviesSelectedItem : seriesSelectedItem;
   const setSelectedItem = type === 'movie' ? setMoviesSelectedItem : setSeriesSelectedItem;
   const searchQuery = type === 'movie' ? moviesSearchQuery : seriesSearchQuery;
@@ -1016,10 +1055,9 @@ export function VodPage({ type, onPlay, onClose, vodPlayerMode, onSelectVodPlaye
         visible={sidebarVisible}
         onClose={() => setSidebarVisible(false)}
         onShow={() => setSidebarVisible(true)}
-      />
-
-      {/* Main content */}
-      <main className="vod-page__content">
+        showServerSearch={showServerSearch}
+      />        {/* Main content */}
+        <main className="vod-page__content">
         {selectedService ? (
           <StremioHoverProvider>
             <StreamingServiceView
@@ -1030,6 +1068,10 @@ export function VodPage({ type, onPlay, onClose, vodPlayerMode, onSelectVodPlaye
             />
             <StremioHoverCard />
           </StremioHoverProvider>
+        ) : selectedCategoryId === STALKER_SERVER_SEARCH_ID && showServerSearch ? (
+          // Portal-side search: results replace the browse grid, and their state is
+          // cached in the session store so returning from a detail page restores them.
+          <StalkerServerSearchView type={browseType} onOpenItem={handleItemClick} />
         ) : selectedCategoryId === 'all' ? (
           // All items: Virtualized grid with no filter
           <VodBrowse

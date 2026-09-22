@@ -72,6 +72,7 @@ const BOOLEAN_KEYS = new Set([
   'useEventBasedReconnect', 'stallDetectionEnabled', 'showLoadingScreen',
   'transparentGuideHideHeader', 'allowLanSources', 'categorySidebarAutohide', 'v3DefaultMigrated', 'volumePercentDefaultMigrated', 'subAssOverrideDefaultMigrated', 'epgLazyLoadingDefaultMigrated', 'collapseSourceCategoriesOnStartupDefaultMigrated',
   'hdrTonemapToSdr', 'showHdrQuickToggle', 'controllerEnabled', 'controllerBackgroundListening', 'remoteControlEnabled',
+  'stalkerServerSearchEnabled',
 ] as const);
 
 const NUMBER_KEYS = new Set([
@@ -552,6 +553,7 @@ async function hydrateSettingsStore(): Promise<void> {
         globalLiveTvUserAgent: data.globalLiveTvUserAgent ?? '',
         stalkerVodPageConcurrency: data.stalkerVodPageConcurrency ?? 4,
         stalkerCategoryCacheMinutes: data.stalkerCategoryCacheMinutes ?? 5,
+        stalkerServerSearchEnabled: data.stalkerServerSearchEnabled ?? false,
         epgDarkenCurrent: data.epgDarkenCurrent ?? false,
         epgHighlightBorderCurrent: data.epgHighlightBorderCurrent ?? false,
         epgBoldChannelNames: data.epgBoldChannelNames ?? false,

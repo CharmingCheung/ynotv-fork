@@ -1149,7 +1149,11 @@
         "pageConcurrencyDesc": "Sa faqe përmbajtjeje merren paralelisht kur hapni një kategori filmash ose serialesh VOD. Portalet Stalker kthejnë 14 elemente për faqe dhe 4 është vlera e rekomanduar e sigurt si parazgjedhje. Vlerat më të larta ngarkojnë më shpejt, por dërgojnë më shumë kërkesa të njëkohshme te ofruesi juaj, gjë që mund të çojë në bllokim ose ban të llogarisë tuaj — ju jeni përgjegjës për vlerën që vendosni.",
         "categoryCache": "Kohëmatësi i cache-it të kategorive VOD",
         "categoryCacheDesc": "Sa kohë ripërdoren elementet e një kategorie të hapur përpara se të rifreskohen nga portali.",
-        "cacheAlwaysRefresh": "Rifresko gjithmonë kur hapet (pa cache)"
+        "cacheAlwaysRefresh": "Rifresko gjithmonë kur hapet (pa cache)",
+        "serverSearch": "Kërkim në server",
+        "serverSearchConsTitle": "Mbani parasysh",
+        "serverSearchDesc": "Shton një skedë “Stalker Server Search” në shiritin anësor të Filma dhe Seriale, që kërkon në katalogun e vetë portalit në vend të asaj që është ngarkuar lokalisht. Vetëm për portale MAC (Stalker).",
+        "serverSearchCons": "• Nuk e mbështesin të gjitha portalet; një portal që shpërfill parametrin e kërkimit raportohet si i pambështetur në vend që të hamendësohet (zbulohet në kërkimin e parë).\n• Vetëm filma dhe seri — kanalet e drejtpërdrejta nuk kërkohen në këtë mënyrë.\n• Kërkesat me shumë fjalë krahasohen fjalë për fjalë: fjalët që nuk janë krah për krah në titull, ose me radhë tjetër, mund të kthejnë më pak rezultate ose asnjë, dhe atëherë kërkohet fjala më e gjatë (e përafërt).\n• Kërkimi shkon te portali, prandaj është më i ngadaltë se ai lokal, kërkon portal të arritshëm dhe mund të skadojë në një server të zënë ose me kufizime.\n• Rezultatet nuk filtrohen sipas kategorive të çaktivizuara, dhe titujt e kthyer ruhen në bibliotekën tënde që të mund të luhen."
       },
       "sourcesTitle": "Burimet",
       "syncChannels": "Sinkronizo kanalet",
@@ -3539,7 +3543,21 @@
     "cleanAllUnavailableBtn": "Hiq {{count}} artikuj që mungojnë",
     "episodeAlreadyInPlaylistMsg": "{{title}} është tashmë në {{name}}. Ta shtosh gjithsesi?",
     "allEpisodesAlreadyInPlaylistMsg": "Të gjitha {{count}} episodet e zgjedhura janë tashmë në {{name}}. T'i shtosh gjithsesi?",
-    "someEpisodesAlreadyInPlaylistMsg": "{{count}} nga {{total}} episodet e zgjedhura janë tashmë në {{name}}. T'i shtosh gjithsesi?"
+    "someEpisodesAlreadyInPlaylistMsg": "{{count}} nga {{total}} episodet e zgjedhura janë tashmë në {{name}}. T'i shtosh gjithsesi?",
+    "stalkerServerSearchTitle": "Kërkim në server",
+    "stalkerServerSearchSource": "Serveri",
+    "stalkerServerSearchCategory": "Kategoria",
+    "stalkerServerSearchQuery": "Kërko",
+    "stalkerServerSearchMoreOnServer": "Më shumë rezultate në këtë server",
+    "stalkerServerSearchMore": "Shfaq më shumë rezultate",
+    "stalkerServerSearchTooMany": "Shumë rezultate për t'u ngarkuar — zgjidh një kategori ose një fjalë më të gjatë",
+    "stalkerServerSearchUnsupported": "Ky server nuk mbështet kërkimin, prandaj u kthye i gjithë katalogu",
+    "stalkerServerSearchNoMatches": "Asgjë në këtë server nuk përputhet me \"{{query}}\"",
+    "stalkerServerSearchMatchingPhrase": "Nuk ka përputhje të saktë — po shfaqet \"{{phrase}}\"",
+    "stalkerServerSearchMatchingAllWords": "Nuk ka përputhje të saktë për fjalët e tua — po shfaqen titujt që i përmbajnë të gjitha",
+    "stalkerServerSearchNoSources": "Nuk u gjet asnjë burim Stalker i aktivizuar. Shto një në Cilësimet ose çaktivizo këtë.",
+    "stalkerServerSearchTab": "Stalker Kërkim në server",
+    "stalkerServerSearchLoadAllResults": "Ngarko të gjitha rezultatet"
   },
   "dvr": {
     "scheduleOptionsTitle": "Planifiko regjistrimin",

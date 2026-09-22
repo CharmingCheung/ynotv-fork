@@ -51,6 +51,94 @@ export interface StalkerCatchupOptions {
     programId?: string;
 }
 
+/**
+ * Options for a portal-side VOD/series search.
+ *
+ * `fromPage`/`maxPages` are expressed in portal *pages*, not items. Stalker
+ * portals page `get_ordered_list` at ~14 items (`max_page_items`), so a batch
+ * of 4 pages is roughly 56 results — one row of posters is 6-8 items, which is
+ * why a caller should never load a single page at a time.
+ */
+export interface StalkerSearchOptions {
+    /** Category as stored by the app (`{sourceId}_vod_123`); undefined/`*` = the whole library. */
+    categoryId?: string;
+    /** 0-based data page to resume from (default 0). Use `nextPage` from a previous call. */
+    fromPage?: number;
+    /** Pages to fetch in this call (default 4). */
+    maxPages?: number;
+    /**
+     * The phrase a previous call committed to (`phrase` from its result), needed when
+     * `fromPage` > 0. The verbatim fallback below only runs on the first page, so a
+     * resuming caller that omits this sends the user's words again — which is exactly
+     * the phrase that returned nothing in the first place.
+     */
+    phrase?: string;
+    /**
+     * The endpoint a previous call committed to (`endpoint` from its result), needed when
+     * `fromPage` > 0 and the caller is `searchSeries`. A series search falls back from
+     * `type=series` to `type=vod` on the first page, and that choice has to survive the
+     * resume: re-running the fallback would ask the VOD endpoint for its page N — a
+     * different result set's page N — and on a portal with no `type=series` at all it
+     * would spend a request proving that again on every page.
+     */
+    endpoint?: StalkerSearchEndpoint;
+    onProgress?: (info: { page: number; loaded: number; total?: number }) => void;
+}
+
+/** Which portal endpoint a search walk ran against. */
+export type StalkerSearchEndpoint = 'vod' | 'series';
+
+/** One bounded walk of a searched `get_ordered_list` — internal to the search API. */
+interface StalkerSearchWalk {
+    items: any[];
+    total: number;
+    /** Items collected by this walk, before any local narrowing. */
+    loadedCount: number;
+    /** 0-based data page a caller should resume from. */
+    nextPage: number;
+    /** The last page fetched was a full page, so more pages may exist. */
+    lastPageFull: boolean;
+}
+
+/** Result of one bounded search walk. */
+export interface StalkerSearchResult {
+    items: Channel[];
+    /** The provider's own total for the phrase that was actually sent. */
+    total: number;
+    /** 0-based data page to pass back as `fromPage` to continue the walk. */
+    nextPage: number;
+    hasMore: boolean;
+    /**
+     * The portal answered as though no `search` were sent (its totals match an
+     * unsearched call) — some middlewares simply ignore the parameter.
+     */
+    unsupported: boolean;
+    /**
+     * The phrase actually sent. Differs from the query when the full phrase
+     * matched nothing and a wider form of it was retried instead, so the caller
+     * can say what was searched — and pass it back as `phrase` to resume.
+     */
+    phrase: string;
+    /**
+     * How `phrase` relates to what the user typed, so a caller can say which one it got.
+     *
+     * - `verbatim`: the words as typed were found in that order, side by side.
+     * - `all-words`: the same words found in that order with anything allowed between
+     *   them (the portal's `%` wildcard did the filtering server-side).
+     * - `word`: only the query's longest word was searched, and the rest were applied
+     *   locally.
+     */
+    matchKind: StalkerSearchMatchKind;
+    /**
+     * Which endpoint this walk actually ran against, to pass back as `endpoint` to resume.
+     * A series search settles this on its first page (see `searchSeries`) and must not be
+     * guessed at again mid-walk.
+     */
+    endpoint: StalkerSearchEndpoint;
+}
+
+export type StalkerSearchMatchKind = 'verbatim' | 'all-words' | 'word';
+
 export class StalkerClient {
     // Shared tokens and refresh promises across all client instances of a source
     private static globalTokens = new Map<string, { token: string; timestamp: number }>();
@@ -70,6 +158,12 @@ export class StalkerClient {
     // Learned page-numbering offset for get_ordered_list (0 = portal is 0-based, 1 = portal is
     // 1-based and coerces p=0 into page 1). null until the first fetch determines it.
     private pageOffset: 0 | 1 | null = null;
+    /**
+     * Whether this portal passes `%` through to its own `LIKE` (see `wildcardPhrase`).
+     * `null` until something has actually been observed, so a portal that treats the
+     * character literally pays for the discovery once rather than on every search.
+     */
+    private searchWildcards: boolean | null = null;
 
     /**
      * Normalize Stalker censored/lock fields to boolean.
@@ -2214,6 +2308,536 @@ export class StalkerClient {
             console.error('[Stalker] Failed to fetch account info:', err);
             return { mac: this.config.mac };
         }
+    }
+
+    /**
+     * Search the portal's own VOD library.
+     *
+     * Stalker has no search action: `search=<phrase>` rides on the ordinary
+     * `get_ordered_list` call, and it is a literal, case-insensitive substring
+     * test against the stored title. A colon, a dash or a doubled space inside
+     * the phrase is enough to return nothing (`avatar way` finds no
+     * `Avatar: The Way of Water`), so a query is tried verbatim first and only
+     * then retried as its longest single word, with the other words applied
+     * locally. Series entries served by the VOD endpoint are filtered out here,
+     * exactly as `getVodStreams` does.
+     */
+    async searchVod(query: string, options: StalkerSearchOptions = {}): Promise<StalkerSearchResult> {
+        // The VOD endpoint also serves `is_series` entries, and `runSearch` is told which of
+        // them this list can show — otherwise a wider phrase form could be accepted on the
+        // strength of a row that is then filtered away, and the user would see nothing.
+        const result = await this.runSearch('vod', query, options, item => !this.isSeriesItem(item));
+        const items = result.items
+            .filter(item => !this.isSeriesItem(item))
+            .map(item => this.mapSearchMovie(item, options.categoryId));
+        return { ...result, items, total: this.reconcileTotal(result, items.length) };
+    }
+
+    /**
+     * Search the portal's own series library.
+     *
+     * Uses `type=series` when the portal serves it and falls back to the VOD
+     * endpoint filtered to `is_series`, mirroring `getSeriesStreams` — some
+     * portals return nothing at all for `type=series`.
+     *
+     * The fallback is a first-page decision. Which endpoint answered comes back as
+     * `endpoint` and is honoured on a resume, so paging a series search can neither
+     * splice the VOD endpoint's page N into the walk nor re-probe an endpoint the
+     * portal has already answered with nothing.
+     */
+    async searchSeries(query: string, options: StalkerSearchOptions = {}): Promise<StalkerSearchResult> {
+        // Settle the endpoint on page 0 and stay on it: this is the same rule `phrase`
+        // follows, and `if (result.items.length === 0)` cannot tell "this portal serves no
+        // `type=series`" from "this page of the series walk was empty", so a resume that
+        // re-ran it would switch endpoints mid-walk.
+        const committed = (options.fromPage ?? 0) > 0 ? options.endpoint : undefined;
+        const canShow = committed === 'vod'
+            ? (item: any) => this.isSeriesItem(item)
+            : () => true;
+        let result = await this.runSearch(committed ?? 'series', query, options, canShow);
+        if (!committed && result.items.length === 0) {
+            const vodResult = await this.runSearch('vod', query, options, item => this.isSeriesItem(item));
+            if (vodResult.items.some(item => this.isSeriesItem(item))) {
+                result = vodResult;
+            }
+        }
+        // `canShow` chooses which walk to *accept*; it never removes rows from what a walk
+        // returns. So a walk served by the VOD list — which carries films and `is_series`
+        // entries side by side — has to be filtered here, on the first page and on every
+        // resumed one alike, or films get mapped and stored as series.
+        const items = (result.endpoint === 'vod'
+            ? result.items.filter(item => this.isSeriesItem(item))
+            : result.items
+        ).map(item => this.mapSearchSeries(item, options.categoryId));
+        return { ...result, items, total: this.reconcileTotal(result, items.length) };
+    }
+
+    /**
+     * Keep `total` honest once a walk is finished.
+     *
+     * The portal counts everything its phrase matched, which is not what a caller can
+     * display: a VOD search for "avatar" on a portal tested here reported 61 matches, 12 of
+     * which were `is_series` entries this API drops, and local narrowing removes rows too.
+     * When the walk is complete the shown count *is* the answer, so report that; while
+     * pages remain the provider's number is a truthful upper bound and stays as-is.
+     */
+    private reconcileTotal(
+        result: { total: number; hasMore: boolean },
+        shownCount: number
+    ): number {
+        return result.hasMore ? result.total : shownCount;
+    }
+
+    /**
+     * Try the query verbatim, fall back to its longest word, narrow locally and
+     * decide whether the portal honoured `search` at all.
+     */
+    private async runSearch(
+        type: 'vod' | 'series',
+        query: string,
+        options: StalkerSearchOptions,
+        canShow: (item: any) => boolean
+    ): Promise<{ items: any[]; total: number; nextPage: number; hasMore: boolean; unsupported: boolean; phrase: string; matchKind: StalkerSearchMatchKind; endpoint: StalkerSearchEndpoint }> {
+        await this.ensureToken();
+
+        const wanted = query.trim();
+        const terms = wanted.split(/\s+/).filter(Boolean);
+        const fromPage = Math.max(0, Math.floor(options.fromPage ?? 0));
+        const maxPages = Math.max(1, Math.floor(options.maxPages ?? 4));
+
+        // A resumed walk must stay on the phrase the caller already committed to —
+        // switching phrases mid-walk would splice two different result sets together.
+        // It is not optional: the fallback is first-page-only, so a resume that fell back
+        // to the user's own words would ask for a phrase the portal has already answered
+        // with nothing, get an empty page, and end the walk with results still unloaded.
+        const committed = fromPage > 0 ? (options.phrase ?? '').trim() : '';
+        const phrases = committed ? [committed] : [wanted];
+        // Both wider forms are first-page-only, like the fallback they extend.
+        const joined = !committed && fromPage === 0 ? this.wildcardPhrase(terms) : '';
+        if (joined && joined.toLowerCase() !== wanted.toLowerCase()) phrases.push(joined);
+        const fallbackWord = this.longestUsableTerm(terms);
+        if (!committed && fromPage === 0 && terms.length > 1 && fallbackWord) {
+            if (fallbackWord.toLowerCase() !== wanted.toLowerCase()) phrases.push(fallbackWord);
+        }
+
+        if (phrases.every(p => p.length === 0)) {
+            return { items: [], total: 0, nextPage: 0, hasMore: false, unsupported: false, phrase: '', matchKind: 'verbatim', endpoint: type };
+        }
+
+        let walk: StalkerSearchWalk | null = null;
+        let phrase = wanted;
+        let accepted = false;
+        for (const candidate of phrases) {
+            walk = await this.walkSearchPages(type, candidate, options.categoryId, fromPage, maxPages, options.onProgress);
+            phrase = candidate;
+            if (walk.items.length === 0) continue;
+
+            // Only rows this list can actually show count as an answer. Measured on a portal:
+            // `water%avatar` is answered by a single `is_series` row, so a movie search that
+            // treated that as "the wildcard found something" would show nothing at all, where
+            // the longest-word form still has the out-of-order titles the user meant.
+            const usable = walk.items.filter(canShow);
+            if (usable.length === 0) continue;
+
+            // The wildcard form widens the match (this portal also tests plot summaries), so
+            // it only counts when a title's own name carries every word the user typed.
+            if (candidate === joined && !usable.some(item => terms.every(term => this.itemNameMatches(item, term)))) {
+                continue;
+            }
+
+            accepted = true;
+            break;
+        }
+        if (!walk || !accepted) {
+            return { items: [], total: 0, nextPage: fromPage, hasMore: false, unsupported: false, phrase, matchKind: 'verbatim', endpoint: type };
+        }
+
+        if (joined && phrase === joined) this.searchWildcards = true;
+
+        let items = walk.items;
+        const fellBack = phrase.toLowerCase() !== wanted.toLowerCase();
+        if (fellBack) {
+            // Narrowing is a convenience, never a filter that empties a real result set:
+            // when no loaded item carries every word we keep the broader list and let
+            // `phrase` explain what was actually searched.
+            const narrowed = items.filter(item => terms.every(term => this.itemNameMatches(item, term)));
+            if (narrowed.length > 0) {
+                items = narrowed;
+            } else {
+                console.log(
+                    `[Stalker] Search "${wanted}": no loaded result carries every word; ` +
+                    `showing the ${items.length} item(s) matching "${phrase}" instead`
+                );
+            }
+        }
+
+        // A portal that ignores `search` returns its normal catalogue, so nothing it
+        // sent back contains the phrase. Confirm against an unsearched call before
+        // telling the user the portal cannot search — a term could legitimately match
+        // titles whose names we do not compare (portals that match on description).
+        let unsupported = false;
+        if (!fellBack && items.length > 0 && !items.some(item => this.itemNameMatches(item, wanted))) {
+            unsupported = await this.portalIgnoresSearch(type, options.categoryId, walk.total);
+            if (unsupported) {
+                console.warn(
+                    `[Stalker] ${type} search: portal returned its unfiltered catalogue for "${wanted}" ` +
+                    `(total ${walk.total}) — this middleware does not support search`
+                );
+            }
+        }
+
+        // Base this on what the walk actually collected, not on the narrowed list: local
+        // narrowing legitimately drops rows the portal counted, and that must not look
+        // like "there is another page to fetch".
+        const hasMore = walk.lastPageFull && (walk.total === 0 || walk.loadedCount < walk.total);
+
+        // `joined` sits between `wanted` and the longest word, so a winner that is neither of
+        // those two is the wildcard form having been tried and lost. That says nothing about
+        // whether this portal honours `%` — the words may simply not appear in that order —
+        // so settle it once, against a phrase already known to match something, rather than
+        // spending the request again on every later search.
+        const joinedTried = joined !== '' && phrase !== wanted && phrase !== joined;
+        if (joinedTried && this.searchWildcards === null) {
+            await this.probeWildcardSupport(type, options.categoryId, phrase);
+        }
+
+        const matchKind: StalkerSearchMatchKind = !fellBack
+            ? 'verbatim'
+            : phrase === joined
+                ? 'all-words'
+                : phrase === fallbackWord ? 'word' : 'verbatim';
+
+        return { items, total: walk.total, nextPage: walk.nextPage, hasMore, unsupported, phrase, matchKind, endpoint: type };
+    }
+
+    /**
+     * The longest word of the query that is made of something other than punctuation.
+     *
+     * A term of pure wildcards is the one shape the fallback must not be allowed to pick:
+     * `%%` interpolated into a `LIKE` is the same query as `%`, which returns every title on
+     * the portal (measured: 100,560), so a two-word query of `%% __` would walk the whole
+     * catalogue and could even read back as "this portal ignores search".
+     */
+    private longestUsableTerm(terms: string[]): string {
+        return terms
+            .filter(term => this.normalizeSearchText(term).length > 0)
+            .sort((a, b) => b.length - a.length)[0] ?? '';
+    }
+
+    /**
+     * The query's words joined by `%`, or `''` when that cannot be built.
+     *
+     * Some middlewares interpolate `search` raw into their own `LIKE '%…%'`, so `%` reaches
+     * the query as a wildcard: `avatar%way` finds "Avatar: The Way of Water" where the
+     * literal pair finds nothing, and it does the all-words filtering server-side instead of
+     * us walking a wider set to narrow locally. Confirmed on one of the two portals measured
+     * (7 rows for `avatar%way`, 0 for `avatar way`); the other treats the character literally.
+     *
+     * Two traps come with it. A bare `%` matches the entire catalogue on a portal like that
+     * (100,560 titles measured), so the words are stripped of `%`, `_` and `\` before being
+     * joined — a user typing `%` must not turn a search into a full-library walk. And only
+     * `%` survives: `_` is escaped by the middleware (`avatar__way` returned 0 where `_` as a
+     * single-character wildcard would have matched), so patterns are built from `%` alone.
+     */
+    private wildcardPhrase(terms: string[]): string {
+        if (terms.length < 2) return '';
+        // Only worth it on a portal we have not already seen ignore the wildcard.
+        if (this.searchWildcards === false) return '';
+        const safe = terms
+            .map(term => term.replace(/[%_\\]/g, '').trim())
+            .filter(term => term.length > 0);
+        return safe.length > 1 ? safe.join('%') : '';
+    }
+
+    /**
+     * Set `searchWildcards` from one request, using a phrase already known to match rows.
+     *
+     * `<phrase>` and `%<phrase>%` are the same query to a portal that expands the wildcard
+     * (its `LIKE '%%phrase%%'` is `LIKE '%phrase%'`), and a portal that treats `%` literally
+     * finds nothing, because no title contains those percent signs. So any rows at all mean
+     * the wildcard is live, and none means it is inert — no false reading either way.
+     *
+     * The provider's count is the primary signal, but it is not always there: a middleware
+     * that answers with a bare array (or omits `total_items`) reports `undefined`, and
+     * reading that as zero would mark a wildcard-honouring portal inert for the rest of the
+     * session, quietly costing every later multi-word search its precise walk. When there is
+     * no count to read, the rows that came back are the only evidence, and they are enough:
+     * a literal portal cannot return a row for a pattern containing `%`.
+     */
+    private async probeWildcardSupport(
+        type: 'vod' | 'series',
+        categoryId: string | undefined,
+        knownToMatch: string
+    ): Promise<void> {
+        try {
+            const raw = await this.fetchStalker<any>('get_ordered_list', type, {
+                category: this.portalCategoryId(categoryId),
+                search: `%${knownToMatch}%`,
+                include_censored: '1',
+                censored: '1',
+                p: String(this.pageOffset ?? 0),
+            });
+            const parsed = this.extractOrderedList(raw);
+            this.searchWildcards = (parsed.total_items ?? parsed.items.length) > 0;
+        } catch (err) {
+            // Leave it unknown: the cost of asking again later is one request.
+            console.warn('[Stalker] Could not check whether this portal honours the % wildcard:', err);
+        }
+    }
+
+    /**
+     * Walk up to `maxPages` pages of a `search`ed `get_ordered_list`.
+     *
+     * Page numbering is the same trap as an ordinary category: an unsearched and a
+     * searched list both answer identically for `p=0` and `p=1` on the portals we
+     * measured, so the first walk probes whether the portal is 0- or 1-based and
+     * memoizes the answer, exactly like `fetchOrderedListPages`.
+     *
+     * Only the first page is mandatory — a later page that fails ends the walk with
+     * what was already loaded rather than throwing away results the user can see.
+     */
+    private async walkSearchPages(
+        type: 'vod' | 'series',
+        phrase: string,
+        categoryId: string | undefined,
+        fromPage: number,
+        maxPages: number,
+        onProgress?: StalkerSearchOptions['onProgress']
+    ): Promise<StalkerSearchWalk> {
+        const baseParams: Record<string, string> = {
+            category: this.portalCategoryId(categoryId),
+            search: phrase,
+            include_censored: '1',
+            censored: '1',
+        };
+
+        const fetchPage = async (p: number) =>
+            this.extractOrderedList(
+                await this.fetchStalker<any>('get_ordered_list', type, { ...baseParams, p: String(p) })
+            );
+
+        let pOffset = this.pageOffset ?? 0;
+        const seen = new Set<string | number>();
+        const items: any[] = [];
+        let total = 0;
+        let pageSize = 14;
+        let lastPageFull = false;
+        let pagesFetched = 0;
+        let dataIndex = fromPage;
+        let learnOffset = this.pageOffset === null && fromPage === 0;
+        // Search pages on some portals overlap (measured: a 61-result search
+        // came back 49 unique items across six pages), so a page that adds nothing new
+        // is not proof the walk is finished. Only two in a row means the portal is
+        // repeating itself; `maxPages` is the hard bound either way.
+        let consecutiveEmptyPages = 0;
+
+        while (pagesFetched < maxPages) {
+            let page: Awaited<ReturnType<typeof fetchPage>>;
+            try {
+                page = await fetchPage(dataIndex + pOffset);
+            } catch (err) {
+                if (pagesFetched === 0) throw err;
+                console.warn(`[Stalker] Search "${phrase}": page ${dataIndex + pOffset} failed; stopping with what loaded:`, err);
+                break;
+            }
+
+            if (page.max_page_items) pageSize = page.max_page_items;
+            if (page.total_items != null) total = page.total_items;
+
+            const fresh = page.items.filter((item: any) => item?.id == null || !seen.has(item.id));
+            for (const item of fresh) {
+                if (item?.id != null) seen.add(item.id);
+            }
+            items.push(...fresh);
+            pagesFetched++;
+            dataIndex++;
+            lastPageFull = page.items.length > 0 && page.items.length >= pageSize;
+
+            if (onProgress) onProgress({ page: dataIndex, loaded: items.length, total });
+
+            if (!lastPageFull) break;
+
+            if (fresh.length === 0) {
+                consecutiveEmptyPages++;
+                if (consecutiveEmptyPages >= 2) {
+                    console.warn(`[Stalker] Search "${phrase}": pages ${dataIndex + pOffset - 2}-${dataIndex + pOffset - 1} added nothing new; stopping.`);
+                    lastPageFull = false;
+                    break;
+                }
+            } else {
+                consecutiveEmptyPages = 0;
+            }
+
+            if (learnOffset) {
+                learnOffset = false;
+                try {
+                    const probe = await fetchPage(1);
+                    const repeatsFirstPage =
+                        probe.items.length > 0 && probe.items.every((item: any) => item?.id != null && seen.has(item.id));
+                    if (repeatsFirstPage) {
+                        pOffset = 1;
+                        this.pageOffset = 1;
+                    } else {
+                        // The probe was a real second page: keep it, and treat the portal as 0-based.
+                        pOffset = 0;
+                        this.pageOffset = 0;
+                        if (probe.max_page_items) pageSize = probe.max_page_items;
+                        if (probe.total_items != null) total = probe.total_items;
+                        const probeFresh = probe.items.filter((item: any) => item?.id == null || !seen.has(item.id));
+                        for (const item of probeFresh) {
+                            if (item?.id != null) seen.add(item.id);
+                        }
+                        items.push(...probeFresh);
+                        pagesFetched++;
+                        dataIndex++;
+                        lastPageFull = probe.items.length > 0 && probe.items.length >= pageSize;
+                        if (onProgress) onProgress({ page: dataIndex, loaded: items.length, total });
+                        if (probeFresh.length === 0) break;
+                    }
+                } catch (err) {
+                    // Leave the offset unlearned: the next multi-page search retries the probe.
+                    console.warn(`[Stalker] Search "${phrase}": could not probe page numbering:`, err);
+                }
+            }
+        }
+
+        return { items, total, loadedCount: items.length, nextPage: dataIndex, lastPageFull };
+    }
+
+    /**
+     * Confirm that a portal ignored `search`, by comparing the searched total with the
+     * same call made without it. Only called when nothing the portal returned carries
+     * the phrase, so the extra request is rare.
+     */
+    private async portalIgnoresSearch(
+        type: 'vod' | 'series',
+        categoryId: string | undefined,
+        searchTotal: number
+    ): Promise<boolean> {
+        try {
+            const raw = await this.fetchStalker<any>('get_ordered_list', type, {
+                category: this.portalCategoryId(categoryId),
+                include_censored: '1',
+                censored: '1',
+                p: String(this.pageOffset ?? 0),
+            });
+            const unsearched = this.extractOrderedList(raw);
+            return unsearched.total_items != null && unsearched.total_items === searchTotal;
+        } catch (err) {
+            console.warn('[Stalker] Could not verify whether the portal supports search:', err);
+            return false;
+        }
+    }
+
+    /** Strip this client's source prefix so the portal sees its own category id. */
+    private portalCategoryId(categoryId?: string): string {
+        if (!categoryId) return '*';
+        return (
+            categoryId
+                .replace(`${this.sourceId}_vod_`, '')
+                .replace(`${this.sourceId}_series_`, '')
+                .replace(`${this.sourceId}_`, '') || '*'
+        );
+    }
+
+    private isSeriesItem(item: any): boolean {
+        const isSeries = item?.is_series;
+        return isSeries === '1' || isSeries === 1 || isSeries === true;
+    }
+
+    /**
+     * Compare a title against a search word the way a user reads it: case-insensitive
+     * and ignoring punctuation, so local narrowing is not defeated by the colon that
+     * defeated the portal's own substring match.
+     */
+    private itemNameMatches(item: any, term: string): boolean {
+        const name = this.normalizeSearchText(String(item?.name ?? ''));
+        const needle = this.normalizeSearchText(term);
+        return needle.length > 0 && name.includes(needle);
+    }
+
+    /**
+     * Fold a title or query down to comparable words: case-insensitive, accent-insensitive
+     * and punctuation-blind, but Unicode-aware.
+     *
+     * An ASCII-only class (`[^a-z0-9]+`) erases non-Latin text entirely — a Cyrillic, Greek,
+     * Arabic or CJK query normalised to an empty needle, which made every comparison fail
+     * and left this narrowing with nothing to narrow by.
+     */
+    private normalizeSearchText(value: string): string {
+        return value
+            .normalize('NFD')
+            .replace(/\p{M}+/gu, '')
+            .toLowerCase()
+            .replace(/[^\p{L}\p{N}]+/gu, ' ')
+            .trim();
+    }
+
+    /**
+     * Category membership for a search hit.
+     *
+     * `get_ordered_list` answers every row with its own `category_id` / `category_id_1`,
+     * and those are the only thing that lets a hit be browsed from the categories list
+     * instead of existing only inside a search result. The caller's scoped category (when
+     * the search ran inside one) is included too. These portals use "0" for "none".
+     */
+    private searchCategoryIds(item: any, categoryId: string | undefined, isSeries: boolean): string[] {
+        const ids = new Set<string>();
+        if (categoryId) ids.add(categoryId);
+        const prefix = isSeries ? `${this.sourceId}_series_` : `${this.sourceId}_vod_`;
+        for (const raw of [item?.category_id, item?.category_id_1]) {
+            const value = String(raw ?? '').trim();
+            if (value && value !== '0' && value !== '*') ids.add(`${prefix}${value}`);
+        }
+        return [...ids];
+    }
+
+    /** Item → movie, mirroring `getVodStreams` so a search hit is the same row shape. */
+    private mapSearchMovie(item: any, categoryId?: string): Channel {
+        // The movie row carries fields the `Channel` surface does not declare (title etc.);
+        // `getVodStreams` returns the same literal from a loosely typed map, so assert here.
+        return {
+            stream_id: `${this.sourceId}_vod_${item.id}`,
+            name: item.name,
+            title: item.name,
+            stream_icon: this.resolvePosterUrl(item.screenshot_uri),
+            rating: item.rating_kinopoisk || item.rating_imdb || '',
+            plot: item.description || '',
+            genre: item.genre || '',
+            cast: item.actors || '',
+            director: item.director || '',
+            year: item.year || '',
+            release_date: item.year ? `${item.year}-01-01` : '',
+            category_ids: this.searchCategoryIds(item, categoryId, false),
+            added: item.added || item.time_added || item.added_time || '',
+            container_extension: item.container_extension || 'mp4',
+            direct_url: `stalker_vod:${item.id}:${item.cmd || ''}`,
+            source_id: this.sourceId,
+            epg_channel_id: '',
+        } as Channel;
+    }
+
+    /** Item → series, mirroring `getSeriesStreams` so a search hit is the same row shape. */
+    private mapSearchSeries(item: any, categoryId?: string): Channel {
+        return {
+            stream_id: `${this.sourceId}_series_${item.id}`,
+            series_id: `${this.sourceId}_series_${item.id}`,
+            name: item.name,
+            stream_icon: this.resolvePosterUrl(item.screenshot_uri),
+            cover: this.resolvePosterUrl(item.screenshot_uri),
+            rating: item.rating_kinopoisk || item.rating_imdb || '',
+            plot: item.description || '',
+            genre: item.genre || '',
+            cast: item.actors || '',
+            director: item.director || '',
+            year: item.year || '',
+            releaseDate: item.year ? `${item.year}-01-01` : '',
+            category_ids: this.searchCategoryIds(item, categoryId, true),
+            added: item.added || item.time_added || item.added_time || '',
+            direct_url: `stalker_series:${item.id}:${item.cmd || `/media/${item.id}.mpg`}`,
+            source_id: this.sourceId,
+            epg_channel_id: '',
+        } as Channel;
     }
 
     // Methods expected by sync.ts

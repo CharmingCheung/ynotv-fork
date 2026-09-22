@@ -1149,7 +1149,11 @@
         "pageConcurrencyDesc": "Bir VOD Film veya Dizi kategorisini açtığınızda kaç içerik sayfasının paralel getirileceği. Stalker portalları sayfa başına 14 öğe döndürür ve 4 önerilen güvenli varsayılandır. Daha yüksek değerler daha hızlı yükler ancak sağlayıcınıza daha fazla eşzamanlı istek gönderir ve hesabınızın engellenmesine veya yasaklanmasına yol açabilir — ayarladığınız değerden siz sorumlusunuz.",
         "categoryCache": "VOD kategori önbellek süresi",
         "categoryCacheDesc": "Açılan bir kategorinin öğelerinin portaldan yeniden alınmadan önce ne kadar süre yeniden kullanılacağı.",
-        "cacheAlwaysRefresh": "Açılışta her zaman yenile (önbellek yok)"
+        "cacheAlwaysRefresh": "Açılışta her zaman yenile (önbellek yok)",
+        "serverSearch": "Sunucuda arama",
+        "serverSearchConsTitle": "Unutmayın",
+        "serverSearchDesc": "Filmler ve Diziler kenar çubuğuna, yalnızca yerel olarak yüklenenleri değil portalın kendi kataloğunu arayan «Stalker Server Search» sekmesini ekler. Yalnızca MAC (Stalker) portalları için.",
+        "serverSearchCons": "• Her portal desteklemez; arama parametresini yok sayan portal tahmin edilmek yerine desteklenmiyor olarak bildirilir (ilk aramada anlaşılır).\n• Yalnızca filmler ve diziler — canlı kanallar bu şekilde aranamaz.\n• Çok kelimeli sorgular birebir karşılaştırılır: başlıkta yan yana olmayan veya farklı sıradaki kelimeler daha az sonuç ya da hiç sonuç getirmeyebilir; bu durumda en uzun kelime aranır (yaklaşık).\n• Arama portala gider; bu yüzden yerel aramadan yavaştır, portalın erişilebilir olmasını gerektirir ve yoğun ya da sınırlı bir sunucuda zaman aşımına uğrayabilir.\n• Sonuçlar devre dışı kategorilerinize göre filtrelenmez ve dönen başlıklar oynatılabilmesi için kitaplığınıza kaydedilir."
       },
       "sourcesTitle": "Kaynaklar",
       "syncChannels": "Kanalları Eşitle",
@@ -3539,7 +3543,21 @@
     "cleanAllUnavailableBtn": "{{count}} Eksik Öğeyi Kaldır",
     "episodeAlreadyInPlaylistMsg": "{{title}} zaten {{name}} listesinde. Yine de eklensin mi?",
     "allEpisodesAlreadyInPlaylistMsg": "Seçilen {{count}} bölümün tamamı zaten {{name}} listesinde. Yine de eklensin mi?",
-    "someEpisodesAlreadyInPlaylistMsg": "Seçilen {{total}} bölümden {{count}} tanesi zaten {{name}} listesinde. Yine de eklensin mi?"
+    "someEpisodesAlreadyInPlaylistMsg": "Seçilen {{total}} bölümden {{count}} tanesi zaten {{name}} listesinde. Yine de eklensin mi?",
+    "stalkerServerSearchTitle": "Sunucuda arama",
+    "stalkerServerSearchSource": "Sunucu",
+    "stalkerServerSearchCategory": "Kategori",
+    "stalkerServerSearchQuery": "Ara",
+    "stalkerServerSearchMoreOnServer": "Bu sunucuda daha fazla sonuç",
+    "stalkerServerSearchMore": "Daha fazla sonuç göster",
+    "stalkerServerSearchTooMany": "Yükleme için çok fazla sonuç — bir kategori veya daha uzun bir kelime seçin",
+    "stalkerServerSearchUnsupported": "Bu sunucu aramayı desteklemiyor, bu yüzden tüm katalog döndürüldü",
+    "stalkerServerSearchNoMatches": "Bu sunucuda \"{{query}}\" ile eşleşen bir şey yok",
+    "stalkerServerSearchMatchingPhrase": "Tam eşleşme yok — \"{{phrase}}\" gösteriliyor",
+    "stalkerServerSearchMatchingAllWords": "Kelimeleriniz için tam eşleşme yok — hepsini içeren başlıklar gösteriliyor",
+    "stalkerServerSearchNoSources": "Etkin bir Stalker kaynağı bulunamadı. Ayarlardan bir tane ekleyin veya bunu kapatın.",
+    "stalkerServerSearchTab": "Stalker Sunucuda arama",
+    "stalkerServerSearchLoadAllResults": "Tüm sonuçları yükle"
   },
   "dvr": {
     "scheduleOptionsTitle": "Kaydı Planla",
