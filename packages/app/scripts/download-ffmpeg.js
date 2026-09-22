@@ -80,8 +80,10 @@ const targetPath = path.join(binDir, targetName);
 
 console.log('[FFmpeg Downloader] Target file:', targetName);
 
-// Check if FFmpeg already exists
-if (fs.existsSync(targetPath)) {
+// Other platforms use downloaded static binaries, so an existing sidecar can
+// be reused. macOS copies Homebrew FFmpeg, whose binary embeds versioned Cellar
+// paths, and must compare it with the current installation after brew upgrades.
+if (fs.existsSync(targetPath) && platform !== 'darwin') {
     console.log('[FFmpeg Downloader] ✓ FFmpeg already exists at:', targetPath);
     process.exit(0);
 }
@@ -127,8 +129,14 @@ if (platform === 'darwin') {
         process.exit(1);
     }
 
+    const sourcePath = fs.realpathSync(ffmpegPath);
+    if (fs.existsSync(targetPath) && fs.readFileSync(targetPath).equals(fs.readFileSync(sourcePath))) {
+        console.log('[FFmpeg Downloader] ✓ Cached FFmpeg matches the current Homebrew installation');
+        process.exit(0);
+    }
+
     // Copy to bin directory with correct name
-    fs.copyFileSync(ffmpegPath, targetPath);
+    fs.copyFileSync(sourcePath, targetPath);
     fs.chmodSync(targetPath, 0o755);
     console.log('[FFmpeg Downloader] ✓ FFmpeg copied to:', targetPath);
     console.log('[FFmpeg Downloader] ✅ FFmpeg ready for bundling!');

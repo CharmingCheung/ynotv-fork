@@ -38,8 +38,10 @@ if (requiredSidecars.some(path => !existsSync(path))) {
 }
 
 const ffmpeg = join(bin, `ffmpeg-${triple}${suffix}`);
-if (!existsSync(ffmpeg)) {
-  console.log('[dev-setup] preparing the missing FFmpeg sidecar');
+// Homebrew FFmpeg embeds versioned Cellar paths. Refresh the cached copy on
+// macOS so a brew upgrade does not leave it pointing at removed dylibs.
+if (!existsSync(ffmpeg) || process.platform === 'darwin') {
+  console.log(`[dev-setup] ${existsSync(ffmpeg) ? 'checking' : 'preparing the missing'} FFmpeg sidecar`);
   run(process.execPath, ['packages/app/scripts/download-ffmpeg.js']);
 }
 
