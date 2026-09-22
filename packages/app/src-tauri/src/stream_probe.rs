@@ -342,6 +342,7 @@ struct HttpCheckResult {
     latency_ms: Option<u64>,
     error_reason: Option<String>,
     playable_url: String,
+    manifest_metadata: Option<StreamMetadata>,
 }
 
 fn is_placeholder(url: &str) -> bool {
@@ -382,6 +383,7 @@ async fn check_http_stream(
             latency_ms: None,
             error_reason: Some("Known placeholder stream".to_string()),
             playable_url: url.to_string(),
+            manifest_metadata: None,
         };
     }
 
@@ -414,6 +416,7 @@ async fn check_http_stream(
                 latency_ms: Some(elapsed),
                 error_reason: Some(reason),
                 playable_url: url.to_string(),
+                manifest_metadata: None,
             };
         }
     };
@@ -428,6 +431,7 @@ async fn check_http_stream(
             latency_ms: Some(latency_ms),
             error_reason: Some(format!("HTTP {} Geoblocked/Forbidden", status_code)),
             playable_url: url.to_string(),
+            manifest_metadata: None,
         };
     }
 
@@ -438,6 +442,7 @@ async fn check_http_stream(
             latency_ms: Some(latency_ms),
             error_reason: Some(format!("HTTP Error {}", status_code)),
             playable_url: url.to_string(),
+            manifest_metadata: None,
         };
     }
 
@@ -450,19 +455,31 @@ async fn check_http_stream(
         .to_lowercase();
 
     let is_hls = content_type.contains("mpegurl") || url.to_lowercase().ends_with(".m3u8");
+    let is_dash = content_type.contains("dash+xml")
+        || url::Url::parse(url)
+            .ok()
+            .map(|parsed| parsed.path().to_lowercase().ends_with(".mpd"))
+            .unwrap_or_else(|| url.to_lowercase().contains(".mpd"));
 
-    if is_hls {
+    let mut manifest_metadata = None;
+
+    if is_hls || is_dash {
         // Read text snippet for DRM check (limit to 128KB)
         if let Ok(bytes) = response.bytes().await {
             let body = String::from_utf8_lossy(&bytes);
-            if let Some(drm) = detect_hls_drm(&body) {
-                return HttpCheckResult {
-                    status: "drm".to_string(),
-                    http_status: Some(status_code),
-                    latency_ms: Some(latency_ms),
-                    error_reason: Some(format!("DRM Protected ({})", drm)),
-                    playable_url: url.to_string(),
-                };
+            if is_hls {
+                if let Some(drm) = detect_hls_drm(&body) {
+                    return HttpCheckResult {
+                        status: "drm".to_string(),
+                        http_status: Some(status_code),
+                        latency_ms: Some(latency_ms),
+                        error_reason: Some(format!("DRM Protected ({})", drm)),
+                        playable_url: url.to_string(),
+                        manifest_metadata: None,
+                    };
+                }
+            } else {
+                manifest_metadata = parse_dash_manifest_metadata(&body);
             }
         }
     }
@@ -473,6 +490,7 @@ async fn check_http_stream(
         latency_ms: Some(latency_ms),
         error_reason: None,
         playable_url: url.to_string(),
+        manifest_metadata,
     }
 }
 
@@ -494,6 +512,174 @@ struct StreamMetadata {
     bitrate_kbps: Option<u32>,
     video_bitrate_kbps: Option<u32>,
     audio_bitrate_kbps: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename = "MPD")]
+struct ProbeDashMpd {
+    #[serde(rename = "Period", default)]
+    periods: Vec<ProbeDashPeriod>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProbeDashPeriod {
+    #[serde(rename = "AdaptationSet", default)]
+    adaptations: Vec<ProbeDashAdaptation>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProbeDashAdaptation {
+    #[serde(rename = "@contentType")]
+    content_type: Option<String>,
+    #[serde(rename = "@mimeType")]
+    mime_type: Option<String>,
+    #[serde(rename = "@codecs")]
+    codecs: Option<String>,
+    #[serde(rename = "@width")]
+    width: Option<u32>,
+    #[serde(rename = "@height")]
+    height: Option<u32>,
+    #[serde(rename = "@maxWidth")]
+    max_width: Option<u32>,
+    #[serde(rename = "@maxHeight")]
+    max_height: Option<u32>,
+    #[serde(rename = "@frameRate")]
+    frame_rate: Option<String>,
+    #[serde(rename = "Representation", default)]
+    representations: Vec<ProbeDashRepresentation>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProbeDashRepresentation {
+    #[serde(rename = "@mimeType")]
+    mime_type: Option<String>,
+    #[serde(rename = "@codecs")]
+    codecs: Option<String>,
+    #[serde(rename = "@width")]
+    width: Option<u32>,
+    #[serde(rename = "@height")]
+    height: Option<u32>,
+    #[serde(rename = "@frameRate")]
+    frame_rate: Option<String>,
+}
+
+fn parse_dash_frame_rate(value: Option<&str>) -> Option<f64> {
+    let value = value?.trim();
+    let fps = if let Some((numerator, denominator)) = value.split_once('/') {
+        let numerator = numerator.parse::<f64>().ok()?;
+        let denominator = denominator.parse::<f64>().ok()?;
+        if denominator == 0.0 {
+            return None;
+        }
+        numerator / denominator
+    } else {
+        value.parse::<f64>().ok()?
+    };
+    (fps > 0.0 && fps <= 240.0).then_some((fps * 10.0).round() / 10.0)
+}
+
+fn normalize_dash_video_codec(value: &str) -> String {
+    let codec = value.split(',').next().unwrap_or(value).trim();
+    let lower = codec.to_lowercase();
+    if lower.starts_with("avc1") || lower.starts_with("avc3") {
+        "H264".to_string()
+    } else if lower.starts_with("hev1") || lower.starts_with("hvc1") {
+        "HEVC".to_string()
+    } else if lower.starts_with("av01") {
+        "AV1".to_string()
+    } else if lower.starts_with("vp09") || lower.starts_with("vp9") {
+        "VP9".to_string()
+    } else {
+        codec.to_uppercase()
+    }
+}
+
+fn parse_dash_manifest_metadata(xml: &str) -> Option<StreamMetadata> {
+    let mpd: ProbeDashMpd = quick_xml::de::from_str(xml).ok()?;
+    let mut metadata = StreamMetadata::default();
+    let mut best_video_pixels = 0_u64;
+
+    for adaptation in mpd.periods.iter().flat_map(|period| &period.adaptations) {
+        for representation in &adaptation.representations {
+            let mime_type = representation
+                .mime_type
+                .as_deref()
+                .or(adaptation.mime_type.as_deref());
+            let is_video = adaptation.content_type.as_deref() == Some("video")
+                || mime_type.map(|value| value.starts_with("video/")).unwrap_or(false);
+            if !is_video {
+                continue;
+            }
+
+            let width = representation.width.or(adaptation.width).or(adaptation.max_width);
+            let height = representation.height.or(adaptation.height).or(adaptation.max_height);
+            let (Some(width), Some(height)) = (width, height) else {
+                continue;
+            };
+            let pixels = u64::from(width) * u64::from(height);
+            if metadata.width.is_none() || pixels > best_video_pixels {
+                best_video_pixels = pixels;
+                metadata.width = Some(width);
+                metadata.height = Some(height);
+                metadata.quality_label = quality_from_resolution(Some(width), Some(height));
+                metadata.resolution = metadata.quality_label.clone();
+                metadata.fps = parse_dash_frame_rate(
+                    representation
+                        .frame_rate
+                        .as_deref()
+                        .or(adaptation.frame_rate.as_deref()),
+                );
+                metadata.video_codec = representation
+                    .codecs
+                    .as_deref()
+                    .or(adaptation.codecs.as_deref())
+                    .map(normalize_dash_video_codec);
+            }
+        }
+
+        // Some single-representation manifests put dimensions directly on the
+        // AdaptationSet and omit Representation dimensions.
+        if adaptation.representations.is_empty()
+            && (adaptation.content_type.as_deref() == Some("video")
+                || adaptation
+                    .mime_type
+                    .as_deref()
+                    .map(|value| value.starts_with("video/"))
+                    .unwrap_or(false))
+        {
+            if let (Some(width), Some(height)) = (adaptation.width, adaptation.height) {
+                let pixels = u64::from(width) * u64::from(height);
+                if metadata.width.is_none() || pixels > best_video_pixels {
+                    best_video_pixels = pixels;
+                    metadata.width = Some(width);
+                    metadata.height = Some(height);
+                    metadata.quality_label = quality_from_resolution(Some(width), Some(height));
+                    metadata.resolution = metadata.quality_label.clone();
+                    metadata.fps = parse_dash_frame_rate(adaptation.frame_rate.as_deref());
+                    metadata.video_codec = adaptation
+                        .codecs
+                        .as_deref()
+                        .map(normalize_dash_video_codec);
+                }
+            }
+        }
+    }
+
+    metadata.width.map(|_| metadata)
+}
+
+fn apply_manifest_metadata(meta: &mut StreamMetadata, manifest: Option<&StreamMetadata>) {
+    let Some(manifest) = manifest else {
+        return;
+    };
+    if manifest.width.is_some() && manifest.height.is_some() {
+        meta.width = manifest.width;
+        meta.height = manifest.height;
+        meta.resolution = manifest.resolution.clone();
+        meta.quality_label = manifest.quality_label.clone();
+        meta.fps = manifest.fps.or(meta.fps);
+        meta.video_codec = manifest.video_codec.clone().or_else(|| meta.video_codec.clone());
+    }
 }
 
 fn quality_from_resolution(width: Option<u32>, height: Option<u32>) -> Option<String> {
@@ -523,28 +709,42 @@ fn normalize_audio_channels(raw: &str) -> String {
 
 fn parse_ffmpeg_stderr(stderr: &str, sample_secs: f64) -> StreamMetadata {
     let mut meta = StreamMetadata::default();
+    let mut best_video_pixels = 0_u64;
 
     for line in stderr.lines() {
-        // Video Stream line
-        if meta.video_codec.is_none() {
-            if let Some(caps) = VIDEO_RE.captures(line) {
-                meta.video_codec = Some(caps[1].to_uppercase());
+        // DASH manifests expose each Representation as a separate video stream.
+        // The lowest-bitrate Representation is commonly listed first, so keep
+        // the largest video stream instead of locking onto the first one.
+        if let Some(video_caps) = VIDEO_RE.captures(line) {
+            let codec = video_caps[1].to_uppercase();
+            if meta.video_codec.is_none() {
+                meta.video_codec = Some(codec.clone());
+            }
+
+            if let Some(resolution_caps) = RESOLUTION_RE.captures(line) {
+                let width = resolution_caps[1].parse::<u32>().ok();
+                let height = resolution_caps[2].parse::<u32>().ok();
+                if let (Some(width), Some(height)) = (width, height) {
+                    let pixels = u64::from(width) * u64::from(height);
+                    if meta.width.is_none() || pixels > best_video_pixels {
+                        best_video_pixels = pixels;
+                        meta.width = Some(width);
+                        meta.height = Some(height);
+                        meta.quality_label = quality_from_resolution(Some(width), Some(height));
+                        meta.resolution = meta.quality_label.clone();
+                        meta.video_codec = Some(codec);
+                        meta.fps = FPS_RE
+                            .captures(line)
+                            .or_else(|| TBR_RE.captures(line))
+                            .and_then(|c| c[1].parse::<f64>().ok())
+                            .filter(|&f| f > 0.0 && f <= 240.0)
+                            .map(|f| (f * 10.0).round() / 10.0);
+                    }
+                }
             }
         }
 
-        // Resolution
-        if meta.width.is_none() {
-            if let Some(caps) = RESOLUTION_RE.captures(line) {
-                let w = caps[1].parse::<u32>().ok();
-                let h = caps[2].parse::<u32>().ok();
-                meta.width = w;
-                meta.height = h;
-                meta.quality_label = quality_from_resolution(w, h);
-                meta.resolution = meta.quality_label.clone();
-            }
-        }
-
-        // FPS
+        // Fallback for formats that report frame rate away from the video line.
         if meta.fps.is_none() {
             let fps_val = FPS_RE
                 .captures(line)
@@ -605,6 +805,83 @@ fn parse_ffmpeg_stderr(stderr: &str, sample_secs: f64) -> StreamMetadata {
     }
 
     meta
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dash_probe_uses_highest_resolution_representation() {
+        let stderr = r#"
+  Stream #0:0: Video: h264 (Main), yuv420p, 640x360, 25 fps, 25 tbr
+  Stream #0:1: Audio: aac (LC), 48000 Hz, stereo, fltp
+  Stream #0:2: Video: hevc (Main), yuv420p, 1920x1080, 50 fps, 50 tbr
+  Stream #0:3: Video: h264 (High), yuv420p, 1280x720, 30 fps, 30 tbr
+"#;
+
+        let metadata = parse_ffmpeg_stderr(stderr, 1.0);
+
+        assert_eq!(metadata.width, Some(1920));
+        assert_eq!(metadata.height, Some(1080));
+        assert_eq!(metadata.quality_label.as_deref(), Some("1080p"));
+        assert_eq!(metadata.video_codec.as_deref(), Some("HEVC"));
+        assert_eq!(metadata.fps, Some(50.0));
+    }
+
+    #[test]
+    fn dash_manifest_metadata_does_not_depend_on_ffmpeg_dash_support() {
+        let manifest = r#"<?xml version="1.0" encoding="UTF-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011">
+  <Period>
+    <AdaptationSet contentType="video" mimeType="video/mp4" frameRate="30000/1001">
+      <Representation id="low" bandwidth="500000" width="640" height="360" codecs="avc1.4d401e" />
+      <Representation id="high" bandwidth="5000000" width="1920" height="1080" codecs="hvc1.1.6.L120" />
+      <Representation id="mid" bandwidth="2000000" width="1280" height="720" codecs="avc1.64001f" />
+    </AdaptationSet>
+  </Period>
+</MPD>"#;
+
+        let metadata = parse_dash_manifest_metadata(manifest).expect("DASH metadata");
+
+        assert_eq!(metadata.width, Some(1920));
+        assert_eq!(metadata.height, Some(1080));
+        assert_eq!(metadata.quality_label.as_deref(), Some("1080p"));
+        assert_eq!(metadata.video_codec.as_deref(), Some("HEVC"));
+        assert_eq!(metadata.fps, Some(30.0));
+    }
+
+    #[test]
+    fn dash_manifest_uses_adaptation_max_dimensions_for_uhd() {
+        let manifest = r#"<MPD xmlns="urn:mpeg:dash:schema:mpd:2011">
+  <Period>
+    <AdaptationSet contentType="video" mimeType="video/mp4" maxWidth="3840" maxHeight="2160" codecs="av01.0.12M.08" frameRate="60">
+      <Representation id="video" bandwidth="12000000" />
+    </AdaptationSet>
+  </Period>
+</MPD>"#;
+
+        let metadata = parse_dash_manifest_metadata(manifest).expect("DASH metadata");
+
+        assert_eq!(metadata.quality_label.as_deref(), Some("4K"));
+        assert_eq!(metadata.video_codec.as_deref(), Some("AV1"));
+        assert_eq!(metadata.fps, Some(60.0));
+    }
+
+    #[test]
+    fn video_resolution_is_not_taken_from_unrelated_diagnostic_lines() {
+        let stderr = r#"
+Opening 'https://example.test/image-1920x1080.mpd' for reading
+  Stream #0:0: Video: h264 (Main), yuv420p, 854x480, 29.97 fps, 29.97 tbr
+"#;
+
+        let metadata = parse_ffmpeg_stderr(stderr, 1.0);
+
+        assert_eq!(metadata.width, Some(854));
+        assert_eq!(metadata.height, Some(480));
+        assert_eq!(metadata.quality_label.as_deref(), Some("SD"));
+        assert_eq!(metadata.fps, Some(30.0));
+    }
 }
 
 async fn run_ffmpeg_probe(
@@ -791,11 +1068,15 @@ pub async fn probe_single_stream(
     // otherwise quick probes would store 1-second spot samples in the avg columns.
     let measure = measure_bitrate.unwrap_or(false);
     let sample_secs = if measure { 8.0 } else { 1.0 };
-    let (meta, _, ffmpeg_err) = if let Some(ref bin) = ffmpeg_path {
+    let (mut meta, _, mut ffmpeg_err) = if let Some(ref bin) = ffmpeg_path {
         run_ffmpeg_probe(bin, &url, user_agent.as_deref(), timeout, false, None, sample_secs).await
     } else {
         (StreamMetadata::default(), None, Some("FFmpeg not found".to_string()))
     };
+    apply_manifest_metadata(&mut meta, http_res.manifest_metadata.as_ref());
+    if http_res.manifest_metadata.is_some() {
+        ffmpeg_err = None;
+    }
 
     // Audio bitrate measured from the same ffmpeg binary when requested
     let audio_bitrate_kbps = if measure {
@@ -1054,14 +1335,16 @@ pub async fn start_channel_probe(
                             tokio::time::sleep(Duration::from_millis(100)).await;
                         }
 
-                        // Step 2: FFmpeg probe for metadata
-                        if let Some(ref bin) = ff {
-                            let probe_timeout = if measure_bitrate {
-                                timeout_duration.max(Duration::from_secs_f64(bitrate_sample_secs + 2.0))
-                            } else {
-                                timeout_duration
-                            };
-                            let (meta, _, ffmpeg_err) = run_ffmpeg_probe(
+                        // Step 2: FFmpeg probe for metadata. DASH manifest
+                        // metadata remains available even when the bundled or
+                        // system FFmpeg was built without a DASH demuxer.
+                        let probe_timeout = if measure_bitrate {
+                            timeout_duration.max(Duration::from_secs_f64(bitrate_sample_secs + 2.0))
+                        } else {
+                            timeout_duration
+                        };
+                        let (mut meta, ffmpeg_err) = if let Some(ref bin) = ff {
+                            let (meta, _, error) = run_ffmpeg_probe(
                                 bin,
                                 &url,
                                 ua.as_deref(),
@@ -1071,20 +1354,24 @@ pub async fn start_channel_probe(
                                 if measure_bitrate { bitrate_sample_secs } else { 1.0 },
                             )
                             .await;
-                            result.resolution = meta.resolution.clone();
-                            result.width = meta.width;
-                            result.height = meta.height;
-                            result.fps = meta.fps;
-                            result.video_codec = meta.video_codec;
-                            result.hdr_format = meta.hdr_format;
-                            result.audio_codec = meta.audio_codec;
-                            result.audio_channels = meta.audio_channels;
-                            result.quality_label = meta.quality_label.clone();
-                            result.bitrate_kbps = meta.bitrate_kbps;
-                            if measure_bitrate {
-                                result.video_bitrate_kbps = meta.video_bitrate_kbps;
-                            }
-                            if measure_bitrate {
+                            (meta, error)
+                        } else {
+                            (StreamMetadata::default(), None)
+                        };
+                        apply_manifest_metadata(&mut meta, http_res.manifest_metadata.as_ref());
+                        result.resolution = meta.resolution.clone();
+                        result.width = meta.width;
+                        result.height = meta.height;
+                        result.fps = meta.fps;
+                        result.video_codec = meta.video_codec;
+                        result.hdr_format = meta.hdr_format;
+                        result.audio_codec = meta.audio_codec;
+                        result.audio_channels = meta.audio_channels;
+                        result.quality_label = meta.quality_label.clone();
+                        result.bitrate_kbps = meta.bitrate_kbps;
+                        if measure_bitrate {
+                            result.video_bitrate_kbps = meta.video_bitrate_kbps;
+                            if let Some(ref bin) = ff {
                                 result.audio_bitrate_kbps = probe_audio_bitrate(
                                     bin,
                                     &url,
@@ -1094,17 +1381,20 @@ pub async fn start_channel_probe(
                                 )
                                 .await;
                             }
-                            if ffmpeg_err.is_some() && result.error_reason.is_none() {
-                                result.error_reason = ffmpeg_err;
-                            }
+                        }
+                        if ffmpeg_err.is_some()
+                            && http_res.manifest_metadata.is_none()
+                            && result.error_reason.is_none()
+                        {
+                            result.error_reason = ffmpeg_err;
+                        }
 
-                            if let Some(ref q) = meta.quality_label {
-                                match q.as_str() {
-                                    "4K" => { q_4k.fetch_add(1, Ordering::Relaxed); }
-                                    "1080p" => { q_1080.fetch_add(1, Ordering::Relaxed); }
-                                    "720p" => { q_720.fetch_add(1, Ordering::Relaxed); }
-                                    _ => { q_sd.fetch_add(1, Ordering::Relaxed); }
-                                }
+                        if let Some(ref q) = meta.quality_label {
+                            match q.as_str() {
+                                "4K" => { q_4k.fetch_add(1, Ordering::Relaxed); }
+                                "1080p" => { q_1080.fetch_add(1, Ordering::Relaxed); }
+                                "720p" => { q_720.fetch_add(1, Ordering::Relaxed); }
+                                _ => { q_sd.fetch_add(1, Ordering::Relaxed); }
                             }
                         }
                     } else if http_res.status == "dead" {

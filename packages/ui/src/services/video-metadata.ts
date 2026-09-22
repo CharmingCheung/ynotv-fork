@@ -1,6 +1,7 @@
 import { Bridge } from './tauri-bridge';
 import { db, ChannelMetadata } from '../db';
 import { dbEvents } from '../db/sqlite-adapter';
+import type { DashTrackCatalog, DashVideoRepresentation } from './native-dash';
 
 /**
  * Video metadata capture service
@@ -35,24 +36,54 @@ export interface VideoMetadata {
     audioChannels: number;
 }
 
+function parseDashFrameRate(value?: string): number | null {
+    if (!value) return null;
+    const [numeratorText, denominatorText] = value.split('/');
+    const numerator = Number(numeratorText);
+    const denominator = denominatorText === undefined ? 1 : Number(denominatorText);
+    if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator <= 0) return null;
+    const fps = numerator / denominator;
+    return fps > 0 && fps <= 240 ? fps : null;
+}
+
+/** Highest advertised video size in the active native DASH manifest. */
+export function getHighestDashRepresentation(
+    catalog: DashTrackCatalog | null | undefined
+): DashVideoRepresentation | null {
+    if (!catalog?.active) return null;
+    return catalog.videoRepresentations.reduce<DashVideoRepresentation | null>((best, candidate) => {
+        if (!candidate.width || !candidate.height) return best;
+        if (!best?.width || !best.height) return candidate;
+        return candidate.width * candidate.height > best.width * best.height ? candidate : best;
+    }, null);
+}
+
 /**
  * Capture current video metadata from MPV
  */
 export async function captureVideoMetadata(): Promise<VideoMetadata | null> {
     try {
-        // Get video properties from MPV
-        const width = await Bridge.getProperty('width');
-        const height = await Bridge.getProperty('height');
-        const fps = await Bridge.getProperty('estimated-vf-fps');
-        const audioParams = await Bridge.getProperty('audio-params');
+        // Native DASH starts conservatively and often renders an SD
+        // Representation before ABR moves up. Channel badges describe the
+        // stream's available quality, so use the highest manifest
+        // Representation instead of persisting that transient startup size.
+        const [width, height, fps, audioParams, dashCatalog] = await Promise.all([
+            Bridge.getProperty('width'),
+            Bridge.getProperty('height'),
+            Bridge.getProperty('estimated-vf-fps'),
+            Bridge.getProperty('audio-params'),
+            Bridge.getNativeDashTrackCatalog().catch(() => null),
+        ]);
+        const highestDashRepresentation = getHighestDashRepresentation(dashCatalog);
+        const dashFps = parseDashFrameRate(highestDashRepresentation?.frameRate);
 
         // audio-params might be null if audio isn't loaded yet
         const audioChannels = audioParams?.channels || 2;
 
         return {
-            width: width || 0,
-            height: height || 0,
-            fps: fps || 0,
+            width: highestDashRepresentation?.width || width || 0,
+            height: highestDashRepresentation?.height || height || 0,
+            fps: dashFps || fps || 0,
             audioChannels
         };
     } catch (error) {
