@@ -36,6 +36,7 @@ export function TrackSelectionModal({ isOpen, type, onClose, channel }: TrackSel
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [selectedCcId, setSelectedCcId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [switchingTrackId, setSwitchingTrackId] = useState<number | null>(null);
   const [audioDelay, setAudioDelay] = useState<number>(0.0);
   const [activeTab, setActiveTab] = useState<'tracks' | 'devices' | 'settings' | 'quality'>('tracks');
   const [dashCatalog, setDashCatalog] = useState<DashTrackCatalog | null>(null);
@@ -202,8 +203,10 @@ export function TrackSelectionModal({ isOpen, type, onClose, channel }: TrackSel
   };
 
   const handleSelect = async (trackId: number) => {
+    if (switchingTrackId !== null) return;
     try {
       if (type === 'audio') {
+        setSwitchingTrackId(trackId);
         await Bridge.setAudioTrack(trackId);
       } else {
         await Bridge.setSubtitleTrack(trackId, { userInitiated: true });
@@ -212,6 +215,8 @@ export function TrackSelectionModal({ isOpen, type, onClose, channel }: TrackSel
       onClose();
     } catch (e) {
       console.error('Failed to set track:', e);
+    } finally {
+      setSwitchingTrackId(null);
     }
   };
 
@@ -770,6 +775,11 @@ export function TrackSelectionModal({ isOpen, type, onClose, channel }: TrackSel
                       <div className="track-section-title">
                         {type === 'subtitle' ? 'Subtitles' : 'Audio Tracks'}
                       </div>
+                      {type === 'audio' && switchingTrackId !== null && (
+                        <div className="track-modal-loading">
+                          {t('switchingAudioTrack', { defaultValue: 'Switching audio track…' })}
+                        </div>
+                      )}
                       <ul className="track-list">
                         {type === 'subtitle' && (
                           <li
@@ -787,6 +797,7 @@ export function TrackSelectionModal({ isOpen, type, onClose, channel }: TrackSel
                             key={track.id}
                             role="button"
                             tabIndex={0}
+                            aria-disabled={switchingTrackId !== null}
                             className={`track-item ${selectedId === track.id && !selectedCcId ? 'selected' : ''}`}
                             onClick={() => handleSelect(track.id)}
                             onKeyDown={(e) => handleTrackKeyDown(e, () => handleSelect(track.id))}

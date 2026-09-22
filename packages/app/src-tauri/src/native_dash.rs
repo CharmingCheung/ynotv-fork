@@ -51,6 +51,7 @@ struct ActiveSession {
     dynamic: bool,
     catalog: Option<DashTrackCatalog>,
     switch_tx: Option<tokio::sync::watch::Sender<SwitchSelection>>,
+    audio_switch_waiters: HashMap<u64, (String, tokio::sync::oneshot::Sender<Result<f64, String>>)>,
     seek_tx: Option<tokio::sync::mpsc::Sender<SeekCommand>>,
     timeline: Option<PresentationTimeline>,
 }
@@ -70,6 +71,9 @@ fn buffered_seconds() -> Option<f64> {
 pub(crate) fn cancel_active() {
     let mut active = ACTIVE.lock();
     if let Some(token) = active.cancellation.take() { token.cancel(); }
+    for (_, (_, completion)) in active.audio_switch_waiters.drain() {
+        let _ = completion.send(Err("Native DASH session cancelled".into()));
+    }
     active.files = None;
     active.dynamic = false;
     active.catalog = None;
@@ -280,6 +284,16 @@ pub(crate) fn track_catalog() -> Option<DashTrackCatalog> {
     ACTIVE.lock().catalog.clone()
 }
 
+pub(crate) fn next_audio_track_id() -> Option<i64> {
+    let active = ACTIVE.lock();
+    let catalog = active.catalog.as_ref()?;
+    if catalog.audio_tracks.len() < 2 { return None; }
+    let current = catalog.audio_tracks.iter().position(|track| {
+        track.adaptation_set_id == catalog.selected_audio_adaptation_set_id
+    }).unwrap_or(0);
+    Some(catalog.audio_tracks[(current + 1) % catalog.audio_tracks.len()].mpv_track_id)
+}
+
 pub(crate) fn selected_subtitle_mpv_track_id() -> Option<i64> {
     let active = ACTIVE.lock();
     let selected = active.switch_tx.as_ref()?.borrow().subtitle_track.clone()?;
@@ -329,19 +343,64 @@ fn switch_video_representation(
     });
 }
 
-pub(crate) fn note_audio_track_selection(mpv_track_id: i64) {
-    if mpv_track_id <= 0 { return; }
+pub(crate) async fn prepare_audio_track_selection(mpv_track_id: i64) -> Result<Option<f64>, String> {
+    if mpv_track_id <= 0 { return Ok(None); }
+    let (next, adaptation, receive) = {
+        let mut active = ACTIVE.lock();
+        let Some(tx) = active.switch_tx.as_ref().cloned() else { return Ok(None) };
+        let Some(catalog) = active.catalog.as_ref() else { return Ok(None) };
+        let Some(track) = catalog.audio_tracks.iter().find(|track| track.mpv_track_id == mpv_track_id) else {
+            return Err(format!("Unknown native DASH audio track: {mpv_track_id}"));
+        };
+        let adaptation = track.adaptation_set_id.clone();
+        if catalog.selected_audio_adaptation_set_id == adaptation {
+            return Ok(None);
+        }
+        let next = tx.borrow().generation.saturating_add(1);
+        for (_, (_, completion)) in active.audio_switch_waiters.drain() {
+            let _ = completion.send(Err("DASH audio switch superseded by newer request".into()));
+        }
+        let (completion, receive) = tokio::sync::oneshot::channel();
+        active.audio_switch_waiters.insert(next, (adaptation.clone(), completion));
+        tx.send_modify(|selection| {
+            selection.generation = next;
+            selection.audio_track = adaptation.clone();
+        });
+        (next, adaptation, receive)
+    };
+    log::info!("DASH audio switch requested: track={} adaptation={} generation={}",mpv_track_id,adaptation,next);
+    match tokio::time::timeout(Duration::from_secs(20), receive).await {
+        Ok(Ok(result)) => result.map(Some),
+        Ok(Err(_)) => Err("Native DASH audio switch session ended".into()),
+        Err(_) => {
+            let mut active = ACTIVE.lock();
+            active.audio_switch_waiters.remove(&next);
+            if active.catalog.as_ref().is_some_and(|catalog| catalog.selected_audio_adaptation_set_id == adaptation) {
+                return Ok(active.timeline.as_ref().map(|timeline| seconds(timeline.current_time)));
+            }
+            if let (Some(tx), Some(catalog)) = (active.switch_tx.as_ref().cloned(), active.catalog.as_ref()) {
+                let stable_audio = catalog.selected_audio_adaptation_set_id.clone();
+                let rollback_generation = tx.borrow().generation.saturating_add(1);
+                tx.send_modify(|selection| {
+                    selection.generation = rollback_generation;
+                    selection.audio_track = stable_audio.clone();
+                });
+            }
+            Err("Native DASH audio switch timed out".into())
+        }
+    }
+}
+
+fn complete_selected_audio_switch(adaptation: &str, result: Result<f64, String>) {
     let mut active = ACTIVE.lock();
-    let Some(tx) = active.switch_tx.as_ref().cloned() else { return };
-    let Some(catalog) = active.catalog.as_mut() else { return };
-    let Some(track) = catalog.audio_tracks.iter().find(|track| track.mpv_track_id == mpv_track_id) else { return };
-    let adaptation = track.adaptation_set_id.clone();
-    let next = tx.borrow().generation.saturating_add(1);
-    tx.send_modify(|selection| {
-        selection.generation = next;
-        selection.audio_track = adaptation.clone();
-    });
-    catalog.selected_audio_adaptation_set_id = adaptation;
+    let generations = active.audio_switch_waiters.iter()
+        .filter_map(|(generation, (target, _))| (target == adaptation).then_some(*generation))
+        .collect::<Vec<_>>();
+    for generation in generations {
+        if let Some((_, completion)) = active.audio_switch_waiters.remove(&generation) {
+            let _ = completion.send(result.clone());
+        }
+    }
 }
 
 pub(crate) fn note_subtitle_track_selection(mpv_track_id: i64) {
@@ -965,8 +1024,8 @@ async fn serve_live(listener:TcpListener,mut runtime:LiveRuntime,first:RdpBatch,
         let subtitles=runtime.snapshot.subtitles.iter().map(|rep|if runtime.selection.subtitle_track.as_deref()==Some(rep.identity.adaptation.as_str()){runtime.next_overlapping(&rep.identity,video.start,video.end).map(|s|vec![s]).unwrap_or_default()}else{Vec::new()}).collect::<Vec<_>>();let audios=vec![(audio_track,audio_segments)];let videos=vec![video];let selection_generation=runtime.selection.generation;let batch_cancel=cancel.child_token();
         enum BuildOutcome{Cancelled,Changed(bool),Seek(SeekCommand),Built(Result<RdpBatch,String>)}
         let outcome={let mut build=Box::pin(runtime.make_batch(&videos,&audios,&subtitles,&batch_cancel));tokio::select!{_=cancel.cancelled()=>BuildOutcome::Cancelled,changed=switches.changed()=>{batch_cancel.cancel();BuildOutcome::Changed(changed.is_ok())},seek=seeks.recv()=>{batch_cancel.cancel();match seek{Some(seek)=>BuildOutcome::Seek(seek),None=>BuildOutcome::Cancelled}},result=&mut build=>BuildOutcome::Built(result)}};
-        let batch=match outcome{BuildOutcome::Cancelled=>return Ok(()),BuildOutcome::Changed(false)=>{runtime.reset_batch(&videos,&audios,&subtitles);return Ok(())},BuildOutcome::Changed(true)=>{runtime.reset_batch(&videos,&audios,&subtitles);log::info!("DASH switch generation {} superseded during target preparation",selection_generation);continue},BuildOutcome::Seek(mut seek)=>{runtime.reset_batch(&videos,&audios,&subtitles);while let Ok(newer)=seeks.try_recv(){let _=seek.completion.send(Err("DASH seek superseded by newer request".into()));seek=newer;}runtime.prepare_seek(seek,&mut socket,&cancel).await;continue},BuildOutcome::Built(Ok(batch))=>batch,BuildOutcome::Built(Err(error))if runtime.switch_state!=SwitchState::Stable=>{runtime.reset_batch(&videos,&audios,&subtitles);log::warn!("DASH video switch failed generation={}: {}",selection_generation,error);runtime.reject_switch(selection_generation,&cancel).await?;continue},BuildOutcome::Built(Err(error))if matches!(runtime.selection.video_quality_mode,VideoQualityMode::Auto)&&runtime.abr.consecutive_failures()<=2&&runtime.abr_ladder().iter().any(|rep|rep.bandwidth<runtime.snapshot.video.bandwidth)=>{runtime.reset_batch(&videos,&audios,&subtitles);log::warn!("ABR video fetch failed; retaining frontier for conservative retry: {}",error);continue},BuildOutcome::Built(Err(error))=>return Err(error)};
-        if switches.borrow().generation!=selection_generation{runtime.rollback_configs(&batch);runtime.reset_batch(&videos,&audios,&subtitles);log::info!("DASH switch generation {} superseded before commit",selection_generation);continue}let switching=runtime.switch_state!=SwitchState::Stable;if switching{runtime.switch_state=SwitchState::Committing;log::info!("DASH track switch state=Committing generation={}",selection_generation);}write_live(&mut socket,&batch.wire_records(),&cancel).await?;runtime.commit_batch(&videos,&audios,&subtitles);if switching{if let Some(from)=runtime.switch_from_bandwidth.take(){let target=AbrRepresentation{id:runtime.snapshot.video.identity.representation.clone(),bandwidth:runtime.snapshot.video.bandwidth};if let Some(reason)=runtime.selection.abr_reason{runtime.abr.switch_completed(Instant::now(),from,&target,reason)}else{runtime.abr.external_switch_completed(Instant::now(),&target.id)}}runtime.stable_selection=runtime.selection.clone();runtime.switch_state=SwitchState::Stable;log::info!("DASH track switch state=Stable generation={}",selection_generation);}runtime.sync_catalog(None);
+        let batch=match outcome{BuildOutcome::Cancelled=>return Ok(()),BuildOutcome::Changed(false)=>{runtime.reset_batch(&videos,&audios,&subtitles);return Ok(())},BuildOutcome::Changed(true)=>{runtime.reset_batch(&videos,&audios,&subtitles);log::info!("DASH switch generation {} superseded during target preparation",selection_generation);continue},BuildOutcome::Seek(mut seek)=>{runtime.reset_batch(&videos,&audios,&subtitles);while let Ok(newer)=seeks.try_recv(){let _=seek.completion.send(Err("DASH seek superseded by newer request".into()));seek=newer;}runtime.prepare_seek(seek,&mut socket,&cancel).await;continue},BuildOutcome::Built(Ok(batch))=>batch,BuildOutcome::Built(Err(error))if runtime.switch_state!=SwitchState::Stable=>{runtime.reset_batch(&videos,&audios,&subtitles);log::warn!("DASH track switch failed generation={}: {}",selection_generation,error);complete_selected_audio_switch(&runtime.selection.audio_track,Err(error.clone()));runtime.reject_switch(selection_generation,&cancel).await?;continue},BuildOutcome::Built(Err(error))if matches!(runtime.selection.video_quality_mode,VideoQualityMode::Auto)&&runtime.abr.consecutive_failures()<=2&&runtime.abr_ladder().iter().any(|rep|rep.bandwidth<runtime.snapshot.video.bandwidth)=>{runtime.reset_batch(&videos,&audios,&subtitles);log::warn!("ABR video fetch failed; retaining frontier for conservative retry: {}",error);continue},BuildOutcome::Built(Err(error))=>return Err(error)};
+        if switches.borrow().generation!=selection_generation{runtime.rollback_configs(&batch);runtime.reset_batch(&videos,&audios,&subtitles);log::info!("DASH switch generation {} superseded before commit",selection_generation);continue}let switching=runtime.switch_state!=SwitchState::Stable;if switching{runtime.switch_state=SwitchState::Committing;log::info!("DASH track switch state=Committing generation={}",selection_generation);}write_live(&mut socket,&batch.wire_records(),&cancel).await?;runtime.commit_batch(&videos,&audios,&subtitles);if switching{if let Some(from)=runtime.switch_from_bandwidth.take(){let target=AbrRepresentation{id:runtime.snapshot.video.identity.representation.clone(),bandwidth:runtime.snapshot.video.bandwidth};if let Some(reason)=runtime.selection.abr_reason{runtime.abr.switch_completed(Instant::now(),from,&target,reason)}else{runtime.abr.external_switch_completed(Instant::now(),&target.id)}}runtime.stable_selection=runtime.selection.clone();runtime.switch_state=SwitchState::Stable;log::info!("DASH track switch state=Stable generation={}",selection_generation);}runtime.sync_catalog(None);let resume_target={let active=ACTIVE.lock();active.timeline.as_ref().map(|timeline|seconds(timeline.current_time)).unwrap_or(seconds(runtime.frontier))};complete_selected_audio_switch(&runtime.selection.audio_track,Ok(resume_target));
     }
 }
 fn log_abr_evaluation(e:&AbrEvaluation){

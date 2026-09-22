@@ -1633,6 +1633,9 @@ async fn mpv_toggle_mute<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
 
 #[tauri::command]
 async fn mpv_cycle_audio<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+    if let Some(id) = native_dash::next_audio_track_id() {
+        return mpv_set_audio(app, id).await;
+    }
     #[cfg(target_os = "macos")]
     {
         mpv_core::cycle_audio(&app).await
@@ -1708,6 +1711,33 @@ async fn native_dash_select_auto_video_quality() -> Result<(), String> {
 
 #[tauri::command]
 async fn mpv_set_audio<R: Runtime>(app: AppHandle<R>, id: i64) -> Result<(), String> {
+    // Native DASH publishes only the selected audio AdaptationSet. Switching
+    // mpv's aid before that track has packets creates an unbounded A/V catch-up
+    // window. Prepare the target first, then flush both decoder timelines via
+    // the native seek epoch so playback resumes on one A/V boundary.
+    if id > 0 {
+        if let Some(target) = native_dash::prepare_audio_track_selection(id).await? {
+            let was_paused = mpv_core::get_property(&app, "pause".to_string()).await
+                .ok().and_then(|value| value.as_bool()).unwrap_or(false);
+            mpv_core::pause(&app).await?;
+            let switch_result = async {
+                let relative = native_dash::request_seek(target).await?
+                    .ok_or("Native DASH audio switch lost its active session")?;
+                let audio_result = mpv_core::set_audio_track(&app, id).await;
+                // Once request_seek returns, the demuxer is held at its seek
+                // epoch gate. Always submit the matching mpv seek so an aid
+                // error cannot leave playback permanently blocked.
+                let seek_result = mpv_core::seek(&app, relative).await;
+                audio_result?;
+                seek_result
+            }.await;
+            if !was_paused {
+                let resume_result = mpv_core::resume(&app).await;
+                if switch_result.is_ok() { resume_result?; }
+            }
+            return switch_result;
+        }
+    }
     let result = {
         #[cfg(target_os = "macos")]
         {
@@ -1726,9 +1756,6 @@ async fn mpv_set_audio<R: Runtime>(app: AppHandle<R>, id: i64) -> Result<(), Str
             mpv_core::set_audio_track(&app, id).await
         }
     };
-    if result.is_ok() {
-        native_dash::note_audio_track_selection(id);
-    }
     result
 }
 

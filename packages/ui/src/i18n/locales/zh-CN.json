@@ -3990,6 +3990,7 @@
     "loading": "正在加载…",
     "loadingStreams": "正在加载流…",
     "noAudioTracks": "没有可用的音轨",
+    "switchingAudioTrack": "正在切换音轨…",
     "noProgramInfo": "无节目信息",
     "noStreamsAvailable": "没有可用的流。",
     "noSubtitleTracks": "没有可用的字幕轨",

@@ -3990,6 +3990,7 @@
     "loading": "Loading…",
     "loadingStreams": "Loading streams…",
     "noAudioTracks": "No audio tracks available",
+    "switchingAudioTrack": "Switching audio track…",
     "noProgramInfo": "No program info",
     "noStreamsAvailable": "No streams available.",
     "noSubtitleTracks": "No subtitle tracks available",
