@@ -5,6 +5,7 @@ import { bulkOps } from '../services/bulk-ops';
 import { getCachedSettings } from '../services/settings-cache';
 import { pruneLogoCache } from '../services/logoCache';
 import { useToastStore } from '../stores/toastStore';
+import { reportVodSyncFailures } from '../utils/vodSyncFailures';
 import {
     useSetChannelSyncing,
     useSetVodSyncing,
@@ -189,7 +190,12 @@ export function useAutoSync(callbacks: AutoSyncSettings = {}) {
                                 const totalBatches = Math.ceil(total / CONCURRENCY);
                                 settersRef.current.setSyncStatusMessage(i18n.t('common:autoSyncingVodBatch', { batch: batchNum, total: totalBatches, names: batch.map((s: any) => s.name).join(', ') }));
                                 settersRef.current.setSyncProgress({ done: batchNum, total: totalBatches });
-                                await Promise.all(batch.map((source: any) => syncVodForSource(source)));
+                                const vodOutcomes = await Promise.all(
+                                    batch.map(async (source: any) => ({ name: source.name, result: await syncVodForSource(source) }))
+                                );
+                                // syncVodForSource resolves with success:false instead of throwing,
+                                // so a failed refresh is otherwise invisible here.
+                                reportVodSyncFailures(vodOutcomes);
                             }
                             settersRef.current.setSyncStatusMessage(null);
                         settersRef.current.setSyncProgress(null);
@@ -336,7 +342,12 @@ export function useAutoSync(callbacks: AutoSyncSettings = {}) {
                                 const totalBatches = Math.ceil(total / CONCURRENCY);
                                 settersRef.current.setSyncStatusMessage(i18n.t('common:syncingVodBatch', { batch: batchNum, total: totalBatches, names: batch.map((s: any) => s.name).join(', ') }));
                                 settersRef.current.setSyncProgress({ done: batchNum, total: totalBatches });
-                                await Promise.all(batch.map((source: any) => syncVodForSource(source)));
+                                const vodOutcomes = await Promise.all(
+                                    batch.map(async (source: any) => ({ name: source.name, result: await syncVodForSource(source) }))
+                                );
+                                // syncVodForSource resolves with success:false instead of throwing,
+                                // so a failed refresh is otherwise invisible here.
+                                reportVodSyncFailures(vodOutcomes);
                             }
                             settersRef.current.setSyncStatusMessage(null);
                         settersRef.current.setSyncProgress(null);

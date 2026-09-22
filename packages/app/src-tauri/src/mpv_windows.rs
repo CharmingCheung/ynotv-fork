@@ -474,29 +474,10 @@ async fn try_spawn_mpv<R: Runtime>(app: &AppHandle<R>, state: &tauri::State<'_, 
         let mut proc_handle = state.process.lock().unwrap();
         let app_handle_for_stderr = app.clone();
         *proc_handle = Some(tauri::async_runtime::spawn(async move {
+            // The mapping lives in mpv_error_parse so the embedded libmpv engine
+            // reports the same strings for the same failures.
             let parse_and_emit = |line_str: &str, app_handle: &tauri::AppHandle<R>| {
-                let lower = line_str.to_lowercase();
-                let http_error_code: Option<u16> = if lower.contains("http error") || lower.contains("http error ") {
-                    lower.find("http error")
-                        .and_then(|pos| {
-                            let after = &lower[pos + "http error".len()..];
-                            after.split_whitespace()
-                                .find_map(|part| {
-                                    let clean = part.trim_matches(':').trim_matches(',');
-                                    clean.parse::<u16>().ok().filter(|&c| c >= 400 && c < 600)
-                                })
-                        })
-                } else {
-                    None
-                };
-
-                if let Some(code) = http_error_code {
-                    let error_msg = match code {
-                        401 => "Access Denied (401): Authentication required".to_string(),
-                        403 => "Access Denied (403): Stream blocked by server".to_string(),
-                        404 => "Stream Not Found (404)".to_string(),
-                        _ => format!("HTTP Error ({}): Unable to load stream", code),
-                    };
+                if let Some(error_msg) = crate::mpv_error_parse::http_error_message(line_str) {
                     let _ = app_handle.emit("mpv-http-error", error_msg);
                 }
             };
@@ -731,19 +712,10 @@ async fn connect_ipc<R: Runtime>(
                                         "duration": status.duration,
                                     }));
 
-                                    if reason.as_deref() == Some("error") {
-                                        let error_msg = match file_error.as_deref() {
-                                            Some(e) if e.to_lowercase().contains("403") || e.to_lowercase().contains("forbidden") =>
-                                                "Access Denied (403): Stream blocked by server".to_string(),
-                                            Some(e) if e.to_lowercase().contains("401") || e.to_lowercase().contains("unauthorized") =>
-                                                "Access Denied (401): Authentication required".to_string(),
-                                            Some(e) if e.to_lowercase().contains("404") =>
-                                                "Stream Not Found (404)".to_string(),
-                                            Some(e) if e.to_lowercase().contains("demuxer") || e.to_lowercase().contains("unsupported") =>
-                                                "Stream Unavailable: Server returned invalid content".to_string(),
-                                            Some(e) => format!("Stream Error: {}", e),
-                                            None => "Stream Error: Unknown playback error".to_string(),
-                                        };
+                                    if let Some(error_msg) = crate::mpv_error_parse::end_file_error_message(
+                                        reason.as_deref().unwrap_or(""),
+                                        file_error.as_deref().unwrap_or(""),
+                                    ) {
                                         let _ = app_handle.emit("mpv-end-file-error", error_msg);
                                     }
 

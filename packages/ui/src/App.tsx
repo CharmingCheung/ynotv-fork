@@ -114,6 +114,7 @@ import { Bridge, type AspectRatioMode, applyAspectRatio, rewriteTsToM3u8 } from 
 import { resolvePlayUrl } from './services/stream-resolver';
 import { currentMonitor, getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
 import { addToRecentChannels } from './utils/recentChannels';
+import { reportVodSyncFailures } from './utils/vodSyncFailures';
 import { WatchlistNotificationContainer } from './components/WatchlistNotification';
 import { ToastContainer } from './components/Toast';
 import { SyncStatusToast } from './components/SyncStatusToast';
@@ -5511,7 +5512,12 @@ function useTmdbPresencePoster(
                 const totalBatches = Math.ceil(total / CONCURRENCY);
                 setSyncStatusMessage(i18n.t('common:syncingVodBatchWithPrefix', { prefix: statusPrefix, batch: batchNum, total: totalBatches, names: batch.map((s: any) => s.name).join(', ') }));
                 setSyncProgress({ done: batchNum, total: totalBatches });
-                await Promise.all(batch.map((source: any) => syncVodForSource(source)));
+                const vodOutcomes = await Promise.all(
+                  batch.map(async (source: any) => ({ name: source.name, result: await syncVodForSource(source) }))
+                );
+                // syncVodForSource resolves with success:false instead of throwing, so
+                // a failed refresh is otherwise invisible — the status line just clears.
+                reportVodSyncFailures(vodOutcomes);
               }
               setSyncStatusMessage(null);
             }

@@ -243,6 +243,7 @@ use tauri::TitleBarStyle;
 
 // Platform-specific MPV modules
 mod mpv_core;
+mod mpv_error_parse;
 #[cfg(target_os = "macos")]
 mod mpv_render_mac;
 #[cfg(target_os = "macos")]

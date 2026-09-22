@@ -541,6 +541,11 @@ fn spawn_log_capture<R: Runtime>(
                 libmpv2_sys::mpv_request_log_messages(mpv.ctx.as_ptr(), level.as_ptr());
             }
         }
+        // The HTTP failure reported for the file that is currently loaded. Kept so
+        // the same failure is announced once (mpv/ffmpeg can log the line several
+        // times) and so the generic end-file error below can't replace it.
+        let mut current_http_error: Option<String> = None;
+
         while monitor_generation.load(std::sync::atomic::Ordering::Acquire) == generation {
             while let Some(ev) = ec.wait_event(0.0) {
                 match ev {
@@ -550,6 +555,16 @@ fn spawn_log_capture<R: Runtime>(
                         text,
                         ..
                     }) => {
+                        // The sidecar engine reads these lines off the mpv process's
+                        // stdout. The embedded engine gets them as log messages, and
+                        // they are the only place libmpv says *why* a stream failed:
+                        // its EndFile event carries a reason but no error text.
+                        if let Some(error_msg) = crate::mpv_error_parse::http_error_message(text) {
+                            if current_http_error.as_deref() != Some(error_msg.as_str()) {
+                                let _ = app.emit("mpv-http-error", error_msg.clone());
+                                current_http_error = Some(error_msg);
+                            }
+                        }
                         let line = format!("[{}:{}] {}", prefix, level, text.trim_end());
                         let rustdash = prefix.contains("rustdash") || text.contains("fatal producer error");
                         let routine_backpressure = prefix.contains("rustdash")
@@ -568,6 +583,43 @@ fn spawn_log_capture<R: Runtime>(
                                 buf.pop_front();
                             }
                             buf.push_back(line);
+                        }
+                    }
+                    Ok(Event::StartFile) => {
+                        // A new file: the previous file's failure no longer applies.
+                        current_http_error = None;
+                    }
+                    Ok(Event::EndFile(reason)) => {
+                        // mpv stopped on its own with an error (a failed load, a dead
+                        // live stream, a mid-playback HTTP failure). The sidecar engine
+                        // surfaces these from its JSON IPC end-file event; without this
+                        // the embedded engine reported nothing at all, so a VOD title
+                        // whose provider returned 403/404 just went quiet.
+                        if reason == libmpv2::mpv_end_file_reason::Error {
+                            let position: f64 = mpv.get_property("time-pos").unwrap_or(0.0);
+                            let duration: f64 = mpv.get_property("duration").unwrap_or(0.0);
+
+                            // Only add the generic message when no HTTP status was
+                            // reported for this file — the specific one is the useful
+                            // one, and the frontend overlay keys its title off it.
+                            if current_http_error.is_none() {
+                                if let Some(error_msg) =
+                                    crate::mpv_error_parse::end_file_error_message("error", "")
+                                {
+                                    let _ = app.emit("mpv-end-file-error", error_msg);
+                                }
+                            }
+
+                            let _ = app.emit(
+                                "mpv-end-file",
+                                json!({
+                                    "reason": "error",
+                                    "fileError": "",
+                                    "position": position,
+                                    "duration": duration,
+                                }),
+                            );
+                            let _ = app.emit("mpv-stream-ended", ());
                         }
                     }
                     Ok(Event::FileLoaded) => {
