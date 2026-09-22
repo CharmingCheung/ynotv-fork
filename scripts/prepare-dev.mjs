@@ -47,5 +47,8 @@ if ((process.platform === 'darwin' && process.arch === 'arm64') ||
     (process.platform === 'win32' && process.arch === 'x64')) {
   run(process.execPath, ['scripts/setup-native-runtime.mjs']);
 }
+if (process.platform === 'darwin' && process.arch === 'arm64') {
+  run(process.execPath, ['scripts/prepare-macos-bundle-runtime.mjs']);
+}
 
 console.log('[dev-setup] native development assets are ready');

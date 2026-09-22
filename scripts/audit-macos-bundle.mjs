@@ -46,8 +46,24 @@ function filesBelow(path) {
   return result;
 }
 
-const forbiddenPrefixes = ['/opt/homebrew/', '/usr/local/', '/opt/local/', '/private/tmp/', '/var/folders/'];
 const failures = [];
+const contents = join(app, 'Contents');
+const frameworks = join(contents, 'Frameworks');
+function rpaths(file) {
+  const lines = execFileSync('otool', ['-l', file], { encoding: 'utf8' }).split('\n');
+  const result = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    if (lines[index].trim() !== 'cmd LC_RPATH') continue;
+    for (let cursor = index + 1; cursor < Math.min(lines.length, index + 6); cursor += 1) {
+      const match = lines[cursor].trim().match(/^path (.+) \(offset \d+\)$/);
+      if (match) {
+        result.push(match[1]);
+        break;
+      }
+    }
+  }
+  return result;
+}
 for (const file of filesBelow(app)) {
   let kind;
   try {
@@ -61,8 +77,26 @@ for (const file of filesBelow(app)) {
     .split('\n')
     .filter(line => line.includes(' (compatibility version'))
     .map(line => line.trim().split(' (compatibility')[0]);
-  const forbidden = linked.filter(path => forbiddenPrefixes.some(prefix => path.startsWith(prefix)) || path.startsWith(`${root}/`));
-  if (forbidden.length) failures.push({ file, forbidden });
+  const forbidden = linked.filter(path => path.startsWith('/') &&
+    !path.startsWith('/System/Library/') && !path.startsWith('/usr/lib/'));
+  const missing = linked.filter(dependency => {
+    if (dependency.startsWith('@loader_path/')) {
+      return !existsSync(join(dirname(file), dependency.slice('@loader_path/'.length)));
+    }
+    if (dependency.startsWith('@executable_path/')) {
+      return !existsSync(join(contents, 'MacOS', dependency.slice('@executable_path/'.length)));
+    }
+    if (dependency.startsWith('@rpath/')) {
+      const name = dependency.slice('@rpath/'.length);
+      return !existsSync(join(frameworks, name)) && !existsSync(join(dirname(file), name));
+    }
+    return false;
+  });
+  const forbiddenRpaths = rpaths(file).filter(path => path.startsWith('/') &&
+    !path.startsWith('/System/Library/') && !path.startsWith('/usr/lib/'));
+  if (forbidden.length || missing.length || forbiddenRpaths.length) {
+    failures.push({ file, forbidden, missing, forbiddenRpaths });
+  }
 }
 
 if (mountedVolume) execFileSync('hdiutil', ['detach', mountedVolume], { stdio: 'ignore' });
@@ -70,12 +104,14 @@ if (temporary) rmSync(temporary, { recursive: true, force: true });
 if (mountedVolume) rmSync(mountedVolume, { recursive: true, force: true });
 
 if (failures.length) {
-  console.error('[bundle-audit] non-portable absolute dylib references found:');
-  for (const { file, forbidden } of failures) {
+  console.error('[bundle-audit] non-portable or missing dylib references found:');
+  for (const { file, forbidden, missing, forbiddenRpaths } of failures) {
     console.error(`  ${basename(file)}`);
     for (const dependency of forbidden) console.error(`    ${dependency}`);
+    for (const dependency of missing) console.error(`    MISSING: ${dependency}`);
+    for (const path of forbiddenRpaths) console.error(`    RPATH: ${path}`);
   }
   process.exit(1);
 }
 
-console.log('[bundle-audit] PASS: no Homebrew, MacPorts, temporary, or workspace dylib paths found');
+console.log('[bundle-audit] PASS: no missing, Homebrew, MacPorts, temporary, or workspace dylib references found');

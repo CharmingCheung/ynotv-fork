@@ -65,5 +65,6 @@ thoughts/
 # over GitHub's 100 MB file limit, so it lives in the v-assets release instead)
 **/libmpv/libmpv-2.dll
 packages/app/src-tauri/native-dash-libmpv/
+packages/app/src-tauri/macos-bundle-runtime/
 nul
 /.freebuff

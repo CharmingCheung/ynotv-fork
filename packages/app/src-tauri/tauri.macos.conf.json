@@ -1,11 +1,17 @@
 {
   "bundle": {
+    "externalBin": [
+      "macos-bundle-runtime/bin/mpv",
+      "macos-bundle-runtime/bin/ffmpeg",
+      "macos-bundle-runtime/bin/yt-dlp"
+    ],
     "resources": {
-      "native-dash-libmpv/cenc_component_producer": "cenc_component_producer"
+      "macos-bundle-runtime/cenc_component_producer": "cenc_component_producer"
     },
     "macOS": {
       "files": {
-        "MacOS/lib": "bin/mpv-lib"
+        "Frameworks": "macos-bundle-runtime/Frameworks",
+        "MacOS/lib": "macos-bundle-runtime/mpv-lib"
       }
     }
   }

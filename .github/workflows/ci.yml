@@ -45,6 +45,7 @@ jobs:
             rust:
               - '.github/workflows/ci.yml'
               - 'scripts/setup-native-runtime.mjs'
+              - 'scripts/prepare-macos-bundle-runtime.mjs'
               - 'packages/app/src-tauri/**'
 
   frontend:

@@ -102,13 +102,12 @@ sidecars, and the Vulkan loader. GitHub Actions fails when a native download
 or ABI marker check fails. A clean Windows VM playback smoke test is still
 required before treating the first Windows artifact as production-proven.
 
-The current macOS bundle is **not yet portable**. Inspection of the generated
-app shows absolute `/opt/homebrew/...` references from the main executable and
-the copied FFmpeg binary; a bundled libmpv build would also need its full dylib
-closure relocated. The Native DASH packet producer is bundled, but its FFmpeg
-and OpenSSL dylib closure is not yet relocated. Therefore a DMG built by the
-current pipeline can depend on the builder's Homebrew installation and must not
-be treated as a distributable release.
+The macOS packaging step recursively collects the non-system dylib closure for
+the patched libmpv, libplacebo, FFmpeg sidecar, and Native DASH packet producer.
+It copies those libraries into `Contents/Frameworks`, rewrites their install
+names to `@loader_path`/`@rpath`, and signs the rewritten Mach-O files before
+Tauri creates the app bundle. Homebrew supplies build inputs on the CI runner,
+but is not a runtime requirement on the user's Mac.
 
 Run the guard after any macOS bundle build:
 
@@ -119,8 +118,7 @@ pnpm audit:macos-bundle
 `pnpm build:macos` runs this guard automatically. The explicitly named
 `pnpm build:macos:local` command skips the guard for local testing only.
 
-It fails on Homebrew, MacPorts, temporary-directory, or workspace dylib paths.
-A production DMG needs a relocatable native artifact set, all transitive dylibs
-copied into the app, install names rewritten to `@rpath`/`@loader_path`, and the
-complete bundle signed after rewriting. No network or Homebrew dependency
-should remain at end-user runtime.
+It fails on missing dylibs or Homebrew, MacPorts, temporary-directory, and
+workspace paths. The native-source macOS workflow runs this audit before it
+uploads the DMG, so an artifact with a build-machine runtime dependency is not
+published.

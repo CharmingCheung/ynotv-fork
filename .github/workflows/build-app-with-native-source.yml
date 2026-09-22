@@ -76,6 +76,9 @@ jobs:
           bash scripts/download-mpv-tauri.sh
           node packages/app/scripts/download-ffmpeg.js
 
+      - name: Prepare self-contained macOS runtime
+        run: node scripts/prepare-macos-bundle-runtime.mjs
+
       - name: Record native source revision
         run: |
           mkdir -p build-metadata
@@ -93,6 +96,11 @@ jobs:
           VITE_TRAKT_CLIENT_SECRET: ${{ secrets.TRAKT_CLIENT_SECRET }}
           VITE_OPENSUBTITLES_API_KEY: ${{ secrets.OPENSUBTITLES_API_KEY }}
         run: pnpm tauri build --bundles dmg --ci --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      - name: Verify self-contained macOS bundle
+        run: |
+          app=packages/app/src-tauri/target/release/bundle/macos/ynoTV.app
+          node scripts/audit-macos-bundle.mjs "$app"
 
       - name: Upload macOS package
         uses: actions/upload-artifact@v6

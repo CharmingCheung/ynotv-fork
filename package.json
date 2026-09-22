@@ -13,6 +13,7 @@
     "dev:native-dash": "node scripts/dev-native-dash.mjs",
     "native:dev": "node scripts/native-dev.mjs",
     "setup:native-runtime": "node scripts/setup-native-runtime.mjs",
+    "prepare:macos-runtime": "node scripts/prepare-macos-bundle-runtime.mjs",
     "dev:clean": "node scripts/kill-dev.js && pnpm dev",
     "kill-port": "node scripts/kill-dev.js",
     "build": "node scripts/check-jellyfin-init-script.mjs && pnpm -r build",
