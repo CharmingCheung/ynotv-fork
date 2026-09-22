@@ -1196,6 +1196,48 @@ export class StalkerClient {
         return allItems;
     }
 
+    /**
+     * Fetch every page of a `get_ordered_list` response that is a fixed list rather than a
+     * browsable category: a series' season list, or the episode list of one season.
+     *
+     * The portal pages these responses at `max_page_items` (14 on the portal that reported
+     * this), so reading only `p=0` truncates them — a 24-episode season showed its first 14
+     * episodes and looked complete. Walking them through `fetchOrderedListPages` gives them
+     * the same retry pass, 1-based portal handling and repeat detection as a category.
+     *
+     * A list that can't be walked whole falls back to its first page (the previous behaviour)
+     * rather than returning nothing, so one flaky page costs the extra pages at most and never
+     * the items that were already reachable.
+     */
+    private async fetchOrderedListAllItems(
+        type: 'vod' | 'series',
+        baseParams: Record<string, string>,
+        label: string
+    ): Promise<any[]> {
+        const PAGE_CONCURRENCY = 4;
+        try {
+            return await this.fetchOrderedListPages(type, baseParams, PAGE_CONCURRENCY);
+        } catch (err) {
+            console.warn(`[Stalker] ${label}: could not page through the whole list, keeping the first page:`, err);
+        }
+
+        try {
+            const { items } = this.extractOrderedList(
+                await this.fetchStalker<any>('get_ordered_list', type, {
+                    ...baseParams,
+                    p: String(this.pageOffset ?? 0)
+                })
+            );
+            if (items.length > 0) {
+                console.log(`[Stalker] ${label}: recovered ${items.length} item(s) from the first page`);
+            }
+            return items;
+        } catch (err) {
+            console.warn(`[Stalker] ${label}: first page could not be retrieved either:`, err);
+            return [];
+        }
+    }
+
     async getVodStreams(categoryId?: string, onProgress?: StalkerPageProgress, concurrency = 4): Promise<Channel[]> {
         await this.ensureToken();
         console.log('[Stalker] getVodStreams: fetching with parallel pagination...');
@@ -1485,64 +1527,36 @@ export class StalkerClient {
 
         console.log(`[Stalker] getSeasons: fetching for series ${seriesId} (raw: ${rawMovieId})...`);
 
-        let response: any = null;
+        const seasonListParams = {
+            season_id: '0',
+            episode_id: '0',
+            include_censored: '1',
+            censored: '1'
+        };
+
         let typeUsed: 'series' | 'vod' = 'series';
-        try {
-            response = await this.fetchStalker<any>('get_ordered_list', 'series', {
-                movie_id: rawMovieId,
-                season_id: '0',
-                episode_id: '0',
-                p: '0',
-                include_censored: '1',
-                censored: '1'
-            });
-        } catch (err) {
-            console.warn('[Stalker] getSeasons: fetch with type=series failed, will try fallback to type=vod:', err);
-        }
+        let seasonsData = await this.fetchOrderedListAllItems(
+            'series',
+            { movie_id: rawMovieId, ...seasonListParams },
+            `getSeasons series ${rawMovieId}`
+        );
+        console.log(`[Stalker] getSeasons: ${seasonsData.length} item(s) via type=series`);
 
-        let seasonsData = response?.data || response;
-        console.log('[Stalker] Raw response:', JSON.stringify(response).substring(0, 500));
-        
-        // Check if the response is falsy or indicates failure (js === false)
-        let isResponseEmpty = !seasonsData || 
-                                (seasonsData.js === false) || 
-                                (response && response.js === false);
-
-        if (isResponseEmpty) {
+        if (seasonsData.length === 0) {
             console.log('[Stalker] getSeasons: No seasons found via type=series, falling back to type=vod...');
-            try {
-                typeUsed = 'vod';
-                response = await this.fetchStalker<any>('get_ordered_list', 'vod', {
-                    movie_id: rawMovieId,
-                    season_id: '0',
-                    episode_id: '0',
-                    p: '0',
-                    include_censored: '1',
-                    censored: '1'
-                });
-                seasonsData = response?.data || response;
-                console.log('[Stalker] Raw fallback response:', JSON.stringify(response).substring(0, 500));
-            } catch (err) {
-                console.error('[Stalker] getSeasons: fallback to type=vod failed:', err);
-            }
+            typeUsed = 'vod';
+            seasonsData = await this.fetchOrderedListAllItems(
+                'vod',
+                { movie_id: rawMovieId, ...seasonListParams },
+                `getSeasons series ${rawMovieId} (type=vod fallback)`
+            );
+            console.log(`[Stalker] getSeasons: ${seasonsData.length} item(s) via type=vod`);
         }
 
-        if (seasonsData && seasonsData.js && seasonsData.js.data) {
-            seasonsData = seasonsData.js.data;
-        }
-
-        console.log('[Stalker] seasonsData type:', typeof seasonsData, 'isArray:', Array.isArray(seasonsData));
-        if (Array.isArray(seasonsData)) {
+        if (seasonsData.length > 0) {
             console.log('[Stalker] seasonsData length:', seasonsData.length);
-            if (seasonsData.length > 0) {
-                console.log('[Stalker] First item sample:', JSON.stringify(seasonsData[0]).substring(0, 300));
-                console.log('[Stalker] First item keys:', Object.keys(seasonsData[0]));
-            }
-        }
-
-        if (!Array.isArray(seasonsData)) {
-            console.warn('[Stalker] Seasons data is not an array, returning empty');
-            return [];
+            console.log('[Stalker] First item sample:', JSON.stringify(seasonsData[0]).substring(0, 300));
+            console.log('[Stalker] First item keys:', Object.keys(seasonsData[0]));
         }
 
         // Filter for seasons only
@@ -1584,21 +1598,21 @@ export class StalkerClient {
                 // Scenario B: Episodes need to be fetched from the server using the season ID (e.g. "22753")
                 console.log(`[Stalker] getSeasons: Fetching episodes from server for season ${season.id} (number ${seasonNum})...`);
                 try {
-                    const epResponse = await this.fetchStalker<any>('get_ordered_list', typeUsed, {
-                        movie_id: rawMovieId,
-                        season_id: season.id,
-                        episode_id: '0',
-                        p: '0',
-                        include_censored: '1',
-                        censored: '1'
-                    });
-                    
-                    let epData = epResponse?.data || epResponse;
-                    if (epData && epData.js && epData.js.data) {
-                        epData = epData.js.data;
-                    }
-                    
-                    if (Array.isArray(epData)) {
+                    // Paged: a season longer than the portal's page size (24 episodes on a
+                    // 14-item portal) used to come back as its first page only.
+                    const epData = await this.fetchOrderedListAllItems(
+                        typeUsed,
+                        {
+                            movie_id: rawMovieId,
+                            season_id: season.id,
+                            episode_id: '0',
+                            include_censored: '1',
+                            censored: '1'
+                        },
+                        `getSeasons episodes (series ${rawMovieId}, season ${season.id})`
+                    );
+
+                    if (epData.length > 0) {
                         console.log(`[Stalker] getSeasons: Fetched ${epData.length} episodes for season ${seasonNum}`);
                         episodes = epData.map((ep: any, index: number) => {
                             const epNum = parseInt(ep.series_number || ep.episode_num) || (index + 1);
@@ -1619,7 +1633,7 @@ export class StalkerClient {
                             };
                         });
                     } else {
-                        console.warn(`[Stalker] getSeasons: Episodes response for season ${seasonNum} is not an array`);
+                        console.warn(`[Stalker] getSeasons: Episodes response for season ${seasonNum} holds no episodes`);
                     }
                 } catch (err) {
                     console.error(`[Stalker] getSeasons: Failed to fetch episodes for season ${seasonNum}:`, err);
@@ -1657,52 +1671,36 @@ export class StalkerClient {
 
         console.log(`[Stalker] getEpisodes: fetching for series ${seriesId}, season ${seasonId} (raw: ${rawMovieId})...`);
 
-        let response: any = null;
-        try {
-            response = await this.fetchStalker<any>('get_ordered_list', 'series', {
+        let typeUsed: 'series' | 'vod' = 'series';
+        let episodesData = await this.fetchOrderedListAllItems(
+            'series',
+            {
                 movie_id: rawMovieId,
                 season_id: seasonId,
                 episode_id: '0',
-                p: '0',
                 include_censored: '1',
                 censored: '1'
-            });
-        } catch (err) {
-            console.warn('[Stalker] getEpisodes: fetch with type=series failed, will try fallback to type=vod:', err);
-        }
+            },
+            `getEpisodes (series ${rawMovieId}, season ${seasonId})`
+        );
 
-        let episodesData = response?.data || response;
-        
-        // Check if the response is falsy or indicates failure (js === false)
-        const isResponseEmpty = !episodesData || 
-                                (episodesData.js === false) || 
-                                (response && response.js === false);
-
-        if (isResponseEmpty) {
+        if (episodesData.length === 0) {
             console.log('[Stalker] getEpisodes: No episodes found via type=series, falling back to type=vod...');
-            try {
-                response = await this.fetchStalker<any>('get_ordered_list', 'vod', {
+            typeUsed = 'vod';
+            episodesData = await this.fetchOrderedListAllItems(
+                'vod',
+                {
                     movie_id: rawMovieId,
                     season_id: seasonId,
                     episode_id: '0',
-                    p: '0',
                     include_censored: '1',
                     censored: '1'
-                });
-                episodesData = response?.data || response;
-            } catch (err) {
-                console.error('[Stalker] getEpisodes: fallback to type=vod failed:', err);
-            }
+                },
+                `getEpisodes (series ${rawMovieId}, season ${seasonId}) (type=vod fallback)`
+            );
         }
 
-        if (episodesData && episodesData.js && episodesData.js.data) {
-            episodesData = episodesData.js.data;
-        }
-
-        if (!Array.isArray(episodesData)) {
-            console.warn('[Stalker] Episodes data is not an array');
-            return [];
-        }
+        console.log(`[Stalker] getEpisodes: ${episodesData.length} episode(s) via type=${typeUsed}`);
 
         // Use rawMovieId in direct_url so resolveStreamUrl gets the correct ID.
         // IMPORTANT: Each episode has its own cmd which must be used when calling create_link.
