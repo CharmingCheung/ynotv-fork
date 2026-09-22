@@ -16,10 +16,6 @@ use tokio_util::sync::CancellationToken;
 use url::Url;
 
 const MAX_STATIC_SEGMENTS: u128 = 20_000;
-// Start one complete segment behind the live edge. We still fetch only one
-// segment before exposing the packet source, so startup stays fast, while the
-// newest complete segment can be prepared during playback of the first one.
-const DYNAMIC_STARTUP_LAG_SEGMENTS: usize = 1;
 const FALLBACK_MUP: Duration = Duration::from_secs(2);
 const MIN_MUP: Duration = Duration::from_millis(250);
 const MAX_INFERRED_MUP: Duration = Duration::from_secs(4);
@@ -718,9 +714,10 @@ async fn build_live(url:&str,request_headers:&HashMap<String,String>,preferred_s
     let(switch_tx,switch_rx)=tokio::sync::watch::channel(selection.clone());
     let(seek_tx,seek_rx)=tokio::sync::mpsc::channel(8);
     let mut index=SegmentIndex::default();let stats=index.merge(&snapshot)?;log_merge(&snapshot,&stats);
-    let video_segments=initial_segments(&snapshot.video,snapshot.dynamic)?;
-    let audio_segments=snapshot.audio_tracks.iter().map(|track|if track.adaptation_set_id==snapshot.audio.identity.adaptation{initial_segments(&track.selected,snapshot.dynamic).map(|segments|(track.clone(),segments))}else{Ok((track.clone(),Vec::new()))}).collect::<Result<Vec<_>,_>>()?;
-    let subtitle_segments=snapshot.subtitles.iter().map(|rep|if preferred_subtitle.as_deref()==Some(rep.identity.adaptation.as_str()){initial_segments(rep,snapshot.dynamic)}else{Ok(Vec::new())}).collect::<Result<Vec<_>,_>>()?;
+    let startup_target=dynamic_startup_target(&snapshot)?;
+    let video_segments=initial_segments(&snapshot.video,snapshot.dynamic,startup_target)?;
+    let audio_segments=snapshot.audio_tracks.iter().map(|track|if track.adaptation_set_id==snapshot.audio.identity.adaptation{initial_segments(&track.selected,snapshot.dynamic,startup_target).map(|segments|(track.clone(),segments))}else{Ok((track.clone(),Vec::new()))}).collect::<Result<Vec<_>,_>>()?;
+    let subtitle_segments=snapshot.subtitles.iter().map(|rep|if preferred_subtitle.as_deref()==Some(rep.identity.adaptation.as_str()){initial_segments(rep,snapshot.dynamic,startup_target)}else{Ok(Vec::new())}).collect::<Result<Vec<_>,_>>()?;
     let startup_origin=subtitle_segments.iter().flatten().chain(audio_segments.iter().flat_map(|(_,s)|s)).fold(video_segments[0].start,|o,s|o.min(s.start));
     let dir=tempfile::Builder::new().prefix("ynotv-native-dash-").tempdir().map_err(|_|"Native DASH temporary storage failed")?;
     // Some IPTV origins cap per-client concurrency very aggressively. Init
@@ -754,14 +751,28 @@ async fn build_live(url:&str,request_headers:&HashMap<String,String>,preferred_s
     let abr_switch_tx=switch_tx.clone();tokio::spawn(async move{if let Err(error)=serve_live(listener,runtime,first,abr_switch_tx,switch_rx,seek_rx,token.clone()).await{if !token.is_cancelled(){log::error!("[native-dash] live session failed: {}",error);}}});
     Ok((dir,format!("http://{address}/native-dash.rdp"),dynamic,catalog,switch_tx,seek_tx,timeline))
 }
-fn initial_segments(rep:&RepresentationSnapshot,dynamic:bool)->Result<Vec<SegmentDescriptor>,String>{
-    let mut segments=descriptors(rep,dynamic)?;
+fn dynamic_startup_target(snapshot:&ManifestSnapshot)->Result<Option<ExactTime>,String>{
+    if !snapshot.dynamic{return Ok(None)}
+    let(start,end)=representation_seek_bounds(&snapshot.video,true)?;
+    let descriptors=descriptors(&snapshot.video,true)?;
+    let segment_duration=descriptors.last().map(|segment|segment.end.checked_sub(segment.start)).transpose().map_err(|_|"DASH timestamp overflow")?.ok_or("Unsupported DASH manifest shape: no complete segments")?;
+    let refresh_micros=i128::try_from(snapshot.minimum_update_period.as_micros()).map_err(|_|"DASH timestamp overflow")?;
+    let refresh_delay=ExactTime::new(refresh_micros,1_000_000).map_err(|_|"DASH timestamp overflow")?.checked_add(segment_duration).map_err(|_|"DASH timestamp overflow")?;
+    // suggestedPresentationDelay is the origin's intended latency from the live
+    // edge. Never start closer than one manifest refresh plus one full segment:
+    // otherwise a 15-second MPD update cadence can starve a player after only
+    // two 3.84-second segments even when downloading is much faster than real time.
+    let delay=snapshot.suggested_presentation_delay.unwrap_or(refresh_delay).max(refresh_delay);
+    let target=end.checked_sub(delay).map_err(|_|"DASH timestamp overflow")?.max(start);
+    log::info!("DASH startup target={:.3} live_edge={:.3} delay={:.3}s refresh={:.3}s",seconds(target),seconds(end),seconds(delay),snapshot.minimum_update_period.as_secs_f64());
+    Ok(Some(target))
+}
+fn initial_segments(rep:&RepresentationSnapshot,dynamic:bool,startup_target:Option<ExactTime>)->Result<Vec<SegmentDescriptor>,String>{
     if dynamic{
-        let start=segments.len().saturating_sub(DYNAMIC_STARTUP_LAG_SEGMENTS+1);
-        segments.drain(..start);
-        segments.truncate(1);
+        return Ok(vec![descriptor_at(rep,true,startup_target.ok_or("DASH startup target unavailable")?)?])
     }
-    if !dynamic&&segments.len()>1{segments.truncate(1);}
+    let mut segments=descriptors(rep,dynamic)?;
+    if segments.len()>1{segments.truncate(1);}
     if segments.is_empty(){return Err("Unsupported DASH manifest shape: no complete segments".into())}
     Ok(segments)
 }
@@ -1079,9 +1090,10 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_initial_snapshot_starts_one_segment_behind_live_edge() {
+    fn dynamic_initial_snapshot_keeps_refresh_safe_live_latency() {
         let snapshot=snap(&xml(r#"<S t="100" d="20" r="5"/>"#,100,"PT40S","2026-09-20T00:00:00Z"),1);
-        let segments=initial_segments(&snapshot.video,true).unwrap();
+        let target=dynamic_startup_target(&snapshot).unwrap();
+        let segments=initial_segments(&snapshot.video,true,target).unwrap();
         assert_eq!(segments.len(),1);
         assert_eq!(segments[0].identity.media_time,160);
         assert_eq!(segments[0].number,103);
@@ -1090,10 +1102,22 @@ mod tests {
     #[test]
     fn dynamic_initial_snapshot_falls_back_to_only_complete_segment() {
         let snapshot=snap(&xml(r#"<S t="100" d="20" r="1"/>"#,100,"PT40S","2026-09-20T00:00:00Z"),1);
-        let segments=initial_segments(&snapshot.video,true).unwrap();
+        let target=dynamic_startup_target(&snapshot).unwrap();
+        let segments=initial_segments(&snapshot.video,true,target).unwrap();
         assert_eq!(segments.len(),1);
         assert_eq!(segments[0].identity.media_time,100);
         assert_eq!(segments[0].number,100);
+    }
+
+    #[test]
+    fn suggested_presentation_delay_keeps_enough_segments_ahead_of_playback() {
+        let data=String::from_utf8(xml(r#"<S t="100" d="20" r="19"/>"#,100,"PT80S","2026-09-20T00:00:00Z")).unwrap()
+            .replace("<MPD type=\"dynamic\"", "<MPD type=\"dynamic\" suggestedPresentationDelay=\"PT10S\"");
+        let snapshot=snap(data.as_bytes(),1);
+        let target=dynamic_startup_target(&snapshot).unwrap().unwrap();
+        let segments=initial_segments(&snapshot.video,true,Some(target)).unwrap();
+        let(_,live_edge)=representation_seek_bounds(&snapshot.video,true).unwrap();
+        assert!(live_edge.checked_sub(segments[0].start).unwrap()>=ExactTime::new(10,1).unwrap());
     }
 
     #[test]
