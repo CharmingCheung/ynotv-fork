@@ -86,7 +86,10 @@ def fetch_component(mpd_base, period, content_type):
     adaptation, representation, template = choose(period, content_type)
     component_base = base_url(base_url(mpd_base, adaptation), representation)
     rep_id = representation.attrib["id"]
-    initialization = template.attrib["initialization"].replace("$RepresentationID$", rep_id)
+    bandwidth = representation.attrib.get("bandwidth", "")
+    initialization = (template.attrib["initialization"]
+                      .replace("$RepresentationID$", rep_id)
+                      .replace("$Bandwidth$", bandwidth))
     media = template.attrib["media"]
     segment_times = expand_timeline(template)
     selected_times = segment_times[-3:-1]
@@ -94,7 +97,9 @@ def fetch_component(mpd_base, period, content_type):
     init_bytes = request(urllib.parse.urljoin(component_base, initialization)).read()
     parts = [init_bytes]
     for media_time in selected_times:
-        relative = media.replace("$RepresentationID$", rep_id).replace("$Time$", str(media_time))
+        relative = (media.replace("$RepresentationID$", rep_id)
+                    .replace("$Bandwidth$", bandwidth)
+                    .replace("$Time$", str(media_time)))
         parts.append(request(urllib.parse.urljoin(component_base, relative)).read())
     output = OUT / f"real-{suffix}.mp4"
     output.write_bytes(b"".join(parts))

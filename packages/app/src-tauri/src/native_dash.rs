@@ -439,12 +439,13 @@ struct Mpd {
     #[serde(rename="@minimumUpdatePeriod")] minimum_update_period: Option<String>,
     #[serde(rename="@publishTime")] publish_time: Option<String>,
     #[serde(rename="BaseURL", default)] base_urls: Vec<TextNode>,
+    #[serde(rename="UTCTiming", default)] utc_timings: Vec<UtcTimingNode>,
     #[serde(rename="Period", default)] periods: Vec<Period>,
 }
 #[derive(Debug, Deserialize)]
 struct Period {
     #[serde(rename="@id")] id: Option<String>, #[serde(rename="@start")] start: Option<String>, #[serde(rename="@duration")] duration: Option<String>,
-    #[serde(rename="BaseURL", default)] base_urls: Vec<TextNode>, #[serde(rename="AdaptationSet", default)] adaptations: Vec<Adaptation>,
+    #[serde(rename="BaseURL", default)] base_urls: Vec<TextNode>, #[serde(rename="SegmentTemplate")] template: Option<SegmentTemplate>, #[serde(rename="AdaptationSet", default)] adaptations: Vec<Adaptation>,
 }
 #[derive(Debug, Deserialize)]
 struct Adaptation {
@@ -466,14 +467,16 @@ struct Representation {
 }
 #[derive(Debug, Deserialize)] struct ContentProtection { #[serde(rename="@schemeIdUri", default)] scheme: String, #[serde(rename="@value")] value: Option<String> }
 #[derive(Debug, Deserialize)] struct Descriptor { #[serde(rename="@schemeIdUri", default)] scheme: String, #[serde(rename="@value")] value: Option<String> }
+#[derive(Debug, Deserialize)] struct UtcTimingNode { #[serde(rename="@schemeIdUri", default)] scheme: String, #[serde(rename="@value", default)] value: String }
 #[derive(Clone, Debug, Default, Deserialize)]
-struct SegmentTemplate { #[serde(rename="@timescale")] timescale: Option<u64>, #[serde(rename="@presentationTimeOffset")] pto: Option<i128>, #[serde(rename="@startNumber")] start_number: Option<u64>, #[serde(rename="@initialization")] initialization: Option<String>, #[serde(rename="@media")] media: Option<String>, #[serde(rename="SegmentTimeline")] timeline: Option<SegmentTimeline> }
+struct SegmentTemplate { #[serde(rename="@timescale")] timescale: Option<u64>, #[serde(rename="@presentationTimeOffset")] pto: Option<i128>, #[serde(rename="@startNumber")] start_number: Option<u64>, #[serde(rename="@duration")] duration: Option<i128>, #[serde(rename="@initialization")] initialization: Option<String>, #[serde(rename="@media")] media: Option<String>, #[serde(rename="SegmentTimeline")] timeline: Option<SegmentTimeline> }
 #[derive(Clone, Debug, Deserialize)] struct SegmentTimeline { #[serde(rename="S", default)] entries: Vec<S> }
 #[derive(Clone, Debug, Deserialize)] struct S { #[serde(rename="@t")] t: Option<i128>, #[serde(rename="@d")] d: i128, #[serde(rename="@r", default)] r: i64 }
 #[derive(Debug, Deserialize)] struct TextNode { #[serde(rename="$text", default)] value: String }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)] enum MediaKind { Video, Audio, Subtitle }
 struct Selection<'a> { adaptation: &'a Adaptation, representation: &'a Representation, kind: MediaKind }
+#[derive(Clone, Copy)] struct TimelineSynthesisContext { dynamic:bool, availability_start_time:Option<chrono::DateTime<chrono::Utc>>, wall_clock:chrono::DateTime<chrono::Utc>, time_shift_buffer_depth:Option<ExactTime> }
 #[derive(Clone, Debug, Eq, Hash, PartialEq)] struct RepresentationIdentity { period: String, adaptation: String, representation: String, kind: MediaKind }
 #[derive(Clone, Debug, Eq, PartialEq)] struct SubtitleMetadata { language:String, label:String, roles:Vec<String>, accessibility:Vec<String>, selection_priority:Option<u32>, default_track:bool, forced_track:bool }
 #[derive(Clone)] struct RepresentationSnapshot { identity: RepresentationIdentity, base: Url, template: SegmentTemplate, index: CompactTimeline, mime_type:String, codecs: String, bandwidth: u64, width:Option<u32>, height:Option<u32>, frame_rate:Option<String>, audio_sampling_rate:Option<u32>, subtitle:Option<SubtitleMetadata> }
@@ -525,27 +528,29 @@ impl SegmentIndex {
 fn parse_snapshot(bytes: &[u8], final_url: Url, generation: u64, selected: Option<&SwitchSelection>) -> Result<ManifestSnapshot,String> {
     let xml = std::str::from_utf8(bytes).map_err(|_| "Unsupported DASH manifest shape")?;
     let mpd: Mpd = from_str(xml).map_err(|_| "Unsupported DASH manifest shape")?;
+    let dynamic=mpd.kind.eq_ignore_ascii_case("dynamic");
+    let publish_time=mpd.publish_time.as_deref().map(|v|chrono::DateTime::parse_from_rfc3339(v).map(|v|v.with_timezone(&chrono::Utc)).map_err(|_|"Unsupported DASH manifest shape: publishTime")).transpose()?;
+    let availability_start_time=mpd.availability_start_time.as_deref().map(|v|chrono::DateTime::parse_from_rfc3339(v).map(|v|v.with_timezone(&chrono::Utc)).map_err(|_|"Unsupported DASH manifest shape: availabilityStartTime")).transpose()?;
+    let time_shift_buffer_depth=mpd.time_shift_buffer_depth.as_deref().map(parse_duration).transpose()?;
+    let wall_clock=direct_utc_time(&mpd.utc_timings).or(publish_time).unwrap_or_else(chrono::Utc::now);
+    let synthesis=TimelineSynthesisContext{dynamic,availability_start_time,wall_clock,time_shift_buffer_depth};
     let period=mpd.periods.last().ok_or("Unsupported DASH manifest shape: at least one Period is required")?;
     let start=parse_duration(period.start.as_deref().unwrap_or("PT0S"))?;
     let duration=period.duration.as_deref().or(mpd.duration.as_deref()).map(parse_duration).transpose()?;
     let period_id=period.id.clone().unwrap_or_else(|| format!("start:{}/{}",start.numerator(),start.denominator()));
     let base=inherit_base(inherit_base(final_url,&mpd.base_urls)?,&period.base_urls)?;
-    let dynamic=mpd.kind.eq_ignore_ascii_case("dynamic");
-    let video_tracks=build_video_tracks(period,&base,&period_id,start,duration)?;
+    let video_tracks=build_video_tracks(period,&base,&period_id,start,duration,&synthesis)?;
     let video_choices=video_tracks.first().ok_or("Unsupported DASH manifest shape: no supported Video representation")?;
     let video=selected.and_then(|s|video_choices.representations.iter().find(|r|r.identity.representation==s.video_representation)).cloned()
         .or_else(||startup_video_representation(&video_choices.representations,dynamic))
         .ok_or("Unsupported DASH manifest shape: no supported Video representation")?;
-    let audio_tracks=build_audio_tracks(period,&base,&period_id,start,duration)?;
+    let audio_tracks=build_audio_tracks(period,&base,&period_id,start,duration,&synthesis)?;
     let audio_track=selected.and_then(|s|audio_tracks.iter().find(|t|t.adaptation_set_id==s.audio_track))
         .or_else(||audio_tracks.first()).ok_or("Unsupported DASH manifest shape: no supported Audio representation")?;
     let audio=audio_track.selected.clone();
-    let subtitles=select_subtitles(period,None)?.into_iter().map(|choice|make_rep(base.clone(),period_id.clone(),choice,start,duration)).collect::<Result<Vec<_>,_>>()?;
-    let publish_time=mpd.publish_time.as_deref().map(|v|chrono::DateTime::parse_from_rfc3339(v).map(|v|v.with_timezone(&chrono::Utc)).map_err(|_|"Unsupported DASH manifest shape: publishTime")).transpose()?;
+    let subtitles=select_subtitles(period,None)?.into_iter().map(|choice|make_rep(base.clone(),period_id.clone(),period.template.as_ref(),choice,start,duration,&synthesis)).collect::<Result<Vec<_>,_>>()?;
     let declared_mup=mpd.minimum_update_period.as_deref().map(parse_std_duration).transpose()?.filter(|v|!v.is_zero());
     let minimum_update_period=declared_mup.unwrap_or_else(||inferred_update_period(&video)).max(MIN_MUP);
-    let availability_start_time=mpd.availability_start_time.as_deref().map(|v|chrono::DateTime::parse_from_rfc3339(v).map(|v|v.with_timezone(&chrono::Utc)).map_err(|_|"Unsupported DASH manifest shape: availabilityStartTime")).transpose()?;
-    let time_shift_buffer_depth=mpd.time_shift_buffer_depth.as_deref().map(parse_duration).transpose()?;
     let suggested_presentation_delay=mpd.suggested_presentation_delay.as_deref().map(parse_duration).transpose()?;
     let periods=mpd.periods.iter().enumerate().map(|(index,period)|period.id.clone().unwrap_or_else(||format!("index:{index}"))).collect();
     Ok(ManifestSnapshot { generation,fetched_at:SystemTime::now(),published_at:Instant::now(),publish_time,minimum_update_period,dynamic,availability_start_time,time_shift_buffer_depth,suggested_presentation_delay,periods,video_tracks,audio_tracks,video,audio,subtitles })
@@ -560,7 +565,7 @@ fn startup_video_representation(representations:&[RepresentationSnapshot],dynami
     ladder.get(ladder.len().saturating_sub(1)/2).cloned()
 }
 
-fn build_video_tracks<'a>(period:&'a Period,base:&Url,period_id:&str,start:ExactTime,duration:Option<ExactTime>)->Result<Vec<LogicalVideoTrack>,String>{
+fn build_video_tracks<'a>(period:&'a Period,base:&Url,period_id:&str,start:ExactTime,duration:Option<ExactTime>,synthesis:&TimelineSynthesisContext)->Result<Vec<LogicalVideoTrack>,String>{
     let mut tracks=Vec::new();
     for adaptation in &period.adaptations{
         if adaptation.essential.iter().any(|e|e.scheme.eq_ignore_ascii_case("http://dashif.org/guidelines/trickmode")){continue}
@@ -568,7 +573,7 @@ fn build_video_tracks<'a>(period:&'a Period,base:&Url,period_id:&str,start:Exact
         for representation in &adaptation.representations{
             let mime=representation.mime_type.as_ref().or(adaptation.mime_type.as_ref());
             if (adaptation.content_type.as_deref()==Some("video")||mime.is_some_and(|m|m.starts_with("video/")))&&mime.is_none_or(|m|m.ends_with("/mp4")){
-                representations.push(make_rep(base.clone(),period_id.to_string(),Selection{adaptation,representation,kind:MediaKind::Video},start,duration)?);
+                representations.push(make_rep(base.clone(),period_id.to_string(),period.template.as_ref(),Selection{adaptation,representation,kind:MediaKind::Video},start,duration,synthesis)?);
             }
         }
         representations.sort_by_key(|r|(r.bandwidth,r.identity.representation.clone()));
@@ -577,14 +582,14 @@ fn build_video_tracks<'a>(period:&'a Period,base:&Url,period_id:&str,start:Exact
     tracks.sort_by_key(|t|(std::cmp::Reverse(t.selection_priority.unwrap_or(0)),!t.roles.iter().any(|r|r.eq_ignore_ascii_case("main")),t.adaptation_set_id.clone()));Ok(tracks)
 }
 
-fn build_audio_tracks<'a>(period:&'a Period,base:&Url,period_id:&str,start:ExactTime,duration:Option<ExactTime>)->Result<Vec<LogicalAudioTrack>,String>{
+fn build_audio_tracks<'a>(period:&'a Period,base:&Url,period_id:&str,start:ExactTime,duration:Option<ExactTime>,synthesis:&TimelineSynthesisContext)->Result<Vec<LogicalAudioTrack>,String>{
     let mut tracks=Vec::new();
     for adaptation in &period.adaptations{
         let mut representations=Vec::new();
         for representation in &adaptation.representations{
             let mime=representation.mime_type.as_ref().or(adaptation.mime_type.as_ref());
             if (adaptation.content_type.as_deref()==Some("audio")||mime.is_some_and(|m|m.starts_with("audio/")))&&mime.is_none_or(|m|m.ends_with("/mp4")){
-                representations.push(make_rep(base.clone(),period_id.to_string(),Selection{adaptation,representation,kind:MediaKind::Audio},start,duration)?);
+                representations.push(make_rep(base.clone(),period_id.to_string(),period.template.as_ref(),Selection{adaptation,representation,kind:MediaKind::Audio},start,duration,synthesis)?);
             }
         }
         if representations.is_empty(){continue}
@@ -616,8 +621,9 @@ fn select_subtitles<'a>(period:&'a Period,required:Option<&[RepresentationIdenti
     Ok(out)
 }
 fn adaptation_id(a:&Adaptation,kind:MediaKind)->String{a.id.clone().unwrap_or_else(||format!("{:?}:{}:{}",kind,a.content_type.as_deref().unwrap_or(""),a.mime_type.as_deref().unwrap_or("")))}
-fn make_rep(base:Url,period:String,s:Selection<'_>,start:ExactTime,duration:Option<ExactTime>)->Result<RepresentationSnapshot,String>{
-    validate_cenc(&s)?; let template=merged_template(s.adaptation,s.representation)?;
+fn make_rep(base:Url,period:String,period_template:Option<&SegmentTemplate>,s:Selection<'_>,start:ExactTime,duration:Option<ExactTime>,synthesis:&TimelineSynthesisContext)->Result<RepresentationSnapshot,String>{
+    validate_cenc(&s)?; let mut template=merged_template(period_template,s.adaptation,s.representation)?;
+    synthesize_timeline(&mut template,start,duration,synthesis)?;
     let entries:Vec<_>=template.timeline.as_ref().unwrap().entries.iter().map(|x|TimelineEntry{t:x.t,d:x.d,r:x.r}).collect();
     let index=CompactTimeline::new(&entries,template.timescale.unwrap_or(1),template.pto.unwrap_or(0),template.start_number.unwrap_or(1),start,duration).map_err(|_|"Unsupported DASH manifest shape: invalid SegmentTimeline")?;
     let base=inherit_base(inherit_base(base,&s.adaptation.base_urls)?,&s.representation.base_urls)?;
@@ -631,7 +637,10 @@ fn descriptors(rep:&RepresentationSnapshot,dynamic:bool)->Result<Vec<SegmentDesc
     if !dynamic&&rep.index.represented_segment_count()>MAX_STATIC_SEGMENTS{return Err("Unsupported DASH manifest shape: segment list too large".into())}
     let mut refs=Vec::new(); if let(Some(first),Some(last))=(rep.index.first_position(),rep.index.last_position()){for pos in first..=last{if let Some(r)=rep.index.get(pos).map_err(|_|"Unsupported DASH manifest shape")?{refs.push(r)}}}
     if dynamic{refs.pop();}
-    refs.into_iter().map(|r|{let media=expand(rep.template.media.as_deref().unwrap(),&rep.identity.representation,Some(r.position),Some(r.media_time))?;Ok(SegmentDescriptor{identity:SegmentIdentity{representation:rep.identity.clone(),media_time:r.media_time},number:r.position,start:r.presentation_start,end:r.presentation_end,url:rep.base.join(&media).map_err(|_|"Segment fetch failed")?})}).collect()
+    refs.into_iter().map(|r|{
+        let media=expand_template(rep.template.media.as_deref().unwrap(),&rep.identity.representation,Some(rep.bandwidth),Some(r.position),Some(r.media_time))?;
+        Ok(SegmentDescriptor{identity:SegmentIdentity{representation:rep.identity.clone(),media_time:r.media_time},number:r.position,start:r.presentation_start,end:r.presentation_end,url:resolve_template_url(&rep.base,&media)?})
+    }).collect()
 }
 
 fn representation_seek_bounds(rep: &RepresentationSnapshot, dynamic: bool) -> Result<(ExactTime, ExactTime), String> {
@@ -654,13 +663,13 @@ fn descriptor_at(rep: &RepresentationSnapshot, dynamic: bool, target: ExactTime)
         rep.index.find(target).map_err(|_| "DASH seek lookup failed")?
     }.ok_or("DASH seek target has no media")?;
     let reference = rep.index.get(position).map_err(|_| "DASH seek lookup failed")?.ok_or("DASH seek target has no media")?;
-    let media = expand(rep.template.media.as_deref().unwrap(), &rep.identity.representation, Some(reference.position), Some(reference.media_time))?;
+    let media = expand_template(rep.template.media.as_deref().unwrap(), &rep.identity.representation, Some(rep.bandwidth), Some(reference.position), Some(reference.media_time))?;
     Ok(SegmentDescriptor {
         identity: SegmentIdentity { representation: rep.identity.clone(), media_time: reference.media_time },
         number: reference.position,
         start: reference.presentation_start,
         end: reference.presentation_end,
-        url: rep.base.join(&media).map_err(|_| "Segment fetch failed")?,
+        url: resolve_template_url(&rep.base, &media)?,
     })
 }
 
@@ -698,10 +707,124 @@ fn build_catalog(snapshot:&ManifestSnapshot)->DashTrackCatalog{
     let audio_tracks=snapshot.audio_tracks.iter().map(|track|DashAudioTrack{adaptation_set_id:track.adaptation_set_id.clone(),mpv_track_id:track.mpv_track_id,language:track.language.clone(),label:track.label.clone(),role:track.roles.clone(),codec:track.selected.codecs.clone(),channels:track.channel_configuration.clone(),sample_rate:track.selected.audio_sampling_rate,representation_id:track.selected.identity.representation.clone()}).collect();
     DashTrackCatalog{active:true,video_adaptation_set_id:active_track.adaptation_set_id.clone(),selected_video_representation_id:snapshot.video.identity.representation.clone(),video_quality_mode:VideoQualityMode::Auto,pending_video_representation_id:None,abr_statistics:AbrStatistics{current_representation:snapshot.video.identity.representation.clone(),..AbrStatistics::default()},selected_audio_adaptation_set_id:snapshot.audio.identity.adaptation.clone(),video_representations,audio_tracks,subtitle_tracks:snapshot.subtitles.iter().map(|rep|rep.identity.adaptation.clone()).collect()}
 }
-fn merged_template(a:&Adaptation,r:&Representation)->Result<SegmentTemplate,String>{let p=a.template.clone().unwrap_or_default();let c=r.template.clone().unwrap_or_default();let x=SegmentTemplate{timescale:c.timescale.or(p.timescale),pto:c.pto.or(p.pto),start_number:c.start_number.or(p.start_number),initialization:c.initialization.or(p.initialization),media:c.media.or(p.media),timeline:c.timeline.or(p.timeline)};if x.initialization.is_none()||x.media.is_none()||x.timeline.is_none(){Err("Unsupported DASH manifest shape: SegmentTemplate/SegmentTimeline required".into())}else{Ok(x)}}
+fn direct_utc_time(nodes:&[UtcTimingNode])->Option<chrono::DateTime<chrono::Utc>>{
+    nodes.iter().find_map(|node|{
+        let scheme=node.scheme.to_ascii_lowercase();
+        (scheme.contains(":direct:")||scheme.ends_with(":direct")).then(||chrono::DateTime::parse_from_rfc3339(node.value.trim()).ok().map(|value|value.with_timezone(&chrono::Utc))).flatten()
+    })
+}
+fn synthesize_timeline(template:&mut SegmentTemplate,period_start:ExactTime,period_duration:Option<ExactTime>,context:&TimelineSynthesisContext)->Result<(),String>{
+    if template.timeline.is_some(){return Ok(())}
+    let duration=template.duration.filter(|value|*value>0).ok_or("Unsupported DASH manifest shape: SegmentTemplate/SegmentTimeline required")?;
+    let timescale=template.timescale.unwrap_or(1);
+    if timescale==0{return Err("Unsupported DASH manifest shape: invalid SegmentTemplate timescale".into())}
+    let(first_index,count)=if context.dynamic{
+        let ast=context.availability_start_time.ok_or("Unsupported DASH manifest shape: dynamic duration template requires availabilityStartTime")?;
+        let elapsed_micros=i128::from(context.wall_clock.timestamp_micros()).checked_sub(i128::from(ast.timestamp_micros())).ok_or("DASH timestamp overflow")?;
+        let elapsed=ExactTime::new(elapsed_micros,1_000_000).map_err(|_|"DASH timestamp overflow")?.checked_sub(period_start).map_err(|_|"DASH timestamp overflow")?;
+        let elapsed_ticks=elapsed.rescale(timescale,crate::dash_timeline::Rounding::Floor).map_err(|_|"DASH timestamp overflow")?;
+        // Include the segment at the calculated live edge. The native DASH
+        // descriptor layer consistently drops the last advertised dynamic
+        // segment, so completed media remains available without applying the
+        // reference gateway's holdback twice.
+        let latest=elapsed_ticks.checked_div(duration).filter(|value|*value>=0).ok_or("Unsupported DASH manifest shape: duration template has no segments")?;
+        let latest=u64::try_from(latest).map_err(|_|"DASH timestamp overflow")?;
+        let buffer_count=context.time_shift_buffer_depth.and_then(|depth|depth.rescale(timescale,crate::dash_timeline::Rounding::Floor).ok()).and_then(|ticks|u64::try_from(ticks.checked_div(duration)?).ok()).filter(|count|*count>0).unwrap_or(8);
+        let first=latest.saturating_sub(buffer_count.saturating_sub(1));
+        (first,latest-first+1)
+    }else{
+        let period_duration=period_duration.ok_or("Unsupported DASH manifest shape: static duration template requires Period duration")?;
+        let ticks=period_duration.rescale(timescale,crate::dash_timeline::Rounding::Ceil).map_err(|_|"DASH timestamp overflow")?;
+        if ticks<=0{return Err("Unsupported DASH manifest shape: duration template has no segments".into())}
+        let count=ticks.checked_add(duration-1).and_then(|value|value.checked_div(duration)).and_then(|value|u64::try_from(value).ok()).ok_or("DASH timestamp overflow")?;
+        (0,count)
+    };
+    let start_number=template.start_number.unwrap_or(1).checked_add(first_index).ok_or("DASH timestamp overflow")?;
+    let media_time=duration.checked_mul(i128::from(first_index)).ok_or("DASH timestamp overflow")?;
+    let repeat=i64::try_from(count.checked_sub(1).ok_or("Unsupported DASH manifest shape: duration template has no segments")?).map_err(|_|"DASH timestamp overflow")?;
+    template.start_number=Some(start_number);
+    template.timeline=Some(SegmentTimeline{entries:vec![S{t:Some(media_time),d:duration,r:repeat}]});
+    Ok(())
+}
+fn merged_template(period:Option<&SegmentTemplate>,a:&Adaptation,r:&Representation)->Result<SegmentTemplate,String>{
+    fn overlay(parent:SegmentTemplate,child:SegmentTemplate)->SegmentTemplate{
+        SegmentTemplate{
+            timescale:child.timescale.or(parent.timescale),
+            pto:child.pto.or(parent.pto),
+            start_number:child.start_number.or(parent.start_number),
+            duration:child.duration.or(parent.duration),
+            initialization:child.initialization.or(parent.initialization),
+            media:child.media.or(parent.media),
+            timeline:child.timeline.or(parent.timeline),
+        }
+    }
+    let inherited=overlay(period.cloned().unwrap_or_default(),a.template.clone().unwrap_or_default());
+    let result=overlay(inherited,r.template.clone().unwrap_or_default());
+    if result.initialization.is_none()||result.media.is_none()||(result.timeline.is_none()&&result.duration.is_none()){
+        Err("Unsupported DASH manifest shape: SegmentTemplate/SegmentTimeline required".into())
+    }else{Ok(result)}
+}
 fn validate_cenc(s:&Selection<'_>)->Result<(),String>{for p in s.adaptation.protections.iter().chain(&s.representation.protections){if p.scheme.eq_ignore_ascii_case("urn:mpeg:dash:mp4protection:2011")&&p.value.as_deref().is_some_and(|v|!v.eq_ignore_ascii_case("cenc")&&!v.eq_ignore_ascii_case("cbcs")){return Err("Unsupported DASH manifest shape: only CENC and CBCS are supported".into())}}Ok(())}
-fn expand(t:&str,id:&str,n:Option<u64>,time:Option<i128>)->Result<String,String>{let v=t.replace("$RepresentationID$",id).replace("$Number$",&n.map(|v|v.to_string()).unwrap_or_default()).replace("$Time$",&time.map(|v|v.to_string()).unwrap_or_default()).replace("$$","\0");if v.contains('$'){Err("Unsupported DASH manifest shape: unsupported URL template".into())}else{Ok(v.replace('\0',"$"))}}
-fn inherit_base(mut base:Url,nodes:&[TextNode])->Result<Url,String>{if let Some(n)=nodes.first(){base=base.join(n.value.trim()).map_err(|_|"Unsupported DASH manifest shape: invalid BaseURL")?}Ok(base)}
+fn expand_template(template:&str,id:&str,bandwidth:Option<u64>,number:Option<u64>,time:Option<i128>)->Result<String,String>{
+    let mut output=String::with_capacity(template.len());
+    let mut cursor=0;
+    while let Some(offset)=template[cursor..].find('$'){
+        let start=cursor+offset;
+        output.push_str(&template[cursor..start]);
+        if template.as_bytes().get(start+1)==Some(&b'$'){
+            output.push('$');cursor=start+2;continue;
+        }
+        let Some(end_offset)=template[start+1..].find('$')else{return Err(format!("Unsupported DASH manifest shape: unterminated URL template in {template:?}"))};
+        let end=start+1+end_offset;
+        let inner=&template[start+1..end];
+        if inner.is_empty()||!inner.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'%'){
+            // A few providers use a literal, unescaped '$' in a path while
+            // also using real template identifiers later in the same URL.
+            output.push('$');cursor=start+1;continue;
+        }
+        let(name,spec)=inner.find('%').map_or((inner,None),|at|(&inner[..at],Some(&inner[at..])));
+        let replacement=match name{
+            "RepresentationID"=>{
+                if spec.is_some(){return Err(format!("Unsupported DASH manifest shape: $RepresentationID$ cannot be formatted in {template:?}"))}
+                id.to_string()
+            }
+            "Bandwidth"=>format_template_number(name,bandwidth.map(i128::from),spec,template)?,
+            "Number"=>format_template_number(name,number.map(i128::from),spec,template)?,
+            "Time"=>format_template_number(name,time,spec,template)?,
+            "SubNumber"=>return Err(format!("Unsupported DASH manifest shape: $SubNumber$ is not supported in {template:?}")),
+            _=>return Err(format!("Unsupported DASH manifest shape: unknown URL template identifier ${name}$ in {template:?}")),
+        };
+        output.push_str(&replacement);cursor=end+1;
+    }
+    output.push_str(&template[cursor..]);
+    Ok(output)
+}
+fn format_template_number(name:&str,value:Option<i128>,spec:Option<&str>,template:&str)->Result<String,String>{
+    let value=value.ok_or_else(||format!("Unsupported DASH manifest shape: ${name}$ has no value in {template:?}"))?;
+    let Some(spec)=spec else{return Ok(value.to_string())};
+    let bytes=spec.as_bytes();
+    if bytes.first()!=Some(&b'%'){return Err(format!("Unsupported DASH manifest shape: invalid URL template format {spec:?}"))}
+    let mut index=1;let zero_pad=bytes.get(index)==Some(&b'0');if zero_pad{index+=1}
+    let width_start=index;while index<bytes.len()&&bytes[index].is_ascii_digit(){index+=1}
+    let width=if width_start==index{0}else{spec[width_start..index].parse::<usize>().map_err(|_|format!("Unsupported DASH manifest shape: invalid URL template width {spec:?}"))?};
+    if index<bytes.len(){index+=1}
+    if index!=bytes.len(){return Err(format!("Unsupported DASH manifest shape: invalid URL template format {spec:?}"))}
+    Ok(if zero_pad{format!("{value:0width$}",width=width)}else{format!("{value:>width$}",width=width)})
+}
+fn resolve_template_url(base:&Url,path:&str)->Result<Url,String>{
+    let inherited_query=base.query().map(str::to_string);
+    let mut resolved=base.join(path).map_err(|_|"Segment fetch failed")?;
+    if resolved.query().is_none(){resolved.set_query(inherited_query.as_deref())}
+    Ok(resolved)
+}
+fn inherit_base(mut base:Url,nodes:&[TextNode])->Result<Url,String>{
+    if let Some(n)=nodes.first(){
+        let inherited_query=base.query().map(str::to_string);
+        base=base.join(n.value.trim()).map_err(|_|"Unsupported DASH manifest shape: invalid BaseURL")?;
+        if base.query().is_none(){base.set_query(inherited_query.as_deref())}
+    }
+    Ok(base)
+}
 fn parse_duration(value:&str)->Result<ExactTime,String>{
     fn decimal(value:&str)->Result<ExactTime,String>{
         if value.is_empty(){return Err("Unsupported DASH manifest shape: duration".into())}
@@ -714,7 +837,11 @@ fn parse_duration(value:&str)->Result<ExactTime,String>{
     for ch in rest.chars(){
         if ch=='T'{if in_time||!number.is_empty(){return Err("Unsupported DASH manifest shape: duration".into())}in_time=true;last_rank=0;continue}
         if ch.is_ascii_digit()||ch=='.'{number.push(ch);continue}
-        let(rank,multiplier)=match(ch,in_time){('D',false)=>(1,86_400),('H',true)=>(1,3_600),('M',true)=>(2,60),('S',true)=>(3,1),_=>return Err("Unsupported DASH manifest shape: duration".into())};
+        let(rank,multiplier)=match(ch,in_time){
+            ('Y',false)=>(1,31_557_600),('M',false)=>(2,2_592_000),('W',false)=>(3,604_800),('D',false)=>(4,86_400),
+            ('H',true)=>(1,3_600),('M',true)=>(2,60),('S',true)=>(3,1),
+            _=>return Err("Unsupported DASH manifest shape: duration".into())
+        };
         if number.is_empty()||rank<=last_rank{return Err("Unsupported DASH manifest shape: duration".into())}last_rank=rank;saw_component=true;let component=decimal(&number)?;number.clear();let scaled=ExactTime::new(component.numerator().checked_mul(multiplier).ok_or("Unsupported DASH manifest shape: duration")?,component.denominator()).map_err(|_|"Unsupported DASH manifest shape: duration")?;total=total.checked_add(scaled).map_err(|_|"Unsupported DASH manifest shape: duration")?;
     }
     if !number.is_empty()||!saw_component{return Err("Unsupported DASH manifest shape: duration".into())}Ok(total)
@@ -763,7 +890,10 @@ async fn build_live(url:&str,request_headers:&HashMap<String,String>,preferred_s
         let value=reqwest::header::HeaderValue::from_str(value).map_err(|_|"Manifest fetch failed: invalid header value")?;
         headers.insert(name,value);
     }
-    let client=reqwest::Client::builder().default_headers(headers).connect_timeout(Duration::from_secs(8)).timeout(Duration::from_secs(20)).build().map_err(|_|"Manifest fetch failed")?;
+    // Redirects are followed explicitly so configured Authorization/Cookie
+    // headers survive gateway-to-CDN host changes. reqwest strips those
+    // headers from automatic cross-host redirects.
+    let client=reqwest::Client::builder().default_headers(headers).redirect(reqwest::redirect::Policy::none()).connect_timeout(Duration::from_secs(8)).timeout(Duration::from_secs(20)).build().map_err(|_|"Manifest fetch failed")?;
     let(body,final_url)=fetch_final(&client,manifest_url.clone(),cancel,"Manifest fetch failed").await?;
     let snapshot=parse_snapshot(&body,final_url,1,None)?;log_snapshot(&snapshot);
     let catalog=build_catalog(&snapshot);
@@ -840,8 +970,8 @@ fn inferred_update_period(rep:&RepresentationSnapshot)->Duration{
     segment_duration.map(|duration|duration.div_f64(2.0).clamp(MIN_MUP,MAX_INFERRED_MUP)).unwrap_or(FALLBACK_MUP)
 }
 async fn fetch_init(client:&reqwest::Client,rep:&RepresentationSnapshot,cancel:&CancellationToken)->Result<Vec<u8>,String>{
-    let init=expand(rep.template.initialization.as_deref().unwrap(),&rep.identity.representation,None,None)?;
-    fetch(client,rep.base.join(&init).map_err(|_|"Segment fetch failed")?,cancel,"Segment fetch failed").await
+    let init=expand_template(rep.template.initialization.as_deref().unwrap(),&rep.identity.representation,Some(rep.bandwidth),None,None)?;
+    fetch(client,resolve_template_url(&rep.base,&init)?,cancel,"Segment fetch failed").await
 }
 struct ComponentDownload { kind:MediaKind, metrics:Vec<DownloadMeasurement> }
 async fn download_component(client:&reqwest::Client,init:&[u8],segments:&[SegmentDescriptor],path:&Path,cancel:&CancellationToken,kind:MediaKind)->Result<ComponentDownload,(MediaKind,String)>{
@@ -1038,11 +1168,25 @@ async fn write_live(socket:&mut TcpStream,bytes:&[u8],cancel:&CancellationToken)
 async fn fetch(client:&reqwest::Client,url:Url,c:&CancellationToken,label:&str)->Result<Vec<u8>,String>{fetch_final(client,url,c,label).await.map(|x|x.0)}
 fn retryable_http_status(status:reqwest::StatusCode)->bool{status==reqwest::StatusCode::FORBIDDEN||status==reqwest::StatusCode::REQUEST_TIMEOUT||status==reqwest::StatusCode::TOO_MANY_REQUESTS||status.is_server_error()}
 async fn retry_delay(c:&CancellationToken,attempt:usize)->Result<(),String>{let delay=Duration::from_millis(200*(attempt as u64+1));tokio::select!{_=c.cancelled()=>Err("Native DASH session cancelled".into()),_=tokio::time::sleep(delay)=>Ok(())}}
+async fn send_following_redirects(client:&reqwest::Client,mut url:Url,c:&CancellationToken,label:&str)->Result<reqwest::Response,String>{
+    const MAX_REDIRECTS:usize=10;
+    for hop in 0..=MAX_REDIRECTS{
+        let response=tokio::select!{_=c.cancelled()=>return Err("Native DASH session cancelled".into()),result=client.get(url.clone()).send()=>result.map_err(|_|label.to_string())?};
+        let status=response.status();
+        let redirect=matches!(status,reqwest::StatusCode::MOVED_PERMANENTLY|reqwest::StatusCode::FOUND|reqwest::StatusCode::SEE_OTHER|reqwest::StatusCode::TEMPORARY_REDIRECT|reqwest::StatusCode::PERMANENT_REDIRECT);
+        if !redirect{return Ok(response)}
+        if hop==MAX_REDIRECTS{return Err(format!("{label}: too many redirects"))}
+        let location=response.headers().get(reqwest::header::LOCATION).and_then(|value|value.to_str().ok()).ok_or_else(||format!("{label}: HTTP {} without Location",status.as_u16()))?;
+        let next=url.join(location).map_err(|_|format!("{label}: invalid redirect Location"))?;
+        log::debug!("{} redirect {} -> {}",label,url,next);url=next;
+    }
+    unreachable!()
+}
 async fn fetch_media_segment(client:&reqwest::Client,url:Url,c:&CancellationToken,representation_id:&str)->Result<(Vec<u8>,DownloadMeasurement),String>{
     for attempt in 0..3 {
         let request_start=Instant::now();
-        let response=tokio::select!{_=c.cancelled()=>return Err("Native DASH session cancelled".into()),x=client.get(url.clone()).send()=>x};
-        let mut response=match response{Ok(response)=>response,Err(_)if attempt<2=>{log::warn!("DASH segment request failed; retrying attempt={}",attempt+2);retry_delay(c,attempt).await?;continue},Err(_)=>return Err("Segment fetch failed".into())};
+        let response=send_following_redirects(client,url.clone(),c,"Segment fetch failed").await;
+        let mut response=match response{Ok(response)=>response,Err(error)if error=="Native DASH session cancelled"=>return Err(error),Err(_)if attempt<2=>{log::warn!("DASH segment request failed; retrying attempt={}",attempt+2);retry_delay(c,attempt).await?;continue},Err(_)=>return Err("Segment fetch failed".into())};
         if !response.status().is_success(){let status=response.status();if attempt<2&&retryable_http_status(status){log::warn!("DASH segment HTTP {}; retrying attempt={}",status.as_u16(),attempt+2);retry_delay(c,attempt).await?;continue}return Err(format!("Segment fetch failed: HTTP {}",status.as_u16()))}
         let mut bytes=Vec::new();let mut first_byte_time=None;let mut body_failed=false;
         loop{
@@ -1058,7 +1202,7 @@ async fn fetch_media_segment(client:&reqwest::Client,url:Url,c:&CancellationToke
     }
     Err("Segment fetch failed".into())
 }
-async fn fetch_final(client:&reqwest::Client,url:Url,c:&CancellationToken,label:&str)->Result<(Vec<u8>,Url),String>{for attempt in 0..3{let response=tokio::select!{_=c.cancelled()=>return Err("Native DASH session cancelled".into()),x=client.get(url.clone()).send()=>x};let response=match response{Ok(response)=>response,Err(_)if attempt<2=>{log::warn!("{}; retrying attempt={}",label,attempt+2);retry_delay(c,attempt).await?;continue},Err(_)=>return Err(label.to_string())};let status=response.status();if !status.is_success(){if attempt<2&&retryable_http_status(status){log::warn!("{}: HTTP {}; retrying attempt={}",label,status.as_u16(),attempt+2);retry_delay(c,attempt).await?;continue}return Err(format!("{}: HTTP {}",label,status.as_u16()))}let final_url=response.url().clone();let bytes=tokio::select!{_=c.cancelled()=>return Err("Native DASH session cancelled".into()),x=response.bytes()=>x};match bytes{Ok(bytes)if!bytes.is_empty()=>return Ok((bytes.to_vec(),final_url)),Ok(_)|Err(_)if attempt<2=>{log::warn!("{}: incomplete body; retrying attempt={}",label,attempt+2);retry_delay(c,attempt).await?;continue},_=>return Err(label.to_string())}}Err(label.to_string())}
+async fn fetch_final(client:&reqwest::Client,url:Url,c:&CancellationToken,label:&str)->Result<(Vec<u8>,Url),String>{for attempt in 0..3{let response=send_following_redirects(client,url.clone(),c,label).await;let response=match response{Ok(response)=>response,Err(error)if error=="Native DASH session cancelled"=>return Err(error),Err(_)if attempt<2=>{log::warn!("{}; retrying attempt={}",label,attempt+2);retry_delay(c,attempt).await?;continue},Err(_)=>return Err(label.to_string())};let status=response.status();if !status.is_success(){if attempt<2&&retryable_http_status(status){log::warn!("{}: HTTP {}; retrying attempt={}",label,status.as_u16(),attempt+2);retry_delay(c,attempt).await?;continue}return Err(format!("{}: HTTP {}",label,status.as_u16()))}let final_url=response.url().clone();let bytes=tokio::select!{_=c.cancelled()=>return Err("Native DASH session cancelled".into()),x=response.bytes()=>x};match bytes{Ok(bytes)if!bytes.is_empty()=>return Ok((bytes.to_vec(),final_url)),Ok(_)|Err(_)if attempt<2=>{log::warn!("{}: incomplete body; retrying attempt={}",label,attempt+2);retry_delay(c,attempt).await?;continue},_=>return Err(label.to_string())}}Err(label.to_string())}
 fn log_snapshot(s:&ManifestSnapshot){log::info!("DASH manifest generation={} type={} publishTime={} availabilityStartTime={} timeShiftBufferDepth={} suggestedPresentationDelay={}",s.generation,if s.dynamic{"dynamic"}else{"static"},s.publish_time.map(|x|x.to_rfc3339()).unwrap_or_else(||"none".into()),s.availability_start_time.map(|x|x.to_rfc3339()).unwrap_or_else(||"none".into()),s.time_shift_buffer_depth.map(seconds).map(|x|format!("{x:.3}s")).unwrap_or_else(||"none".into()),s.suggested_presentation_delay.map(seconds).map(|x|format!("{x:.3}s")).unwrap_or_else(||"none".into()));log::info!("DASH video representations:");for track in &s.video_tracks{for r in &track.representations{log::info!("  id={} {}x{} {} codec={} frame_rate={}",r.identity.representation,r.width.map(|v|v.to_string()).unwrap_or_else(||"?".into()),r.height.map(|v|v.to_string()).unwrap_or_else(||"?".into()),r.bandwidth,r.codecs,r.frame_rate.as_deref().unwrap_or("?"));}}log::info!("DASH audio tracks:");for track in &s.audio_tracks{log::info!("  id={} lang={} role={} representation={}",track.adaptation_set_id,track.language,track.roles.join(","),track.selected.identity.representation);}}
 fn log_merge(s:&ManifestSnapshot,m:&MergeStats){log::info!("DASH refresh representation={} old_refs={} new_refs={} added={} retained={} expired={}",s.video.identity.representation,m.retained,m.added+m.retained,m.added,m.retained,m.expired)}
 
@@ -1125,10 +1269,59 @@ mod tests {
         assert_eq!(parse_duration("P0DT12H").unwrap(), ExactTime::new(43_200, 1).unwrap());
         assert_eq!(parse_duration("PT1H2M3.5S").unwrap(), ExactTime::new(7_447, 2).unwrap());
         assert_eq!(parse_duration("P1DT2H3M4.125S").unwrap(), ExactTime::new(750_273, 8).unwrap());
+        assert_eq!(parse_duration("P1W").unwrap(), ExactTime::new(604_800, 1).unwrap());
+        assert_eq!(parse_duration("P1Y1M").unwrap(), ExactTime::new(34_149_600, 1).unwrap());
         assert_eq!(parse_duration("PT0S").unwrap(), ExactTime::new(0, 1).unwrap());
-        for invalid in ["12H", "P", "PT", "PT1M2H", "P1M", "PT1.2.3S"] {
+        for invalid in ["12H", "P", "PT", "PT1M2H", "P1D1W", "PT1.2.3S"] {
             assert!(parse_duration(invalid).is_err(), "{invalid}");
         }
+    }
+
+    #[test]
+    fn dash_template_expansion_covers_standard_and_vendor_forms() {
+        assert_eq!(
+            expand_template("$RepresentationID$_$Bandwidth$_$Number%05d$_$Time%010d$.m4s", "video_2", Some(580_000), Some(42), Some(123_456)).unwrap(),
+            "video_2_580000_00042_0000123456.m4s"
+        );
+        assert_eq!(expand_template("price-$$5-$Number$.m4s", "v", None, Some(7), None).unwrap(), "price-$5-7.m4s");
+        assert_eq!(
+            expand_template("sdash/LIVE$CUP240/QualityLevels($Bandwidth$)/Fragments(video=$Time$)", "v", Some(1_468_006), None, Some(17_824_492_281_678_240)).unwrap(),
+            "sdash/LIVE$CUP240/QualityLevels(1468006)/Fragments(video=17824492281678240)"
+        );
+        assert!(expand_template("$Unknown$.m4s", "v", None, None, None).unwrap_err().contains("unknown URL template identifier"));
+        assert!(expand_template("$Number", "v", None, Some(1), None).unwrap_err().contains("unterminated"));
+    }
+
+    #[test]
+    fn period_template_bandwidth_and_manifest_query_are_inherited() {
+        let data=br#"<MPD type="dynamic"><Period id="p" duration="PT20S">
+          <SegmentTemplate timescale="1" initialization="$RepresentationID$_$Bandwidth$_init.mp4" media="$RepresentationID$_$Bandwidth$_$Number%03d$_$Time$.m4s"><SegmentTimeline><S t="0" d="5" r="3"/></SegmentTimeline></SegmentTemplate>
+          <AdaptationSet id="v" contentType="video" mimeType="video/mp4"><Representation id="video" bandwidth="580000" codecs="avc1.42E00D"/></AdaptationSet>
+          <AdaptationSet id="a" contentType="audio" mimeType="audio/mp4"><Representation id="audio" bandwidth="100000" codecs="mp4a.40.2"/></AdaptationSet>
+        </Period></MPD>"#;
+        let snapshot=parse_snapshot(data,Url::parse("https://cdn.example.test/live/manifest.mpd?token=abc").unwrap(),1,None).unwrap();
+        let video=&snapshot.video;
+        let init=expand_template(video.template.initialization.as_deref().unwrap(),&video.identity.representation,Some(video.bandwidth),None,None).unwrap();
+        assert_eq!(resolve_template_url(&video.base,&init).unwrap().as_str(),"https://cdn.example.test/live/video_580000_init.mp4?token=abc");
+        let segments=descriptors(video,true).unwrap();
+        assert_eq!(segments[0].url.as_str(),"https://cdn.example.test/live/video_580000_001_0.m4s?token=abc");
+    }
+
+    #[test]
+    fn duration_only_templates_synthesize_static_and_direct_utc_live_windows() {
+        let adaptations=r#"
+          <AdaptationSet id="v" contentType="video" mimeType="video/mp4"><SegmentTemplate timescale="1" duration="2" initialization="v-init" media="v-$Number$.m4s"/><Representation id="v" bandwidth="100" codecs="avc1.42E00D"/></AdaptationSet>
+          <AdaptationSet id="a" contentType="audio" mimeType="audio/mp4"><SegmentTemplate timescale="1" duration="2" initialization="a-init" media="a-$Number$.m4s"/><Representation id="a" bandwidth="50" codecs="mp4a.40.2"/></AdaptationSet>"#;
+        let static_mpd=format!(r#"<MPD type="static" mediaPresentationDuration="PT10S"><Period id="p">{adaptations}</Period></MPD>"#);
+        let static_snapshot=snap(static_mpd.as_bytes(),1);
+        assert_eq!((static_snapshot.video.index.first_position(),static_snapshot.video.index.last_position()),(Some(1),Some(5)));
+        assert_eq!(descriptors(&static_snapshot.video,false).unwrap().last().unwrap().url.path(),"/live/v-5.m4s");
+
+        let live_mpd=format!(r#"<MPD type="dynamic" availabilityStartTime="2026-01-01T00:00:00Z" timeShiftBufferDepth="PT6S"><UTCTiming schemeIdUri="urn:mpeg:dash:utc:direct:2014" value="2026-01-01T00:00:10Z"/><Period id="p">{adaptations}</Period></MPD>"#);
+        let live_snapshot=snap(live_mpd.as_bytes(),1);
+        assert_eq!((live_snapshot.video.index.first_position(),live_snapshot.video.index.last_position()),(Some(4),Some(6)));
+        assert_eq!(live_snapshot.video.index.get(4).unwrap().unwrap().media_time,6);
+        assert_eq!(descriptors(&live_snapshot.video,true).unwrap().last().unwrap().url.path(),"/live/v-5.m4s");
     }
 
     #[test]
@@ -1335,6 +1528,19 @@ mod tests {
         let reps=(1..=5).map(|n|format!(r#"<Representation id="v{n}" bandwidth="{}" codecs="avc1.64001f"/>"#,n*500_000)).collect::<String>();
         let data=format!(r#"<MPD type="dynamic"><Period id="p" duration="PT20S"><AdaptationSet id="v" contentType="video" mimeType="video/mp4"><SegmentTemplate timescale="1" initialization="$RepresentationID$/init" media="$RepresentationID$/$Time$"><SegmentTimeline><S t="0" d="5" r="2"/></SegmentTimeline></SegmentTemplate>{reps}</AdaptationSet><AdaptationSet id="a" contentType="audio" mimeType="audio/mp4"><SegmentTemplate timescale="1" initialization="a" media="a-$Time$"><SegmentTimeline><S t="0" d="5" r="2"/></SegmentTimeline></SegmentTemplate><Representation id="a1"/></AdaptationSet></Period></MPD>"#);
         let snapshot=snap(data.as_bytes(),1);assert_eq!(snapshot.video.identity.representation,"v3");assert!(matches!(build_catalog(&snapshot).video_quality_mode,VideoQualityMode::Auto));
+    }
+
+    #[tokio::test]
+    async fn cross_host_redirect_reapplies_configured_headers() {
+        let target=TcpListener::bind("127.0.0.1:0").await.unwrap();let target_address=target.local_addr().unwrap();
+        let gateway=TcpListener::bind("127.0.0.1:0").await.unwrap();let gateway_address=gateway.local_addr().unwrap();
+        let target_task=tokio::spawn(async move{let(mut socket,_)=target.accept().await.unwrap();let mut request=[0u8;2048];let size=socket.read(&mut request).await.unwrap();let request=String::from_utf8_lossy(&request[..size]).to_ascii_lowercase();assert!(request.contains("authorization: bearer secret"));socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok").await.unwrap();});
+        let gateway_task=tokio::spawn(async move{let(mut socket,_)=gateway.accept().await.unwrap();let mut request=[0u8;2048];let size=socket.read(&mut request).await.unwrap();let request=String::from_utf8_lossy(&request[..size]).to_ascii_lowercase();assert!(request.contains("authorization: bearer secret"));let response=format!("HTTP/1.1 302 Found\r\nLocation: http://{target_address}/final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");socket.write_all(response.as_bytes()).await.unwrap();});
+        let mut headers=reqwest::header::HeaderMap::new();headers.insert(reqwest::header::AUTHORIZATION,reqwest::header::HeaderValue::from_static("Bearer secret"));
+        let client=reqwest::Client::builder().default_headers(headers).redirect(reqwest::redirect::Policy::none()).build().unwrap();
+        let(bytes,final_url)=fetch_final(&client,Url::parse(&format!("http://{gateway_address}/start")).unwrap(),&CancellationToken::new(),"test fetch").await.unwrap();
+        assert_eq!(bytes,b"ok");assert_eq!(final_url.as_str(),format!("http://{target_address}/final"));
+        gateway_task.await.unwrap();target_task.await.unwrap();
     }
 
     #[tokio::test]
