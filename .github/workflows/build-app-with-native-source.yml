@@ -110,9 +110,9 @@ jobs:
         run: pnpm tauri build --bundles dmg --ci --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
       - name: Verify self-contained macOS bundle
-        run: |
-          app=packages/app/src-tauri/target/release/bundle/macos/ynoTV.app
-          node scripts/audit-macos-bundle.mjs "$app"
+        # A DMG-only Tauri build removes the intermediate .app. With no explicit
+        # path, the audit script mounts the generated DMG and checks the app in it.
+        run: node scripts/audit-macos-bundle.mjs
 
       - name: Upload macOS package
         uses: actions/upload-artifact@v6
