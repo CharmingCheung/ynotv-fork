@@ -16,6 +16,8 @@
 struct component {
     AVFormatContext *format;
     AVPacket *packet;
+    AVCodecParserContext *parser;
+    AVCodecContext *parser_codec;
     struct cenc_clear_packet clear;
     int stream_index;
     int have_packet;
@@ -90,7 +92,7 @@ static int64_t packet_time(int64_t value)
 
 static void open_component(struct component *component, const char *path,
                            enum AVMediaType type, uint32_t track_id,
-                           uint32_t track_type)
+                           uint32_t track_type, const char *decryption_key)
 {
     memset(component, 0, sizeof(*component));
     component->base_dts = AV_NOPTS_VALUE;
@@ -103,10 +105,34 @@ static void open_component(struct component *component, const char *path,
         component->format, type, -1, -1, NULL, 0);
     if (component->stream_index < 0)
         fail("component has no expected stream");
+    AVCodecParameters *codec = component->format->streams[component->stream_index]->codecpar;
+    if (codec->codec_id == AV_CODEC_ID_AC3 || codec->codec_id == AV_CODEC_ID_EAC3) {
+        // The MOV demuxer coalesces encrypted AC-3 samples when no key is set,
+        // while exposing only the first sample's IV on the resulting AVPacket.
+        // Reopen with FFmpeg's demux-time decryption so each independently
+        // encrypted syncframe is decrypted and emitted with its own timestamp.
+        avformat_close_input(&component->format);
+        AVDictionary *options = NULL;
+        av_dict_set(&options, "decryption_key", decryption_key, 0);
+        int open_result = avformat_open_input(&component->format, path, NULL, &options);
+        av_dict_free(&options);
+        if (open_result < 0)
+            fail("could not open AC-3 component with ClearKey");
+        component->stream_index = av_find_best_stream(
+            component->format, type, -1, -1, NULL, 0);
+        if (component->stream_index < 0)
+            fail("AC-3 component has no expected stream");
+        codec = component->format->streams[component->stream_index]->codecpar;
+        component->parser = av_parser_init(codec->codec_id);
+        component->parser_codec = avcodec_alloc_context3(NULL);
+        if (!component->parser || !component->parser_codec ||
+            avcodec_parameters_to_context(component->parser_codec, codec) < 0)
+            fail("AC-3 parser initialization failed");
+        component->parser->flags |= PARSER_FLAG_COMPLETE_FRAMES;
+    }
     component->packet = av_packet_alloc();
     if (!component->packet)
         fail("packet allocation failed");
-    AVCodecParameters *codec = component->format->streams[component->stream_index]->codecpar;
     for (int n = 0; n < codec->nb_coded_side_data; n++) {
         if (codec->coded_side_data[n].type == AV_PKT_DATA_ENCRYPTION_INIT_INFO)
             component->pssh_count++;
@@ -142,7 +168,8 @@ static int read_component(struct component *component,
     av_packet_unref(component->packet);
     cenc_clear_packet_free(&component->clear);
     while ((result = av_read_frame(component->format, component->packet)) >= 0) {
-        if (component->packet->stream_index == component->stream_index)
+        if (component->packet->stream_index == component->stream_index &&
+            component->packet->size > 0)
             break;
         av_packet_unref(component->packet);
     }
@@ -208,21 +235,81 @@ static int read_component(struct component *component,
     return 1;
 }
 
-static void write_packet(FILE *output, struct component *component)
+static void write_packet_record(FILE *output, const struct component *component,
+                                const uint8_t *data, size_t size, int64_t pts,
+                                int64_t dts, int64_t duration)
 {
     AVStream *stream = component->format->streams[component->stream_index];
     put_u32(output, RDP_RECORD_PACKET);
     put_u32(output, component->track_id);
     put_u32(output, 1);
-    put_i64(output, component->clear.pts);
-    put_i64(output, component->clear.dts);
-    put_i64(output, component->clear.duration);
+    put_i64(output, pts);
+    put_i64(output, dts);
+    put_i64(output, duration);
     put_i32(output, stream->time_base.num);
     put_i32(output, stream->time_base.den);
     put_u32(output, component->clear.keyframe ? RDP_FLAG_KEYFRAME : 0);
-    put_u32(output, (uint32_t)component->clear.size);
-    put_bytes(output, component->clear.data, component->clear.size);
-    component->packets++;
+    put_u32(output, (uint32_t)size);
+    put_bytes(output, data, size);
+}
+
+static int64_t add_timestamp(int64_t timestamp, int64_t offset)
+{
+    return timestamp == RDP_NOPTS ? RDP_NOPTS : timestamp + offset;
+}
+
+static void write_packet(FILE *output, struct component *component)
+{
+    if (!component->parser) {
+        write_packet_record(output, component, component->clear.data,
+                            component->clear.size, component->clear.pts,
+                            component->clear.dts, component->clear.duration);
+        component->packets++;
+        return;
+    }
+
+    AVStream *stream = component->format->streams[component->stream_index];
+    AVCodecParameters *codec = stream->codecpar;
+    if (component->clear.size < 2 || component->clear.data[0] != 0x0b ||
+        component->clear.data[1] != 0x77)
+        fail("AC-3 ClearKey decryption produced an invalid syncframe");
+    const uint8_t *input = component->clear.data;
+    int remaining = (int)component->clear.size;
+    int64_t timestamp_offset = 0;
+    uint64_t frame_count = 0;
+    while (remaining > 0) {
+        uint8_t *frame = NULL;
+        int frame_size = 0;
+        int consumed = av_parser_parse2(
+            component->parser, component->parser_codec, &frame, &frame_size,
+            input, remaining, AV_NOPTS_VALUE, AV_NOPTS_VALUE, AV_NOPTS_VALUE);
+        if (consumed < 0 || (consumed == 0 && frame_size == 0))
+            fail("AC-3 packet parsing failed");
+        input += consumed;
+        remaining -= consumed;
+        if (!frame_size)
+            continue;
+
+        int samples = av_get_audio_frame_duration2(codec, frame_size);
+        if (samples <= 0)
+            samples = component->parser->duration;
+        if (samples <= 0 || codec->sample_rate <= 0)
+            fail("AC-3 frame duration unavailable");
+        int64_t duration = av_rescale_q(samples,
+                                        (AVRational){1, codec->sample_rate},
+                                        stream->time_base);
+        if (duration <= 0)
+            fail("AC-3 frame duration invalid");
+        write_packet_record(output, component, frame, (size_t)frame_size,
+                            add_timestamp(component->clear.pts, timestamp_offset),
+                            add_timestamp(component->clear.dts, timestamp_offset),
+                            duration);
+        timestamp_offset += duration;
+        frame_count++;
+    }
+    if (!frame_count)
+        fail("AC-3 packet contained no complete syncframe");
+    component->packets += frame_count;
 }
 
 static int earlier(const struct component *a, const struct component *b)
@@ -237,6 +324,8 @@ static int earlier(const struct component *a, const struct component *b)
 static void close_component(struct component *component)
 {
     cenc_clear_packet_free(&component->clear);
+    av_parser_close(component->parser);
+    avcodec_free_context(&component->parser_codec);
     av_packet_free(&component->packet);
     avformat_close_input(&component->format);
 }
@@ -265,13 +354,15 @@ int main(int argc, char **argv)
         audio_components = (int)parsed;
     }
     struct component components[8];
-    open_component(&components[0], argv[1], AVMEDIA_TYPE_VIDEO, 1, RDP_TRACK_VIDEO);
+    const char *decryption_key = getenv("RUSTDASH_TEST_KEY");
+    open_component(&components[0], argv[1], AVMEDIA_TYPE_VIDEO, 1,
+                   RDP_TRACK_VIDEO, decryption_key);
     for (int n = 1; n <= audio_components; n++)
         open_component(&components[n], argv[n + 1], AVMEDIA_TYPE_AUDIO,
-                       (uint32_t)n + 1, RDP_TRACK_AUDIO);
+                       (uint32_t)n + 1, RDP_TRACK_AUDIO, decryption_key);
     for (int n = audio_components + 1; n < component_count; n++)
         open_component(&components[n], argv[n + 1], AVMEDIA_TYPE_SUBTITLE,
-                       (uint32_t)n + 1, RDP_TRACK_SUBTITLE);
+                       (uint32_t)n + 1, RDP_TRACK_SUBTITLE, decryption_key);
     FILE *output = fopen(argv[argc - 1], "wb");
     if (!output)
         fail(strerror(errno));

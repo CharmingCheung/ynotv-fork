@@ -10,6 +10,13 @@ mkdir -p "$results"
 "$script_dir/test_cenc_transform" > "$results/unit.log"
 
 . "$script_dir/local-test.env"
+RUSTDASH_AUDIO_COMPONENTS=1 \
+  "$script_dir/cenc_component_producer" \
+  "$script_dir/fixtures/cenc-av-full.mp4" \
+  "$script_dir/fixtures/cenc-ac3-full.mp4" \
+  "$script_dir/fixtures/decrypted-ac3.rdp" \
+  > "$results/ac3-component.log" 2>&1
+
 "$script_dir/cenc_packet_producer" \
   "$script_dir/fixtures/clear-av-full.mp4" \
   "$script_dir/fixtures/cenc-av-full.mp4" \

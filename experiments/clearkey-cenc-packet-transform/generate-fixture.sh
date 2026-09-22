@@ -36,6 +36,20 @@ mp4encrypt --method MPEG-CENC \
   --pssh 1077efecc0b24d02ace33c1e52e2fb4b: \
   "$fixtures/clear-av-full.mp4" "$fixtures/cenc-av-full.mp4" >/dev/null 2>&1
 
+# AC-3 in fragmented MP4 is deliberately included because FFmpeg coalesces
+# encrypted samples until the MOV demuxer receives the ClearKey.  The component
+# producer must decrypt in the demuxer and recover one 1536-sample syncframe per
+# packet rather than forwarding a multi-second encrypted aggregate.
+ffmpeg -y -v error -f lavfi \
+  -i 'sine=frequency=440:sample_rate=48000:duration=6' \
+  -c:a ac3 -b:a 384k \
+  -movflags +dash+frag_keyframe+delay_moov+default_base_moof \
+  "$fixtures/clear-ac3-full.mp4"
+mp4encrypt --method MPEG-CENC \
+  --key "1:${test_key}:2122232425262728" \
+  --property "1:KID:${test_kid}" \
+  "$fixtures/clear-ac3-full.mp4" "$fixtures/cenc-ac3-full.mp4" >/dev/null 2>&1
+
 python3 "$c1_dir/split_fmp4.py" "$fixtures/clear-av-full.mp4" "$fixtures/clear-av"
 python3 "$c1_dir/split_fmp4.py" "$fixtures/cenc-av-full.mp4" "$fixtures/cenc-av"
 unset test_key RUSTDASH_TEST_KEY
