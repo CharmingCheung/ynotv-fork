@@ -2082,6 +2082,10 @@
       "min_zero": "{{count}} min"
     },
     "failover": {
+      "deleteAll": "Elimina tutto",
+      "deleteAllTooltip": "Elimina tutti i gruppi di failover e le relative associazioni di canali",
+      "deleteAllTitle": "Elimina tutti i gruppi di failover",
+      "deleteAllConfirm": "Questo elimina definitivamente tutti i gruppi di failover e le relative associazioni di canali ({{streams}} associazioni di canali in totale). I canali non passeranno più a un flusso di backup quando si bloccano.",
       "groups": "Gruppi di failover",
       "desc": "Quando uno stream si blocca o si disconnette, l'app passerà automaticamente al canale successivo del gruppo. Trascina i canali per cambiare l'ordine di priorità.",
       "displaySource": "Mostra fonte",

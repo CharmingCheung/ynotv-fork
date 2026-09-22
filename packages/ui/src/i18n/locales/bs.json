@@ -2082,6 +2082,10 @@
       "min_zero": "{{count}} min"
     },
     "failover": {
+      "deleteAll": "Obriši sve",
+      "deleteAllTooltip": "Obriši sve grupe za prebacivanje i njihova povezivanja kanala",
+      "deleteAllTitle": "Obriši sve grupe za prebacivanje",
+      "deleteAllConfirm": "Ovo trajno briše sve grupe za prebacivanje i povezivanja kanala u njima ({{streams}} dodjela kanala ukupno). Kanali više neće prelaziti na rezervni tok kada se zaustave.",
       "groups": "Grupe za prebacivanje",
       "desc": "Kada se strim zaglavi ili prekine, aplikacija će automatski preći na sljedeći kanal u grupi. Prevucite kanale da promijenite redoslijed prioriteta.",
       "displaySource": "Prikaži izvor",

@@ -127,6 +127,29 @@
     color: var(--accent-primary, #00d4ff);
 }
 
+/* ── Delete All (danger) ── */
+.fgl-delete-all-btn {
+    padding: 8px 14px;
+    border-radius: 7px;
+    border: 1px solid rgba(220, 50, 50, 0.35);
+    background: rgba(220, 50, 50, 0.12);
+    color: var(--status-danger-text, #ff6b6b);
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+.fgl-delete-all-btn:hover {
+    background: rgba(220, 50, 50, 0.22);
+    border-color: rgba(220, 50, 50, 0.55);
+    color: var(--status-danger-text, #ff6b6b);
+}
+
 .fgl-create-row {
     display: flex;
     gap: 8px;
@@ -439,6 +462,99 @@
     background: rgba(0, 212, 255, 0.15);
     border-color: rgba(0, 212, 255, 0.5);
     color: var(--accent-primary, #00d4ff);
+}
+
+/* ── Delete All confirmation dialog ── */
+.fgl-confirm-overlay {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 1100;
+    background: var(--glass-overlay-bg, rgba(0, 0, 0, 0.75));
+    backdrop-filter: var(--glass-overlay-filter, blur(6px));
+    -webkit-backdrop-filter: var(--glass-overlay-filter, blur(6px));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.fgl-confirm-modal {
+    width: 90vw;
+    max-width: 440px;
+    padding: 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    background: var(--glass-settings-bg, var(--bg-secondary, #141721));
+    border: var(--glass-settings-border, 1px solid rgba(255, 255, 255, 0.12));
+    border-radius: 12px;
+    box-shadow: var(--glass-settings-shadow, 0 20px 50px rgba(0, 0, 0, 0.6));
+    color: var(--text-primary, #fff);
+}
+
+.fgl-confirm-title {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--status-danger-text, #ff6b6b);
+}
+
+.fgl-confirm-desc {
+    margin: 0;
+    font-size: 0.88rem;
+    line-height: 1.5;
+    color: var(--text-secondary, rgba(255, 255, 255, 0.75));
+}
+
+.fgl-confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 4px;
+}
+
+.fgl-confirm-cancel {
+    padding: 8px 16px;
+    border-radius: 7px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: none;
+    color: var(--text-secondary, rgba(255, 255, 255, 0.7));
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.fgl-confirm-cancel:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary, #fff);
+}
+
+.fgl-confirm-danger {
+    padding: 8px 16px;
+    border-radius: 7px;
+    border: 1px solid rgba(220, 50, 50, 0.35);
+    background: rgba(220, 50, 50, 0.18);
+    color: var(--status-danger-text, #ff6b6b);
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.fgl-confirm-danger:hover:not(:disabled) {
+    background: rgba(220, 50, 50, 0.32);
+    border-color: rgba(220, 50, 50, 0.6);
+}
+
+.fgl-confirm-cancel:disabled,
+.fgl-confirm-danger:disabled {
+    opacity: 0.6;
+    cursor: default;
 }
 
 /* ── Footer ── */

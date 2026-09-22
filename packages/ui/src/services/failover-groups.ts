@@ -356,6 +356,16 @@ export async function deleteFailoverGroup(groupId: string): Promise<void> {
   });
 }
 
+/** Delete every failover group and all member mappings. Returns how many groups were removed. */
+export async function deleteAllFailoverGroups(): Promise<number> {
+  const groupCount = await db.failoverGroups.count();
+  await db.transaction('rw', [db.failoverGroups, db.failoverGroupMembers], async () => {
+    await db.failoverGroupMembers.clear();
+    await db.failoverGroups.clear();
+  });
+  return groupCount;
+}
+
 /** Rename a failover group */
 export async function renameFailoverGroup(groupId: string, newName: string): Promise<void> {
   await db.failoverGroups.update(groupId, { name: newName });

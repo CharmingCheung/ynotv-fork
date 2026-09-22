@@ -2082,6 +2082,10 @@
       "min_zero": "{{count}} dk"
     },
     "failover": {
+      "deleteAll": "Tümünü Sil",
+      "deleteAllTooltip": "Tüm yük devretme gruplarını ve kanal eşleştirmelerini sil",
+      "deleteAllTitle": "Tüm Yük Devretme Gruplarını Sil",
+      "deleteAllConfirm": "Bu, tüm yük devretme gruplarını ve içlerindeki kanal eşleştirmelerini kalıcı olarak siler (toplam {{streams}} kanal eşleştirmesi). Kanallar takıldığında artık yedek akışa geçmez.",
       "groups": "Yük Devretme Grupları",
       "desc": "Bir akış takıldığında veya bağlantısı kesildiğinde uygulama gruptaki sonraki kanala otomatik olarak geçer. Öncelik sırasını değiştirmek için kanalları sürükleyin.",
       "displaySource": "Kaynağı Görüntüle",

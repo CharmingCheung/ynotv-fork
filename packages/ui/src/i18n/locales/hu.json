@@ -2082,6 +2082,10 @@
       "min_zero": "{{count}} perc"
     },
     "failover": {
+      "deleteAll": "Összes törlése",
+      "deleteAllTooltip": "Minden tartalékcsoport és csatorna-hozzárendelésük törlése",
+      "deleteAllTitle": "Minden tartalékcsoport törlése",
+      "deleteAllConfirm": "Ez véglegesen törli az összes tartalékcsoportot és a bennük lévő csatorna-hozzárendeléseket (összesen {{streams}} csatorna-hozzárendelés). A csatornák többé nem váltanak át tartalék streamre, ha elakadnak.",
       "groups": "Tartalékcsoportok",
       "desc": "Amikor egy adásfolyam megakad vagy megszakad, az alkalmazás automatikusan átvált a csoport következő csatornájára. Húzza a csatornákat a prioritási sorrend módosításához.",
       "displaySource": "Forrás megjelenítése",

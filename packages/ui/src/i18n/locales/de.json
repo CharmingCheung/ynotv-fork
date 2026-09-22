@@ -2082,6 +2082,10 @@
       "min_zero": "{{count}} Min."
     },
     "failover": {
+      "deleteAll": "Alle löschen",
+      "deleteAllTooltip": "Alle Failover-Gruppen und ihre Senderzuordnungen löschen",
+      "deleteAllTitle": "Alle Failover-Gruppen löschen",
+      "deleteAllConfirm": "Dies löscht dauerhaft alle Failover-Gruppen und ihre Senderzuordnungen ({{streams}} Senderzuordnungen insgesamt). Sender wechseln bei Aussetzern nicht mehr auf einen Backup-Stream.",
       "groups": "Failover-Gruppen",
       "desc": "Wenn ein Stream hängt oder sich trennt, wechselt die App automatisch zum nächsten Sender der Gruppe. Ziehen Sie Sender, um die Prioritätsreihenfolge zu ändern.",
       "displaySource": "Quelle anzeigen",

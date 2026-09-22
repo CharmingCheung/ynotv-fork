@@ -2082,6 +2082,10 @@
       "min_zero": "{{count}} min"
     },
     "failover": {
+      "deleteAll": "Eliminar todo",
+      "deleteAllTooltip": "Eliminar todos los grupos de conmutación por error y sus asignaciones de canales",
+      "deleteAllTitle": "Eliminar todos los grupos de conmutación por error",
+      "deleteAllConfirm": "Esto elimina definitivamente todos los grupos de conmutación por error y sus asignaciones de canales ({{streams}} asignaciones de canales en total). Los canales ya no cambiarán a un flujo de reserva cuando se bloqueen.",
       "groups": "Grupos de conmutación por error",
       "desc": "Cuando un flujo se detiene o se desconecta, la aplicación cambiará automáticamente al siguiente canal del grupo. Arrastra los canales para cambiar el orden de prioridad.",
       "displaySource": "Mostrar fuente",

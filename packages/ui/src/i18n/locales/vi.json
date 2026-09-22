@@ -3729,6 +3729,10 @@
       "min_zero": "{{count}} phút"
     },
     "failover": {
+      "deleteAll": "Xóa tất cả",
+      "deleteAllTooltip": "Xóa mọi nhóm chuyển dự phòng và liên kết kênh của chúng",
+      "deleteAllTitle": "Xóa tất cả nhóm chuyển dự phòng",
+      "deleteAllConfirm": "Thao tác này xóa vĩnh viễn mọi nhóm chuyển dự phòng và các liên kết kênh bên trong (tổng cộng {{streams}} liên kết kênh). Kênh sẽ không còn chuyển sang luồng dự phòng khi bị treo.",
       "groups": "Nhóm Chuyển Dự Phòng",
       "desc": "Khi một luồng bị treo hoặc ngắt kết nối, ứng dụng sẽ tự động chuyển sang kênh tiếp theo trong nhóm. Kéo các kênh để thay đổi thứ tự ưu tiên.",
       "displaySource": "Hiển Thị Nguồn",

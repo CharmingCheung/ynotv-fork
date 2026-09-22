@@ -2082,6 +2082,10 @@
       "min_zero": "{{count}} min"
     },
     "failover": {
+      "deleteAll": "Fshi të gjitha",
+      "deleteAllTooltip": "Fshi të gjitha grupet e rezervës dhe lidhjet e kanaleve të tyre",
+      "deleteAllTitle": "Fshi të gjitha grupet e rezervës",
+      "deleteAllConfirm": "Kjo fshin përgjithmonë të gjitha grupet e rezervës dhe lidhjet e kanaleve brenda tyre ({{streams}} lidhje kanalesh gjithsej). Kanalet nuk do të kalojnë më në një transmetim rezervë kur ngecin.",
       "groups": "Grupet e rezervës",
       "desc": "Kur një transmetim ngrin ose shkëputet, aplikacioni do të kalojë automatikisht te kanali tjetër në grup. Tërhiq kanalet për të ndryshuar rendin e prioriteteve.",
       "displaySource": "Shfaq burimin",

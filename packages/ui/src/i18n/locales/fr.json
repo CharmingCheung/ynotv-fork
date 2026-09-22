@@ -2082,6 +2082,10 @@
       "min_zero": "{{count}} min"
     },
     "failover": {
+      "deleteAll": "Tout supprimer",
+      "deleteAllTooltip": "Supprimer tous les groupes de bascule et leurs associations de chaînes",
+      "deleteAllTitle": "Supprimer tous les groupes de bascule",
+      "deleteAllConfirm": "Cela supprime définitivement tous les groupes de bascule et leurs associations de chaînes ({{streams}} associations de chaînes au total). Les chaînes ne basculeront plus vers un flux de secours lorsqu'elles se bloquent.",
       "groups": "Groupes de bascule",
       "desc": "Lorsqu'un flux se bloque ou se déconnecte, l'application bascule automatiquement vers la chaîne suivante du groupe. Faites glisser les chaînes pour modifier l'ordre de priorité.",
       "displaySource": "Afficher la source",

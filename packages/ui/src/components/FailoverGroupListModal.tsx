@@ -7,6 +7,7 @@ import {
     listFailoverGroups,
     createFailoverGroup,
     deleteFailoverGroup,
+    deleteAllFailoverGroups,
     renameFailoverGroup,
     getFailoverGroupMembers,
     removeChannelFromFailoverGroup,
@@ -133,6 +134,16 @@ function TrashSvg({ size = 13 }: { size?: number }) {
         <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
             <polyline points="3 6 5 6 21 6" />
             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+        </svg>
+    );
+}
+
+function WarningSvg({ size = 18 }: { size?: number }) {
+    return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+            <line x1="12" y1="9" x2="12" y2="13" />
+            <line x1="12" y1="17" x2="12.01" y2="17" />
         </svg>
     );
 }
@@ -294,6 +305,8 @@ export function FailoverGroupListModal({ onClose }: FailoverGroupListModalProps)
     const [editingId, setEditingId] = useState<string | null>(null);
     const [editName, setEditName] = useState('');
     const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+    const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
+    const [deletingAll, setDeletingAll] = useState(false);
 
     const newNameInputRef = useRef<HTMLInputElement>(null);
     const editNameInputRef = useRef<HTMLInputElement>(null);
@@ -344,6 +357,8 @@ export function FailoverGroupListModal({ onClose }: FailoverGroupListModalProps)
                     setEditingId(null);
                 } else if (creating) {
                     setCreating(false);
+                } else if (showDeleteAllConfirm && !deletingAll) {
+                    setShowDeleteAllConfirm(false);
                 } else if (deleteConfirmId) {
                     setDeleteConfirmId(null);
                 } else {
@@ -353,7 +368,7 @@ export function FailoverGroupListModal({ onClose }: FailoverGroupListModalProps)
         };
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [editingId, creating, deleteConfirmId, onClose]);
+    }, [editingId, creating, deleteConfirmId, showDeleteAllConfirm, deletingAll, onClose]);
 
     // Expand & load channels for a specific group
     const toggleExpandGroup = async (groupId: string) => {
@@ -474,6 +489,24 @@ export function FailoverGroupListModal({ onClose }: FailoverGroupListModalProps)
         }
     };
 
+    // Delete every group at once (after the confirmation dialog)
+    const handleDeleteAll = async () => {
+        if (deletingAll) return;
+        setDeletingAll(true);
+        try {
+            await deleteAllFailoverGroups();
+            setGroupMembersMap(new Map());
+            setExpandedGroupIds(new Set());
+            setDeleteConfirmId(null);
+            setShowDeleteAllConfirm(false);
+            await loadGroups();
+        } catch (e) {
+            console.error('Failed to delete all failover groups:', e);
+        } finally {
+            setDeletingAll(false);
+        }
+    };
+
     // Filter groups by search
     const filteredGroups = useMemo(() => {
         if (!searchQuery.trim()) return groups;
@@ -579,6 +612,17 @@ export function FailoverGroupListModal({ onClose }: FailoverGroupListModalProps)
                                         <ZapSvg size={13} />
                                         <span>{i18n.t('settings:failover.smartAutoGroup', { defaultValue: 'Smart Auto-Group' })}</span>
                                     </button>
+
+                                    {groups.length > 0 && (
+                                        <button
+                                            className="fgl-delete-all-btn"
+                                            onClick={() => setShowDeleteAllConfirm(true)}
+                                            title={t('failover.deleteAllTooltip', { defaultValue: 'Delete every failover group and its channel mappings' })}
+                                        >
+                                            <TrashSvg size={13} />
+                                            <span>{t('failover.deleteAll', { defaultValue: 'Delete All' })}</span>
+                                        </button>
+                                    )}
                                 </div>
                             </div>
 
@@ -880,6 +924,42 @@ export function FailoverGroupListModal({ onClose }: FailoverGroupListModalProps)
                     </div>
                 </div>
             </div>
+
+            {showDeleteAllConfirm && (
+                <div
+                    className="fgl-confirm-overlay"
+                    onClick={() => { if (!deletingAll) setShowDeleteAllConfirm(false); }}
+                >
+                    <div className="fgl-confirm-modal" onClick={(e) => e.stopPropagation()}>
+                        <h3 className="fgl-confirm-title">
+                            <WarningSvg size={18} />
+                            <span>{t('failover.deleteAllTitle', { defaultValue: 'Delete All Failover Groups' })}</span>
+                        </h3>
+                        <p className="fgl-confirm-desc">
+                            {t('failover.deleteAllConfirm', {
+                                defaultValue: 'This permanently removes every failover group and its channel mappings ({{streams}} channel assignments in total). Channels will no longer switch to a backup stream when they stall.',
+                                streams: totalMembersCount,
+                            })}
+                        </p>
+                        <div className="fgl-confirm-actions">
+                            <button
+                                className="fgl-confirm-cancel"
+                                onClick={() => setShowDeleteAllConfirm(false)}
+                                disabled={deletingAll}
+                            >
+                                {i18n.t('common:cancel')}
+                            </button>
+                            <button
+                                className="fgl-confirm-danger"
+                                onClick={handleDeleteAll}
+                                disabled={deletingAll}
+                            >
+                                {deletingAll ? i18n.t('common:deleting') : i18n.t('common:yesDelete')}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {managingGroup && (
                 <FailoverGroupManager

@@ -2082,6 +2082,10 @@
       "min_zero": "{{count}} 分鐘"
     },
     "failover": {
+      "deleteAll": "全部刪除",
+      "deleteAllTooltip": "刪除所有故障轉移組及其頻道對應",
+      "deleteAllTitle": "刪除所有故障轉移組",
+      "deleteAllConfirm": "這將永久刪除所有故障轉移組及其內部的頻道對應（共 {{streams}} 個頻道對應）。頻道卡住後將不再切換到備用串流。",
       "groups": "故障轉移組",
       "desc": "當流停滯或斷開時，應用將自動切換到組中的下一個頻道。拖動頻道以更改優先級順序。",
       "displaySource": "顯示源",

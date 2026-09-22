@@ -2082,6 +2082,10 @@
       "min_zero": "{{count}} minuty"
     },
     "failover": {
+      "deleteAll": "Usuń wszystko",
+      "deleteAllTooltip": "Usuń wszystkie grupy failover i ich przypisania kanałów",
+      "deleteAllTitle": "Usuń wszystkie grupy failover",
+      "deleteAllConfirm": "Spowoduje to trwałe usunięcie wszystkich grup failover i przypisanych do nich kanałów (łącznie {{streams}} przypisań kanałów). Kanały nie będą już przełączać się na strumień zapasowy, gdy się zatrzymają.",
       "groups": "Grupy failover",
       "desc": "Gdy strumień się zawiesza lub rozłącza, aplikacja automatycznie przełączy się na następny kanał z grupy. Przeciągaj kanały, aby zmienić kolejność priorytetów.",
       "displaySource": "Pokazuj źródło",

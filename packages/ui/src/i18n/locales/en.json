@@ -2082,6 +2082,10 @@
       "min_zero": "{{count}} mins"
     },
     "failover": {
+      "deleteAll": "Delete All",
+      "deleteAllTooltip": "Delete every failover group and its channel mappings",
+      "deleteAllTitle": "Delete All Failover Groups",
+      "deleteAllConfirm": "This permanently removes every failover group and its channel mappings ({{streams}} channel assignments in total). Channels will no longer switch to a backup stream when they stall.",
       "groups": "Failover Groups",
       "desc": "When a stream stalls or disconnects, the app will automatically switch to the next channel in the group. Drag channels to change priority order.",
       "displaySource": "Display Source",

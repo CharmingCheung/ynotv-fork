@@ -2082,6 +2082,10 @@
       "min_zero": "{{count}} 分钟"
     },
     "failover": {
+      "deleteAll": "全部删除",
+      "deleteAllTooltip": "删除所有故障转移组及其频道映射",
+      "deleteAllTitle": "删除所有故障转移组",
+      "deleteAllConfirm": "这将永久删除所有故障转移组及其内部的频道映射（共 {{streams}} 个频道映射）。频道卡顿后将不再切换到备用流。",
       "groups": "故障转移组",
       "desc": "当流停滞或断开时，应用将自动切换到组中的下一个频道。拖动频道以更改优先级顺序。",
       "displaySource": "显示源",

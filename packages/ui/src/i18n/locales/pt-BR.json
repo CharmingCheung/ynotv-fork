@@ -2082,6 +2082,10 @@
       "min_zero": "{{count}} min"
     },
     "failover": {
+      "deleteAll": "Excluir tudo",
+      "deleteAllTooltip": "Excluir todos os grupos de failover e seus vínculos de canais",
+      "deleteAllTitle": "Excluir todos os grupos de failover",
+      "deleteAllConfirm": "Isso remove permanentemente todos os grupos de failover e seus vínculos de canais ({{streams}} vínculos de canais no total). Os canais não farão mais failover para um fluxo de backup quando travarem.",
       "groups": "Grupos de failover",
       "desc": "Quando um stream trava ou desconecta, o aplicativo alternará automaticamente para o próximo canal do grupo. Arraste os canais para alterar a ordem de prioridade.",
       "displaySource": "Mostrar fonte",

@@ -2082,6 +2082,10 @@
       "min_zero": "{{count}} min"
     },
     "failover": {
+      "deleteAll": "Alles verwijderen",
+      "deleteAllTooltip": "Alle failovergroepen en hun kanaalkoppelingen verwijderen",
+      "deleteAllTitle": "Alle failovergroepen verwijderen",
+      "deleteAllConfirm": "Dit verwijdert definitief alle failovergroepen en hun kanaalkoppelingen ({{streams}} kanaalkoppelingen in totaal). Kanalen vallen niet meer over naar een back-upstream als ze vastlopen.",
       "groups": "Failovergroepen",
       "desc": "Wanneer een stream stopt of de verbinding wegvalt, schakelt de app automatisch naar het volgende kanaal in de groep. Sleep kanalen om de prioriteitsvolgorde te wijzigen.",
       "displaySource": "Bron tonen",
