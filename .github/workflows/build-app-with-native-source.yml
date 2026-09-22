@@ -8,6 +8,11 @@ on:
         required: true
         default: master
         type: string
+      use_self_hosted:
+        description: Run on the local self-hosted runner
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -22,7 +27,7 @@ concurrency:
 jobs:
   macos-arm64:
     name: macOS arm64 app
-    runs-on: macos-15
+    runs-on: ${{ inputs.use_self_hosted && 'self-hosted' || 'macos-15' }}
     steps:
       - name: Checkout ynoTV
         uses: actions/checkout@v5
