@@ -62,6 +62,13 @@ jobs:
           cache-on-failure: true
 
       - name: Install native build dependencies
+        # A self-hosted runner has a persistent Homebrew installation. Keep the
+        # build from upgrading and cleaning unrelated global packages as a side
+        # effect of installing this job's dependencies.
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+          HOMEBREW_NO_INSTALL_CLEANUP: '1'
+          HOMEBREW_NO_ENV_HINTS: '1'
         run: brew install mpv ffmpeg openssl@3 meson ninja pkg-config
 
       - name: Install JavaScript dependencies

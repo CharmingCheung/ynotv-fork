@@ -89,6 +89,11 @@ jobs:
           cache-on-failure: true
       - name: Install macOS native headers
         if: runner.os == 'macOS'
+        # Avoid mutating unrelated packages on a persistent self-hosted runner.
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+          HOMEBREW_NO_INSTALL_CLEANUP: '1'
+          HOMEBREW_NO_ENV_HINTS: '1'
         run: brew install mpv pkg-config
       - name: Prepare Windows Native DASH runtime
         if: runner.os == 'Windows'
