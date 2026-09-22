@@ -4,6 +4,14 @@ set -eu
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$script_dir"
 
+if [ "${1-}" = "component" ]; then
+  cc -std=c11 -Wall -Wextra -Wpedantic -Werror \
+    $(pkg-config --cflags libavformat libavcodec libavutil openssl) \
+    cenc_transform.c cenc_component_producer.c -o cenc_component_producer \
+    $(pkg-config --libs libavformat libavcodec libavutil openssl)
+  exit 0
+fi
+
 cc -std=c11 -Wall -Wextra -Wpedantic -Werror \
   $(pkg-config --cflags libavformat libavcodec libavutil openssl) \
   cenc_transform.c cenc_packet_producer.c -o cenc_packet_producer \

@@ -8,6 +8,8 @@
 
 #define CENC_SCHEME (((uint32_t)'c' << 24) | ((uint32_t)'e' << 16) | \
                      ((uint32_t)'n' << 8) | (uint32_t)'c')
+#define CBCS_SCHEME (((uint32_t)'c' << 24) | ((uint32_t)'b' << 16) | \
+                     ((uint32_t)'c' << 8) | (uint32_t)'s')
 
 static void require(int condition, const char *message)
 {
@@ -102,6 +104,46 @@ static void test_subsamples_and_8_byte_iv(void)
     av_encryption_info_free(info);
 }
 
+static void test_cbcs_pattern(void)
+{
+    uint8_t plain[16 * 12 + 7];
+    uint8_t cipher[sizeof(plain)];
+    uint8_t iv[16];
+    struct cenc_key_entry entry = {{0}, {0}};
+    struct cenc_key_store store = {&entry, 1};
+    struct cenc_packet packet;
+    struct cenc_clear_packet clear = {0};
+    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+    int written = 0;
+
+    for (size_t n = 0; n < sizeof(plain); n++) plain[n] = (uint8_t)(n * 13 + 9);
+    for (int n = 0; n < 16; n++) {
+        entry.key[n] = (uint8_t)(n * 5 + 3);
+        iv[n] = (uint8_t)(0xf0 - n);
+    }
+    memcpy(cipher, plain, sizeof(cipher));
+    require(ctx && EVP_EncryptInit_ex(ctx, EVP_aes_128_cbc(), NULL, entry.key, iv) == 1 &&
+            EVP_CIPHER_CTX_set_padding(ctx, 0) == 1, "CBCS test encrypt init");
+    require(EVP_EncryptUpdate(ctx, cipher, &written, plain, 16) == 1 && written == 16,
+            "CBCS first encrypted block");
+    require(EVP_EncryptUpdate(ctx, cipher + 10 * 16, &written, plain + 10 * 16, 16) == 1 &&
+            written == 16, "CBCS second encrypted block");
+    EVP_CIPHER_CTX_free(ctx);
+
+    packet = (struct cenc_packet){cipher, sizeof(cipher), 4, 3, 2, 1, 8};
+    AVEncryptionInfo *info = make_info(0, 16);
+    info->scheme = CBCS_SCHEME;
+    info->crypt_byte_block = 1;
+    info->skip_byte_block = 9;
+    memcpy(info->iv, iv, 16);
+    require(cenc_decrypt_packet(&store, &packet, info, 0, &clear) == CENC_ENCRYPTED_PACKET,
+            "CBCS pattern state");
+    require(clear.size == sizeof(plain) && memcmp(clear.data, plain, sizeof(plain)) == 0,
+            "CBCS 1:9 pattern and trailing clear bytes");
+    cenc_clear_packet_free(&clear);
+    av_encryption_info_free(info);
+}
+
 static void test_errors(void)
 {
     uint8_t bytes[16] = {0};
@@ -120,7 +162,7 @@ static void test_errors(void)
             CENC_MALFORMED_ENCRYPTION_INFO, "malformed subsample total");
     info->subsamples[0].bytes_of_protected_data = 16;
     info->scheme = ((uint32_t)'c' << 24) | ((uint32_t)'b' << 16) |
-                   ((uint32_t)'c' << 8) | (uint32_t)'s';
+                   ((uint32_t)'c' << 8) | (uint32_t)'1';
     require(cenc_decrypt_packet(&store, &packet, info, 0, &clear) ==
             CENC_UNSUPPORTED_SCHEME, "unsupported scheme");
     info->scheme = CENC_SCHEME;
@@ -136,7 +178,8 @@ int main(void)
 {
     test_nist_vector();
     test_subsamples_and_8_byte_iv();
+    test_cbcs_pattern();
     test_errors();
-    puts("PASS: AES-CTR vectors, 8/16-byte IVs, subsamples, lookup, and explicit errors");
+    puts("PASS: CENC AES-CTR and CBCS AES-CBC pattern vectors, subsamples, lookup, and explicit errors");
     return 0;
 }

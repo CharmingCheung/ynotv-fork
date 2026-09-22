@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,6 +48,12 @@ if ((process.platform === 'darwin' && process.arch === 'arm64') ||
   run(process.execPath, ['scripts/setup-native-runtime.mjs']);
 }
 if (process.platform === 'darwin' && process.arch === 'arm64') {
+  const producerSource = join(root, 'experiments/clearkey-cenc-packet-transform/cenc_component_producer');
+  const producerTarget = join(tauri, 'native-dash-libmpv/cenc_component_producer');
+  console.log('[dev-setup] rebuilding the native DASH packet producer');
+  run('bash', ['experiments/clearkey-cenc-packet-transform/build.sh', 'component']);
+  copyFileSync(producerSource, producerTarget);
+  chmodSync(producerTarget, 0o755);
   run(process.execPath, ['scripts/prepare-macos-bundle-runtime.mjs']);
 }
 
