@@ -58,10 +58,22 @@ jobs:
           workspaces: packages/app/src-tauri -> target
           cache-on-failure: true
 
-      - uses: msys2/setup-msys2@v2
+      - name: Set up minimal MSYS2 environment
+        if: steps.native-runtime-cache.outputs.cache-hit == 'true'
+        uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
           update: false
+          install: >-
+            git
+            p7zip
+
+      - name: Set up MSYS2 native build environment
+        if: steps.native-runtime-cache.outputs.cache-hit != 'true'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
           install: >-
             git
             p7zip
