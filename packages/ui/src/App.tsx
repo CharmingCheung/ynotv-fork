@@ -18,7 +18,6 @@ import { invoke } from '@tauri-apps/api/core';
 import { jellyfinConfirmPlayback } from './services/jellyfin';
 import i18n, { translateNativeError } from './i18n';
 import type { StremioStream, StremioStreamPickerMode, StremioMeta, StremioVideo, BadgeSource, StreamAutoPlayMode, StreamAutoPlaySourceScope } from './types/stremio';
-import { checkForUpdates, checkForUpdatesSilent } from './services/updater';
 import { getCachedSettings } from './services/settings-cache';
 import { startAutoBackupScheduler, stopAutoBackupScheduler } from './services/autoBackup';
 import { pruneLogoCache } from './services/logoCache';
@@ -132,8 +131,6 @@ import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useGamepad, useKeyboardAsController } from './hooks/useGamepad';
 import { focusFirstInteractive, applyTvFocus, tryRestoreFocus, hasFocusMemory, focusViewOnOpen } from './services/spatialNavigation';
 import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
-import { UpdateModal } from './components/UpdateModal';
-import { registerUpdateModal } from './services/updater';
 import { WhatsNewModal } from './components/WhatsNewModal/WhatsNewModal';
 import { getVersion } from '@tauri-apps/api/app';
 import { useLayoutPersistence, type LayoutMode } from './hooks/useLayoutPersistence';
@@ -2903,15 +2900,6 @@ function useTmdbPresencePoster(
   const { handleMinimize, handleMaximize, handleClose, isMaximized, isFullscreen } = useWindowManager();
 
   // ==========================================================================
-  // Update Modal State
-  // ==========================================================================
-  const [updateModalOpen, setUpdateModalOpen] = useState(false);
-
-  useEffect(() => {
-    registerUpdateModal(setUpdateModalOpen);
-  }, []);
-
-  // ==========================================================================
   // What's New Modal State
   // ==========================================================================
   const [whatsNewModalOpen, setWhatsNewModalOpen] = useState(false);
@@ -5633,17 +5621,6 @@ function useTmdbPresencePoster(
   }, []);
 
   // ==========================================================================
-  // Check for Updates
-  // ==========================================================================
-  useEffect(() => {
-    const checkUpdates = async () => {
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      await checkForUpdatesSilent();
-    };
-    checkUpdates();
-  }, []);
-
-  // ==========================================================================
   // Check for What's New (First launch / update)
   // ==========================================================================
   useEffect(() => {
@@ -7357,7 +7334,6 @@ function useTmdbPresencePoster(
             activeView === 'jellyfin' &&
             !showSettingsPopup &&
             !layoutPickerOpen &&
-            !updateModalOpen &&
             !whatsNewModalOpen &&
             !showShortcutsOverlay &&
             !showChannelProbeModal &&
@@ -7655,12 +7631,6 @@ function useTmdbPresencePoster(
           </div>
         </div>
       )}
-
-      {/* Update Modal */}
-      <UpdateModal
-        isOpen={updateModalOpen}
-        onClose={() => setUpdateModalOpen(false)}
-      />
 
       {/* What's New Modal */}
       <WhatsNewModal

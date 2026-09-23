@@ -3,10 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "description": "Desktop IPTV player with mpv",
-  "homepage": "https://github.com/tbeezy/ynotv",
+  "homepage": "https://github.com/CharmingCheung/ynotv-fork",
   "author": {
-    "name": "tbeezy",
-    "email": "tbeezy@users.noreply.github.com"
+    "name": "CharmingCheung"
   },
   "scripts": {
     "dev": "node scripts/dev.mjs",
@@ -22,7 +21,7 @@
     "audit:macos-bundle": "node scripts/audit-macos-bundle.mjs",
     "css:audit": "node scripts/check-globals.mjs && node scripts/audit-tokens.mjs && node scripts/check-modern-scoped.mjs && node scripts/check-de-stack.mjs && node scripts/check-css.mjs packages/ui/src",
     "typecheck": "pnpm css:audit && node scripts/check-jellyfin-init-script.mjs && pnpm -r typecheck",
-    "setup:libmpv": "powershell -ExecutionPolicy Bypass -File packages/app/src-tauri/setup-libmpv.ps1",
+    "setup:libmpv": "node scripts/setup-native-runtime.mjs",
     "tauri": "pnpm --filter @ynotv/app tauri"
   },
   "devDependencies": {

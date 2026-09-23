@@ -1,4 +1,3 @@
-import { checkForUpdates } from '../../services/updater';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import { useState, useEffect } from 'react';
@@ -123,10 +122,6 @@ export function AboutTab() {
       .catch(() => setYtdlp({ found: false, path: null, version: null }));
   }, []);
 
-  const handleCheckForUpdates = () => {
-    checkForUpdates();
-  };
-
   const handleUpdateYtdlp = async () => {
     setUpdatingYtdlp(true);
     setYtdlpResult(null);
@@ -175,17 +170,10 @@ export function AboutTab() {
           <div className="about-links" style={{ marginBottom: '24px', display: 'flex', gap: '16px' }}>
             <button
               className="sync-btn"
-              onClick={() => openLink('https://github.com/tbeezy/ynotv')}
+              onClick={() => openLink('https://github.com/CharmingCheung/ynotv-fork')}
               style={{ maxWidth: '140px' }}
             >
               GitHub
-            </button>
-            <button
-              className="sync-btn"
-              onClick={() => openLink('https://tbeezy.github.io/ynotvdoc/')}
-              style={{ maxWidth: '140px' }}
-            >
-              {i18n.t('settings:about.documentation')}
             </button>
             <button
               className="sync-btn"
@@ -285,21 +273,6 @@ export function AboutTab() {
                 {ytdlpResult}
               </p>
             )}
-          </div>
-
-          <div className="about-section" style={{ marginTop: '24px', borderTop: '1px solid var(--surface-border)', paddingTop: '24px' }}>
-            <h4 style={{ margin: '0 0 12px 0', fontSize: '1rem' }}>{i18n.t('settings:about.updatesTitle')}</h4>
-            <p style={{ margin: '0 0 16px 0', color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
-              {i18n.t('settings:about.updatesDescription')}
-            </p>
-
-            <button
-              className="sync-btn"
-              onClick={handleCheckForUpdates}
-              style={{ maxWidth: '200px' }}
-            >
-              {i18n.t('settings:about.checkForUpdates')}
-            </button>
           </div>
 
           <div className="about-section" style={{ marginTop: '24px', borderTop: '1px solid var(--surface-border)', paddingTop: '24px' }}>

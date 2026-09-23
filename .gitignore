@@ -61,8 +61,7 @@ thoughts/
 **/bin/vulkan-1.dll
 **/bin/VulkanRT-License.txt
 
-# libmpv runtime DLL (auto-downloaded + SHA256-verified by setup-libmpv.ps1;
-# over GitHub's 100 MB file limit, so it lives in the v-assets release instead)
+# libmpv runtime DLL (installed from the versioned ynotv-native runtime)
 **/libmpv/libmpv-2.dll
 packages/app/src-tauri/native-dash-libmpv/
 packages/app/src-tauri/macos-bundle-runtime/

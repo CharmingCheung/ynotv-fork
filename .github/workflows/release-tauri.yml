@@ -4,10 +4,6 @@ on:
   push:
     tags:
       - 'v*'
-      # v-assets is a non-app release that only hosts binary dependencies
-      # (e.g. libmpv-2.dll) for the setup-libmpv script. Exclude it so pushing
-      # that tag doesn't trigger a full app build/publish.
-      - '!v-assets'
 
 jobs:
   release:
@@ -89,8 +85,6 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           VITE_TRAKT_CLIENT_ID: ${{ secrets.TRAKT_CLIENT_ID }}
           VITE_TRAKT_CLIENT_SECRET: ${{ secrets.TRAKT_CLIENT_SECRET }}
           VITE_OPENSUBTITLES_API_KEY: ${{ secrets.OPENSUBTITLES_API_KEY }}

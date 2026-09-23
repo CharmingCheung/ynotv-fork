@@ -5480,7 +5480,6 @@ pub fn run() {
                 file_name: Some("ynotv".into())
             }))
             .build())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         // Manage platform-specific MPV state
         .manage(MpvState::new())

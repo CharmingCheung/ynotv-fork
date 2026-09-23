@@ -5,12 +5,10 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-3178C6?logo=typescript)](https://www.typescriptlang.org)
 [![License](https://img.shields.io/badge/License-AGPL%20v3-green.svg)](./LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows-blue)](./README.md)
-![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/tbeezy/ynotv/total)
+![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/CharmingCheung/ynotv-fork/total)
 [![Chat Server](https://img.shields.io/badge/chat-discord-7289da.svg)](https://discord.gg/e5eGa5QETB)
 
 A feature-rich, open source IPTV player for Windows built on [Tauri v2](https://tauri.app) and [mpv](https://mpv.io). 
-
-[Documentation](https://tbeezy.github.io/ynotvdoc)
 
 [![Watch the video](https://i.ibb.co/207znsrw/ynotv-go-Ckngt-Ezr.png)](https://i.ibb.co/207znsrw/ynotv-go-Ckngt-Ezr.png)
 
@@ -104,8 +102,8 @@ A feature-rich, open source IPTV player for Windows built on [Tauri v2](https://
 **1. Clone the repository**
 
 ```bash
-git clone https://github.com/tbeezy/ynotv.git
-cd ynotv
+git clone https://github.com/CharmingCheung/ynotv-fork.git
+cd ynotv-fork
 ```
 
 **2. Install dependencies**
@@ -363,11 +361,11 @@ All shortcuts are fully customizable in Settings > Shortcuts.
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=tbeezy%2Fynotv&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=CharmingCheung%2Fynotv-fork&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=tbeezy/ynotv&type=date&theme=dark&legend=top-left&sealed_token=siqZZiJV0IOChgy89MenOrL0CGYjtWbao3DnPfPuenhCb0wM4gc_7KCWwKl3vcO8WSWDlaob3kPhT44fsP8bXaZKDpDW2jg_-ybrSpv6YutO2Gi-dDCXlrrORZ1uUBUcNMczU6GRBYCt4aifgdJhY2OKPeXJ8Ix3inzPj2rPZc04lUQyZE9amauRWsPx" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=tbeezy/ynotv&type=date&legend=top-left&sealed_token=siqZZiJV0IOChgy89MenOrL0CGYjtWbao3DnPfPuenhCb0wM4gc_7KCWwKl3vcO8WSWDlaob3kPhT44fsP8bXaZKDpDW2jg_-ybrSpv6YutO2Gi-dDCXlrrORZ1uUBUcNMczU6GRBYCt4aifgdJhY2OKPeXJ8Ix3inzPj2rPZc04lUQyZE9amauRWsPx" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=tbeezy/ynotv&type=date&legend=top-left&sealed_token=siqZZiJV0IOChgy89MenOrL0CGYjtWbao3DnPfPuenhCb0wM4gc_7KCWwKl3vcO8WSWDlaob3kPhT44fsP8bXaZKDpDW2jg_-ybrSpv6YutO2Gi-dDCXlrrORZ1uUBUcNMczU6GRBYCt4aifgdJhY2OKPeXJ8Ix3inzPj2rPZc04lUQyZE9amauRWsPx" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=CharmingCheung/ynotv-fork&type=date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=CharmingCheung/ynotv-fork&type=date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=CharmingCheung/ynotv-fork&type=date" />
  </picture>
 </a>
 

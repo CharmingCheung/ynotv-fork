@@ -3,10 +3,9 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "homepage": "https://github.com/tbeezy/ynotv",
+  "homepage": "https://github.com/CharmingCheung/ynotv-fork",
   "author": {
-    "name": "tbeezy",
-    "email": "tbeezy@users.noreply.github.com"
+    "name": "CharmingCheung"
   },
   "scripts": {
     "prebuild": "node scripts/download-ffmpeg.js",

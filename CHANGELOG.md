@@ -85,7 +85,7 @@
 - **Custom group duplicate entries** - Adding categories to a custom group no longer creates duplicate entries.
 - **Stalker VOD Series "All" category not loading** - The Series All view now loads correctly on portals that serve series under the VOD endpoint, rather than returning empty.
 
-Documentation has been updated https://tbeezy.github.io/ynotvdoc/
+Documentation has been updated.
 
 ### v2.5.1
 
