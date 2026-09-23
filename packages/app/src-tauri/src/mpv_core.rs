@@ -360,6 +360,8 @@ fn spawn_status_monitor<R: Runtime>(
         let mut was_idle = true;
         let mut last_position: f64 = 0.0;
         let mut had_dash_timeline = false;
+        let mut last_sid: Option<String> = None;
+        let mut last_sub_active = false;
 
         while monitor_generation.load(std::sync::atomic::Ordering::Acquire) == generation {
             tokio::time::sleep(Duration::from_millis(250)).await;
@@ -379,6 +381,37 @@ fn spawn_status_monitor<R: Runtime>(
             let eof_reached: bool = mpv.get_property("eof-reached").unwrap_or(false);
             let video_format: Option<String> = mpv.get_property("video-format").ok();
             let vid: Option<i64> = mpv.get_property("vid").ok();
+
+            // Keep enough subtitle state in the normal application log to
+            // distinguish "the UI remembers a track" from "libmpv is really
+            // decoding that track".  Do not log the subtitle text itself.
+            if crate::native_dash::track_catalog().is_some() {
+                let sid = mpv
+                    .get_property::<String>("sid")
+                    .ok()
+                    .or_else(|| mpv.get_property::<i64>("sid").ok().map(|id| id.to_string()))
+                    .unwrap_or_else(|| "unavailable".into());
+                if last_sid.as_deref() != Some(sid.as_str()) {
+                    log::info!(
+                        "[native-dash/subtitle] libmpv sid={} expected={}",
+                        sid,
+                        crate::native_dash::selected_subtitle_mpv_track_id()
+                            .map(|id| id.to_string())
+                            .unwrap_or_else(|| "no".into())
+                    );
+                    last_sid = Some(sid);
+                }
+                let sub_active = mpv
+                    .get_property::<String>("sub-text")
+                    .ok()
+                    .is_some_and(|text| !text.is_empty());
+                if sub_active != last_sub_active {
+                    log::info!(
+                        "[native-dash/subtitle] libmpv decoded cue active={sub_active}"
+                    );
+                    last_sub_active = sub_active;
+                }
+            }
 
             // Emit playback-restart on transition from idle to active. The
             // mpv-file-loaded event is emitted by the event loop at the real
@@ -534,6 +567,32 @@ fn spawn_log_capture<R: Runtime>(
                         // audio underrun and a frozen first frame.
                         if dash_catalog.is_none() {
                             let _ = mpv.set_property("sid", "no");
+                        }
+                        // On Windows the per-file sid option can be evaluated
+                        // before the custom demuxer has published its subtitle
+                        // streams. Re-assert the already chosen DASH sid after
+                        // FileLoaded, when the track list is stable. This does
+                        // not toggle the decoder off and does not affect macOS.
+                        #[cfg(windows)]
+                        if dash_catalog.is_some() {
+                            if let Some(id) = crate::native_dash::selected_subtitle_mpv_track_id() {
+                                let before = mpv
+                                    .get_property::<String>("sid")
+                                    .ok()
+                                    .unwrap_or_else(|| "unavailable".into());
+                                match mpv.set_property("sid", id) {
+                                    Ok(()) => log::info!(
+                                        "[native-dash/subtitle] Windows FileLoaded reasserted sid={} previous={}",
+                                        id,
+                                        before
+                                    ),
+                                    Err(error) => log::warn!(
+                                        "[native-dash/subtitle] Windows FileLoaded failed to reassert sid={}: {:?}",
+                                        id,
+                                        error
+                                    ),
+                                }
+                            }
                         }
                         let _ = app.emit("mpv-file-loaded", true);
                     }
@@ -805,12 +864,27 @@ pub async fn set_subtitle_track<R: Runtime>(app: &AppHandle<R>, id: i64) -> Resu
         guard.clone()
     };
     if let Some(mpv) = mpv {
+        let before = mpv
+            .get_property::<String>("sid")
+            .ok()
+            .unwrap_or_else(|| "unavailable".into());
         if id == 0 {
             mpv.set_property("sid", "no")
         } else {
             mpv.set_property("sid", id)
         }
         .map_err(|e| format!("set sid error: {:?}", e))?;
+        let after = mpv
+            .get_property::<String>("sid")
+            .ok()
+            .unwrap_or_else(|| "unavailable".into());
+        log::info!(
+            "[native-dash/subtitle] set sid requested={} before={} after={} dash_active={}",
+            id,
+            before,
+            after,
+            crate::native_dash::track_catalog().is_some()
+        );
     }
     Ok(())
 }
