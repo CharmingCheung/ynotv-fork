@@ -392,7 +392,7 @@ cd experiments/clearkey-cenc-packet-transform
 cd /tmp/ynotv-c8-mpv.06PcSB
 meson test -C build-c8 --print-errorlogs
 
-cd /Users/charming/IdeaProjects/ynotv
+cd /path/to/ynotv
 git diff --check
 ```
 

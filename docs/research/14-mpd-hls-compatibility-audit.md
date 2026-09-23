@@ -1,6 +1,6 @@
 # MPD-HLS compatibility audit
 
-Reference reviewed: `/Users/charming/Downloads/Telegram/MPD-HLS - 20260405/MPD-HLS - 20260405`.
+Reference reviewed: local `MPD-HLS - 20260405` snapshot.
 
 This is a compatibility checklist for ynoTV's native DASH path. It prevents a
 provider-specific fix from being treated as complete before the surrounding MPD

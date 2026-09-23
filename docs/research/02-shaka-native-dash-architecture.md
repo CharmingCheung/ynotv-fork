@@ -2,7 +2,7 @@
 
 Research snapshot: 2026-09-20 (Asia/Singapore)
 
-Shaka Player repository: `/Users/charming/WebProjects/shaka-player`
+Shaka Player repository: <https://github.com/shaka-project/shaka-player>
 
 Exact Shaka revision: `bf7ea8dc386991fd84963df8eb5e271b046082fa` (2026-09-18, `fix(DRM): Ignore session creation during teardown (#10614)`)
 

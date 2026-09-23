@@ -419,7 +419,7 @@ PKG_CONFIG_PATH=/path/to/libplacebo/pkgconfig \
 DYLD_LIBRARY_PATH=/path/to/libplacebo/lib \
 meson test -C build-probe --print-errorlogs
 
-cd /Users/charming/IdeaProjects/ynotv
+cd /path/to/ynotv
 git diff --check
 ```
 

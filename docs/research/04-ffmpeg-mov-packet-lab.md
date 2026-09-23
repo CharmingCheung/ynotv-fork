@@ -502,7 +502,7 @@ the preceding phase.
 Primary reproducible run:
 
 ```sh
-cd /Users/charming/IdeaProjects/ynotv/experiments/ffmpeg-mov-packet-lab
+cd /path/to/ynotv/experiments/ffmpeg-mov-packet-lab
 ./generate-fixtures.sh
 ./build.sh
 ./run-experiments.sh
