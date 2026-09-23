@@ -8,7 +8,11 @@
 ![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/CharmingCheung/ynotv-fork/total)
 [![Chat Server](https://img.shields.io/badge/chat-discord-7289da.svg)](https://discord.gg/e5eGa5QETB)
 
-A feature-rich, open source IPTV player for Windows built on [Tauri v2](https://tauri.app) and [mpv](https://mpv.io). 
+> **About this fork:** This repository is a modified version of the original
+> [tbeezy/ynotv](https://github.com/tbeezy/ynotv), extended with native DASH
+> playback, ClearKey CENC/CBCS decryption, and other enhancements.
+
+A feature-rich, open source IPTV player for Windows built on [Tauri v2](https://tauri.app) and [mpv](https://mpv.io).
 
 [![Watch the video](https://i.ibb.co/207znsrw/ynotv-go-Ckngt-Ezr.png)](https://i.ibb.co/207znsrw/ynotv-go-Ckngt-Ezr.png)
 
@@ -36,6 +40,11 @@ A feature-rich, open source IPTV player for Windows built on [Tauri v2](https://
 ---
 ## Features
 
+- **Native DASH Playback** - Supports static and dynamic MPDs, live manifest refresh, `SegmentTemplate`/`SegmentTimeline`/duration-based addressing, inherited `BaseURL` and templates, and standards-compliant URL resolution
+- **DASH Quality & Track Selection** - Automatic bitrate selection (ABR), manual video quality switching, multiple logical audio tracks, and in-session Representation switching
+- **DASH Live DVR & Seeking** - Manifest-backed live windows, live-edge tracking, timeshift seeking, and playback continuity across sliding MPD refreshes
+- **DASH Subtitles** - STPP/TTML text and IMSC image subtitle discovery and playback through the native pipeline
+- **ClearKey CENC & CBCS Decryption** - Native ClearKey decryption for DASH streams using CENC (AES-CTR) or CBCS pattern encryption (AES-CBC), including KODIPROP metadata imported from playlists
 - **M3U, Xtream Codes & Stalker Support** - multiple EPG sources supported
 - **Stremio Integration & Addons support** - Integrated optional stremio login to sync watchlist/addons or add addons directly
 - **Nuvio Integration** - Integrated login for 2 way sync with watchlist, addons, plugins, collections, settings
@@ -359,18 +368,6 @@ All shortcuts are fully customizable in Settings > Shortcuts.
 
 ---
 
-## Star History
-
-<a href="https://www.star-history.com/?repos=CharmingCheung%2Fynotv-fork&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=CharmingCheung/ynotv-fork&type=date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=CharmingCheung/ynotv-fork&type=date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=CharmingCheung/ynotv-fork&type=date" />
- </picture>
-</a>
-
----
-
 ## Disclaimer
 
 Built with the help of AI.
@@ -390,6 +387,7 @@ Metadata displayed within the application is sourced from publicly available thi
 ynoTV builds on the following open source projects and services:
 
 
+- [tbeezy/ynotv](https://github.com/tbeezy/ynotv) — the original ynoTV project on which this modified version is based
 - [sbtlTV](https://github.com/thesubtleties/sbtlTV) — original foundation
 - [Tauri](https://tauri.app) — desktop application framework
 - [mpv](https://mpv.io) — video playback engine
