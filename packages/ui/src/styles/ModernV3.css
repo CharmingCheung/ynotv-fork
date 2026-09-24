@@ -497,7 +497,7 @@ html.modern-ui-v3 {
   --cat-item-nested-radius: 0;
   --cat-item-nested-margin: 2px 0;
   --cat-item-nested-bg: transparent;
-  --cat-item-nested-padding-left: 16px;
+  --cat-item-nested-padding-left: 40px;
   --cat-item-nested-font-size: var(--category-font-size, 13px);
   --cat-item-nested-color: var(--text-secondary, #888);
   --cat-item-nested-width: 100%;
@@ -529,10 +529,10 @@ html.modern-ui-v3 {
   --cat-src-content-padding: 0;
   --cat-src-content-bg: transparent;
   --cat-src-header-padding: 10px 16px;
-  --cat-src-header-bg: transparent;
+  --cat-src-header-bg: color-mix(in srgb, var(--text-primary, #fff) 7%, transparent);
   --cat-src-header-color: var(--text-secondary, #888);
   --cat-src-header-transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-  --cat-src-header-border-top: 1px solid transparent;
+  --cat-src-header-border-top: 1px solid color-mix(in srgb, var(--text-primary, #fff) 10%, transparent);
   --cat-src-header-border-bottom: 1px solid transparent;
   --cat-src-header-hover-bg: rgba(255, 255, 255, 0.05);
   --cat-src-header-hover-color: var(--text-primary, #fff);
@@ -551,7 +551,7 @@ html.modern-ui-v3 {
   --cat-src-count-font-weight: 600;
   --cat-src-count-tabular: tabular-nums;
   /* Source name typography — v3 */
-  --cat-src-name-weight: 600;
+  --cat-src-name-weight: 700;
   --cat-src-name-font-size: var(--source-font-size, 0.76rem);
   --cat-src-name-letter-spacing: 0.06em;
   /* Category name typography — v3 */

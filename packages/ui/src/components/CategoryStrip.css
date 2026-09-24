@@ -730,8 +730,9 @@ html.modern-ui-v3[data-theme]:has(.guide-transparent-mode) .category-strip.autoh
 }
 
 .category-item.nested {
+  position: relative;
   padding: var(--cat-item-nested-padding, var(--cat-item-padding, 10px 12px));
-  padding-left: var(--cat-item-nested-padding-left, 28px);
+  padding-left: var(--cat-item-nested-padding-left, 36px);
   /* Indent nested categories */
   font-size: var(--cat-item-nested-font-size, 0.8rem);
   border-radius: var(--cat-item-nested-radius, 0);
@@ -743,6 +744,17 @@ html.modern-ui-v3[data-theme]:has(.guide-transparent-mode) .category-strip.autoh
   border-top: var(--cat-item-nested-border-top, none);
   border-bottom: var(--cat-item-nested-border-bottom, none);
   color: var(--cat-item-nested-color, rgba(255, 255, 255, 0.8));
+}
+
+.category-item.nested::after {
+  content: '';
+  position: absolute;
+  left: calc(var(--cat-item-nested-padding-left, 36px) - 16px);
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: color-mix(in srgb, var(--text-secondary, #888) 25%, transparent);
+  pointer-events: none;
 }
 
 .category-item.selected {
@@ -832,8 +844,8 @@ html.modern-ui-v3[data-theme]:has(.guide-transparent-mode) .category-strip.autoh
   border: none;
   border-top: var(--cat-src-header-border-top, 1px solid rgba(255, 255, 255, 0.05));
   border-bottom: var(--cat-src-header-border-bottom, none);
-  background: var(--cat-src-header-bg, rgba(255, 255, 255, 0.03));
-  color: var(--cat-src-header-color, rgba(255, 255, 255, 0.6));
+  background: var(--cat-src-header-bg, color-mix(in srgb, var(--text-primary, #fff) 7%, transparent));
+  color: var(--cat-src-header-color, var(--text-primary, #fff));
   cursor: pointer;
   text-align: left;
   transition: var(--cat-src-header-transition, background 0.15s ease, color 0.15s ease);
@@ -954,6 +966,14 @@ html.modern-ui-v3[data-theme]:has(.guide-transparent-mode) .category-strip.autoh
 .category-list-bar .category-name {
   font-size: var(--cat-list-name-font-size, var(--category-font-size, 13px));
   font-weight: var(--cat-name-weight, 400);
+}
+
+.category-item.nested .category-name {
+  font-size: max(11px, calc(var(--category-font-size, 13px) - 1px));
+}
+
+.category-item.nested:not(.selected):not(.active):not(:hover) .category-name {
+  color: var(--lt-text-muted, #9ca3af);
 }
 
 .category-item.selected .category-name,
@@ -1208,7 +1228,7 @@ html.modern-ui-v3[data-theme]:has(.guide-transparent-mode) .category-strip.autoh
   margin: 0; /* pinned rows are flush (v3 overrides nested's 2px 0) */
   height: 38px;
   padding: var(--cat-item-pinned-padding, var(--cat-item-nested-padding, var(--cat-item-padding, 10px 12px)));
-  padding-left: var(--cat-item-nested-padding-left, 28px);
+  padding-left: var(--cat-item-nested-padding-left, 36px);
 }
 
 .category-item.nested.folder-nested.is-pinned {
@@ -1341,8 +1361,11 @@ html.modern-ui-v3[data-theme]:has(.guide-transparent-mode) .category-strip.autoh
 }
 
 .category-item.nested.folder-nested {
-  /* Match the indent of regular nested categories instead of the extra folder indent */
-  padding-left: var(--cat-item-nested-padding-left, 28px) !important;
+  padding-left: calc(var(--cat-item-nested-padding-left, 36px) + 16px) !important;
+}
+
+.category-item.nested.folder-nested::after {
+  left: var(--cat-item-nested-padding-left, 36px);
 }
 
 /* Virtualized pinned overlay (Slice 3, flag-gated path only).

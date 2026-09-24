@@ -641,7 +641,7 @@ html.modern-ui-v3[data-theme="light"] .category-source-content .category-item.ne
 html[data-theme="light"] .category-item.nested.is-pinned .category-name,
 html.modern-ui-v3[data-theme="light"] .category-item.nested.is-pinned .category-name,
 html.modern-ui-v3[data-theme="light"] .category-source-content .category-item.nested.is-pinned .category-name {
-  color: var(--lt-text-primary, #0f172a) !important;
+  color: var(--lt-text-muted, #64748b) !important;
   font-weight: 600 !important;
 }
 

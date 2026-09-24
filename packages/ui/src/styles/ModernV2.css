@@ -318,7 +318,7 @@
   --cat-item-hover-border-color: color-mix(in srgb, var(--accent-primary, #00d4ff) 25%, transparent);
   --cat-item-hover-transform: translateX(3px);
   --cat-item-bar-hover-height: 16px;
-  --cat-item-nested-padding-left: 12px;
+  --cat-item-nested-padding-left: 36px;
   --cat-item-nested-font-size: calc(var(--category-font-size, 13px) * 0.9);
   --cat-item-nested-radius: 8px;
   --cat-item-nested-margin: 2px 0;
@@ -379,7 +379,7 @@
   --cat-src-group-border: 1px solid rgba(255, 255, 255, 0.05);
   --cat-src-content-padding: 8px;
   --cat-src-content-bg: rgba(0, 0, 0, 0.2);
-  --cat-src-header-bg: rgba(255, 255, 255, 0.03);
+  --cat-src-header-bg: color-mix(in srgb, var(--text-primary, #fff) 7%, transparent);
   --cat-src-header-color: rgba(255, 255, 255, 0.8);
   --cat-src-header-border-top: 1px solid rgba(255, 255, 255, 0.05);
   --cat-src-header-hover-bg: rgba(255, 255, 255, 0.08);
@@ -395,7 +395,7 @@
   --cat-src-count-hover-bg: rgba(255, 255, 255, 0.15);
   --cat-src-count-hover-color: rgba(255, 255, 255, 0.9);
   /* Source name typography — v2 */
-  --cat-src-name-weight: 500;
+  --cat-src-name-weight: 700;
   --cat-src-name-font-size: var(--category-font-size, 13px);
   --cat-src-name-letter-spacing: 0.01em;
   --cat-src-name-line-height: 1.2;
