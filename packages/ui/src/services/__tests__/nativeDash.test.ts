@@ -17,6 +17,17 @@ describe('native DASH routing', () => {
       expect(route.config.requestHeaders).toEqual(requestHeaders);
     }
   });
+  it.each(['org.w3c.clearkey', 'com.example.ClearKey.drm'])(
+    'recognizes a license type containing ClearKey: %s',
+    async licenseType => {
+      const route = await routeNativeDash('https://example.test/a.mpd', {
+        ...base,
+        'inputstream.adaptive.license_type': licenseType,
+        'inputstream.adaptive.license_key': '0'.repeat(32) + ':' + '1'.repeat(32),
+      });
+      expect(route.kind).toBe('native');
+    },
+  );
   it.each(['short:00', 'g'.repeat(32) + ':' + '0'.repeat(32), '0'.repeat(64)])('rejects malformed key material', async value => {
     expect(await routeNativeDash('https://example.test/a.mpd', { ...base,
       'inputstream.adaptive.license_key': value })).toEqual({ kind: 'error', error: 'Invalid ClearKey property' });

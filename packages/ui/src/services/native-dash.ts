@@ -128,7 +128,7 @@ export async function routeNativeDash(
     if (detected === 'hls') return { kind: 'normal' };
     if (detected !== 'mpd') return { kind: 'error', error: 'Unable to identify manifest format' };
   }
-  if (licenseType !== 'clearkey') {
+  if (!licenseType?.includes('clearkey')) {
     return { kind: 'error', error: `Unsupported DASH DRM type: ${licenseType || '(missing)'}` };
   }
   const match = licenseKey?.match(CLEARKEY_RE);
