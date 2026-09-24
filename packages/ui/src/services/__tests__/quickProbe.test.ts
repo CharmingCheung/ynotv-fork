@@ -145,4 +145,23 @@ describe('quickProbeChannel', () => {
     activeQuickProbes.delete('some_stream');
     expect(activeQuickProbes.has('some_stream')).toBe(false);
   });
+
+  it('passes M3U channel headers to the probe command', async () => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    (invoke as any).mockImplementation((cmd: string) => {
+      if (cmd === 'probe_single_stream') return Promise.resolve({ status: 'dead', url: channel.direct_url });
+      return Promise.resolve();
+    });
+
+    await quickProbeChannel({
+      ...channel,
+      kodi_props: {
+        'ynotv.http_headers': JSON.stringify({ Referer: 'https://example.com/', Origin: 'https://example.com' }),
+      },
+    });
+
+    expect(invoke).toHaveBeenCalledWith('probe_single_stream', expect.objectContaining({
+      headers: { Referer: 'https://example.com/', Origin: 'https://example.com' },
+    }));
+  });
 });

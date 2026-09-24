@@ -4,6 +4,7 @@
 //! liveness, resolution, frame rate, audio channels/layout, codecs, and stream latency.
 
 use std::path::{Path, PathBuf};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -63,6 +64,8 @@ pub struct ProbeChannelInput {
     pub category_name: Option<String>,
     #[serde(default)]
     pub user_agent: Option<String>,
+    #[serde(default)]
+    pub headers: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -233,6 +236,7 @@ async fn probe_audio_bitrate(
     ffmpeg_bin: &Path,
     url: &str,
     user_agent: Option<&str>,
+    headers: Option<&HashMap<String, String>>,
     timeout_duration: Duration,
     sample_secs: f64,
 ) -> Option<u32> {
@@ -243,6 +247,7 @@ async fn probe_audio_bitrate(
         .filter(|s| !s.trim().is_empty())
         .unwrap_or("VLC/3.0.18 LibVLC/3.0.18");
     cmd.arg("-user_agent").arg(ua);
+    append_ffmpeg_headers(&mut cmd, headers);
     cmd.arg("-analyzeduration").arg("3000000");
     cmd.arg("-probesize").arg("3000000");
     cmd.arg("-rw_timeout").arg(format!("{}", timeout_duration.as_micros()));
@@ -350,6 +355,21 @@ fn is_placeholder(url: &str) -> bool {
     PLACEHOLDER_PATHS.iter().any(|p| lower.contains(p))
 }
 
+fn append_ffmpeg_headers(cmd: &mut Command, headers: Option<&HashMap<String, String>>) {
+    let Some(headers) = headers else { return; };
+    let mut fields = String::new();
+    for (name, value) in headers {
+        if name.eq_ignore_ascii_case("user-agent") || name.contains(['\r', '\n']) || value.contains(['\r', '\n']) { continue; }
+        fields.push_str(name);
+        fields.push_str(": ");
+        fields.push_str(value);
+        fields.push_str("\r\n");
+    }
+    if !fields.is_empty() {
+        cmd.arg("-headers").arg(fields);
+    }
+}
+
 fn detect_hls_drm(body: &str) -> Option<String> {
     let lower = body.to_lowercase();
     if !lower.contains("#ext-x-key") && !lower.contains("#ext-x-session-key") {
@@ -374,6 +394,7 @@ async fn check_http_stream(
     client: &reqwest::Client,
     url: &str,
     user_agent: Option<&str>,
+    headers: Option<&HashMap<String, String>>,
     timeout_duration: Duration,
 ) -> HttpCheckResult {
     if is_placeholder(url) {
@@ -392,12 +413,20 @@ async fn check_http_stream(
         .filter(|s| !s.trim().is_empty())
         .unwrap_or("VLC/3.0.18 LibVLC/3.0.18");
 
-    let req = client
+    let mut req = client
         .get(url)
         .header(reqwest::header::USER_AGENT, effective_ua)
         .header(reqwest::header::ACCEPT, "*/*")
         .header(reqwest::header::CONNECTION, "close")
         .timeout(timeout_duration);
+    if let Some(headers) = headers {
+        for (name, value) in headers {
+            if name.eq_ignore_ascii_case("user-agent") || name.contains(['\r', '\n']) || value.contains(['\r', '\n']) { continue; }
+            if let (Ok(name), Ok(value)) = (reqwest::header::HeaderName::try_from(name), reqwest::header::HeaderValue::try_from(value)) {
+                req = req.header(name, value);
+            }
+        }
+    }
 
     let response = match req.send().await {
         Ok(res) => res,
@@ -888,6 +917,7 @@ async fn run_ffmpeg_probe(
     ffmpeg_bin: &Path,
     url: &str,
     user_agent: Option<&str>,
+    headers: Option<&HashMap<String, String>>,
     timeout_duration: Duration,
     capture_screenshot: bool,
     screenshot_dest: Option<PathBuf>,
@@ -904,6 +934,7 @@ async fn run_ffmpeg_probe(
         .filter(|s| !s.trim().is_empty())
         .unwrap_or("VLC/3.0.18 LibVLC/3.0.18");
     cmd.arg("-user_agent").arg(ua);
+    append_ffmpeg_headers(&mut cmd, headers);
     cmd.arg("-analyzeduration").arg("3000000");
     cmd.arg("-probesize").arg("3000000");
     cmd.arg("-rw_timeout").arg(format!("{}", timeout_duration.as_micros()));
@@ -1021,6 +1052,7 @@ pub async fn probe_single_stream(
     user_agent: Option<String>,
     timeout_secs: Option<f64>,
     measure_bitrate: Option<bool>,
+    headers: Option<HashMap<String, String>>,
 ) -> Result<ProbeChannelResult, String> {
     let timeout = Duration::from_secs_f64(timeout_secs.unwrap_or(8.0).clamp(2.0, 30.0));
     let client = reqwest::Client::builder()
@@ -1032,7 +1064,7 @@ pub async fn probe_single_stream(
         .map_err(|e| e.to_string())?;
 
     // Step 1: HTTP check
-    let http_res = check_http_stream(&client, &url, user_agent.as_deref(), timeout).await;
+    let http_res = check_http_stream(&client, &url, user_agent.as_deref(), headers.as_ref(), timeout).await;
 
     if http_res.status != "alive" {
         return Ok(ProbeChannelResult {
@@ -1069,7 +1101,7 @@ pub async fn probe_single_stream(
     let measure = measure_bitrate.unwrap_or(false);
     let sample_secs = if measure { 8.0 } else { 1.0 };
     let (mut meta, _, mut ffmpeg_err) = if let Some(ref bin) = ffmpeg_path {
-        run_ffmpeg_probe(bin, &url, user_agent.as_deref(), timeout, false, None, sample_secs).await
+        run_ffmpeg_probe(bin, &url, user_agent.as_deref(), headers.as_ref(), timeout, false, None, sample_secs).await
     } else {
         (StreamMetadata::default(), None, Some("FFmpeg not found".to_string()))
     };
@@ -1081,7 +1113,7 @@ pub async fn probe_single_stream(
     // Audio bitrate measured from the same ffmpeg binary when requested
     let audio_bitrate_kbps = if measure {
         if let Some(ref bin) = ffmpeg_path {
-            probe_audio_bitrate(bin, &url, user_agent.as_deref(), timeout, sample_secs).await
+            probe_audio_bitrate(bin, &url, user_agent.as_deref(), headers.as_ref(), timeout, sample_secs).await
         } else {
             None
         }
@@ -1281,9 +1313,10 @@ pub async fn start_channel_probe(
                     let ch_name = channel.name.clone();
                     let url = channel.url.clone();
                     let ua = channel.user_agent.clone();
+                    let headers = channel.headers.clone();
 
                     // Step 1: HTTP stream check (with optional retries if dead/failed)
-                    let mut http_res = check_http_stream(&cli, &url, ua.as_deref(), timeout_duration).await;
+                    let mut http_res = check_http_stream(&cli, &url, ua.as_deref(), headers.as_ref(), timeout_duration).await;
                     let mut retry_count = 0;
                     while http_res.status == "dead" && retry_count < max_retries && !tok.is_cancelled() {
                         retry_count += 1;
@@ -1294,7 +1327,7 @@ pub async fn start_channel_probe(
                         if tok.is_cancelled() {
                             break;
                         }
-                        http_res = check_http_stream(&cli, &url, ua.as_deref(), timeout_duration).await;
+                        http_res = check_http_stream(&cli, &url, ua.as_deref(), headers.as_ref(), timeout_duration).await;
                     }
 
                     let mut result = ProbeChannelResult {
@@ -1348,6 +1381,7 @@ pub async fn start_channel_probe(
                                 bin,
                                 &url,
                                 ua.as_deref(),
+                                headers.as_ref(),
                                 probe_timeout,
                                 false,
                                 None,
@@ -1376,6 +1410,7 @@ pub async fn start_channel_probe(
                                     bin,
                                     &url,
                                     ua.as_deref(),
+                                    headers.as_ref(),
                                     probe_timeout,
                                     bitrate_sample_secs,
                                 )

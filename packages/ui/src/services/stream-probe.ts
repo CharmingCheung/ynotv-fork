@@ -11,6 +11,7 @@ import { db, type ChannelMetadata, type StoredChannel } from '../db';
 import { dbEvents } from '../db/sqlite-adapter';
 import { clearMetadataCache } from './video-metadata';
 import { useSettingsStore } from '../stores/settingsStore';
+import { getM3uHttpHeaders } from './m3u-http-headers';
 
 // ============================================================================
 // Types
@@ -26,6 +27,7 @@ export interface ProbeChannelInput {
   category_id?: string;
   category_name?: string;
   user_agent?: string;
+  headers?: Record<string, string>;
 }
 
 export interface ProbeOptions {
@@ -140,13 +142,13 @@ export async function probeSingleStream(
   url: string,
   userAgent?: string,
   timeoutSecs?: number,
-  measureBitrate?: boolean
+  measureBitrate?: boolean,
+  headers?: Record<string, string>,
 ): Promise<ProbeChannelResult> {
+  const args: Record<string, unknown> = { url, userAgent, timeoutSecs, measureBitrate };
+  if (headers && Object.keys(headers).length > 0) args.headers = headers;
   return await invoke<ProbeChannelResult>('probe_single_stream', {
-    url,
-    userAgent,
-    timeoutSecs,
-    measureBitrate,
+    ...args,
   });
 }
 
@@ -404,6 +406,8 @@ export async function quickProbeChannel(
 ): Promise<ProbeChannelResult> {
   let streamUrl = channel.direct_url || (channel as any).url || '';
   let userAgent = useSettingsStore.getState().globalLiveTvUserAgent || 'VLC/3.0.18 LibVLC/3.0.18';
+  const headers = getM3uHttpHeaders(channel.kodi_props);
+  if (headers['User-Agent']) userAgent = headers['User-Agent'];
 
   if (channel.source_id && window.storage) {
     try {
@@ -446,7 +450,7 @@ export async function quickProbeChannel(
   }
 
   const timeoutSecs = options?.timeoutSecs ?? 12;
-  const probed = await probeSingleStream(streamUrl, userAgent, timeoutSecs, true);
+  const probed = await probeSingleStream(streamUrl, userAgent, timeoutSecs, true, headers);
 
   const fullResult: ProbeChannelResult = {
     ...probed,
@@ -472,4 +476,3 @@ export async function quickProbeChannel(
 
   return fullResult;
 }
-
