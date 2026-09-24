@@ -34,6 +34,10 @@ pub struct CanvasSlot {
     /// thread fell behind.
     pub acked: Arc<AtomicBool>,
     pub thread_handle: Option<thread::JoinHandle<()>>,
+    /// Keeps an independently prepared native DASH packet bridge alive for
+    /// this slot. Each slot owns its session, so parallel DASH playback does
+    /// not replace the primary player's global session.
+    _native_dash: Option<crate::native_dash::DetachedNativeDashSession>,
 }
 
 unsafe impl Send for CanvasSlot {}
@@ -110,6 +114,7 @@ pub fn create_canvas_mpv_instance(slot_id: u8) -> Result<(Mpv, *mut mpv_render_c
 pub async fn multiview_canvas_start(
     slot_id: u8,
     url: String,
+    native_dash: Option<crate::native_dash::NativeDashPlaybackConfig>,
     width: u32,
     height: u32,
     channel: Channel<InvokeResponseBody>,
@@ -141,11 +146,26 @@ pub async fn multiview_canvas_start(
     let width = if width == 0 { 640 } else { ((width.min(1280) + 1) & !1).max(64) };
     let height = if height == 0 { 360 } else { ((height.min(720) + 1) & !1).max(64) };
 
+    let (load_url, native_dash_session) = if let Some(config) = native_dash {
+        if config.manifest_url != url {
+            return Err("Native DASH manifest configuration mismatch".into());
+        }
+        let (packet_source, session) = crate::native_dash::prepare_detached(config).await?;
+        (packet_source, Some(session))
+    } else {
+        (url, None)
+    };
+
     let (mpv_instance, render_ctx) = create_canvas_mpv_instance(slot_id)?;
     let mpv = Arc::new(mpv_instance);
 
     // Load URL
-    mpv.command("loadfile", &[&url, "replace"])
+    let load_result = if native_dash_session.is_some() {
+        mpv.command("loadfile", &[&load_url, "replace", "-1", "demuxer=rustdash,demuxer-seekable-cache=no,sid=no"])
+    } else {
+        mpv.command("loadfile", &[&load_url, "replace"])
+    };
+    load_result
         .map_err(|e| format!("Failed to loadfile on canvas slot {}: {}", slot_id, e))?;
 
     let running = Arc::new(AtomicBool::new(true));
@@ -263,6 +283,7 @@ pub async fn multiview_canvas_start(
             target_height,
             acked,
             thread_handle: Some(thread_handle),
+            _native_dash: native_dash_session,
         },
     );
 

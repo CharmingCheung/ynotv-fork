@@ -7,6 +7,7 @@ import {
   type ViewerSlot,
   type MainSlot,
 } from './useMultiview';
+import type { NativeDashPlaybackConfig } from '../services/native-dash';
 
 // Re-export SavedLayoutState for convenience
 export type { LayoutMode } from './useMultiview';
@@ -95,7 +96,15 @@ export function useLayoutPersistence(options: UseLayoutPersistenceOptions) {
       layout,
       engineMode,
       mainChannel: { ...mainSlotRef.current },
-      slots: slotsRef.current.map((s) => ({ ...s })),
+      // Never persist native DASH ClearKey material. It is re-derived from the
+      // channel metadata whenever the user sends that channel to a slot.
+      slots: slotsRef.current.map((s) => ({
+        id: s.id,
+        channelName: s.channelName,
+        channelUrl: s.channelUrl,
+        sourceName: s.sourceName,
+        active: s.active,
+      })),
     };
   }, [layout, engineMode]);
 
@@ -249,15 +258,15 @@ export function useLayoutPersistence(options: UseLayoutPersistenceOptions) {
    * Send a channel to a slot with persistence
    */
   const sendToSlot = useCallback(
-    async (slotId: 2 | 3 | 4, channelName: string, channelUrl: string, sourceName?: string | null) => {
+    async (slotId: 2 | 3 | 4, channelName: string, channelUrl: string, sourceName?: string | null, nativeDash?: NativeDashPlaybackConfig) => {
 
-      await baseSendToSlot(slotId, channelName, channelUrl, sourceName);
+      await baseSendToSlot(slotId, channelName, channelUrl, sourceName, nativeDash);
 
       // Save state after loading
       if (enabled) {
         // Manually update slotsRef so we don't save stale React state before the next render tick
         slotsRef.current = slotsRef.current.map(s =>
-          s.id === slotId ? { ...s, channelName, channelUrl, sourceName: sourceName ?? null, active: true } : s
+          s.id === slotId ? { ...s, channelName, channelUrl, sourceName: sourceName ?? null, nativeDash, active: true } : s
         );
         await saveStateWithRefs();
       }

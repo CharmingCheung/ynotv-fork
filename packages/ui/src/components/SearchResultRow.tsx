@@ -14,6 +14,8 @@ import { formatTime, formatDate } from '../utils/dateTime';
 import i18n from '../i18n';
 import { useTranslation } from 'react-i18next';
 import './ChannelPanel.css';
+import { routeNativeDash, type NativeDashPlaybackConfig } from '../services/native-dash';
+import { getM3uHttpHeaders } from '../services/m3u-http-headers';
 
 interface SearchResultRowProps {
   channel: StoredChannel;
@@ -26,7 +28,7 @@ interface SearchResultRowProps {
   onFavoriteToggle?: () => void;
   activeRecordings?: RecordingInfo[];
   currentLayout?: string;
-  onSendToSlot?: (slotId: 2 | 3 | 4, channelName: string, channelUrl: string, sourceName?: string | null) => void;
+  onSendToSlot?: (slotId: 2 | 3 | 4, channelName: string, channelUrl: string, sourceName?: string | null, nativeDash?: NativeDashPlaybackConfig) => void;
   onPlayInPopout?: (channel: StoredChannel) => void;
   onPlayInExternal?: (channel: StoredChannel) => void;
   includeSourceInSearch?: boolean;
@@ -207,7 +209,12 @@ export const SearchResultRow = memo(function SearchResultRow({
         sourceName = result.data.name;
       }
     }
-    onSendToSlot(slotId, channel.name, url, sourceName);
+    const dashRoute = await routeNativeDash(url, channel.kodi_props, getM3uHttpHeaders(channel.kodi_props));
+    if (dashRoute.kind === 'error') {
+      console.error('[SearchResultRow] Failed to prepare multiview DASH:', dashRoute.error);
+      return;
+    }
+    onSendToSlot(slotId, channel.name, url, sourceName, dashRoute.kind === 'native' ? dashRoute.config : undefined);
     addToRecentChannels(channel);
   }, [channel, onSendToSlot]);
 

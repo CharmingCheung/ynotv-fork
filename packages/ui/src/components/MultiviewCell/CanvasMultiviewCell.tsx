@@ -11,6 +11,7 @@ import { invoke, Channel } from '@tauri-apps/api/core';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { PlayIcon, PauseIcon, ReloadIcon, StopIcon, VolumeIcon, AspectRatioIcon } from './MultiviewIcons';
 import { type AspectRatioMode, getAspectRatioLabel } from '../../services/tauri-bridge';
+import type { NativeDashPlaybackConfig } from '../../services/native-dash';
 import './multiviewCellShared.css';
 import './CanvasMultiviewCell.css';
 
@@ -18,6 +19,7 @@ interface CanvasMultiviewCellProps {
     slotId: 2 | 3 | 4;
     channelName: string | null;
     channelUrl: string | null;
+    nativeDash?: NativeDashPlaybackConfig;
     sourceName: string | null;
     active: boolean;
     onSwapWithMain: () => void;
@@ -30,6 +32,7 @@ export function CanvasMultiviewCell({
     slotId,
     channelName,
     channelUrl,
+    nativeDash,
     sourceName,
     active,
     onSwapWithMain,
@@ -147,6 +150,7 @@ export function CanvasMultiviewCell({
         invoke('multiview_canvas_start', {
             slotId,
             url: channelUrl,
+            nativeDash,
             width: reqW,
             height: reqH,
             channel,
@@ -161,7 +165,7 @@ export function CanvasMultiviewCell({
         return () => {
             invoke('multiview_canvas_stop', { slotId }).catch(() => {});
         };
-    }, [slotId, channelUrl, active, hidden]);
+    }, [slotId, channelUrl, nativeDash, active, hidden]);
 
     // Handle container resize (debounced to avoid rapid reallocation during layout transitions)
     useEffect(() => {

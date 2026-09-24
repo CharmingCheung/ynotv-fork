@@ -14,6 +14,8 @@ import { useToastStore } from '../stores/toastStore';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
 import './ProgramContextMenu.css'; // Reuse the same styles
+import { routeNativeDash, type NativeDashPlaybackConfig } from '../services/native-dash';
+import { getM3uHttpHeaders } from '../services/m3u-http-headers';
 
 type MenuView = 'main' | 'quick' | 'custom' | 'group' | 'failover';
 
@@ -23,7 +25,7 @@ interface ChannelContextMenuProps {
     onClose: () => void;
     // Multiview props
     currentLayout?: string;
-    onSendToSlot?: (slotId: 2 | 3 | 4, channelName: string, channelUrl: string, sourceName?: string | null) => void;
+    onSendToSlot?: (slotId: 2 | 3 | 4, channelName: string, channelUrl: string, sourceName?: string | null, nativeDash?: NativeDashPlaybackConfig) => void;
     // Popout props
     onPlayInPopout?: (channel: StoredChannel) => void;
     // External player prop
@@ -1164,7 +1166,12 @@ export function ChannelContextMenu({
                 sourceName = result.data.name;
             }
         }
-        onSendToSlot(slotId, channel.name, url, sourceName);
+        const dashRoute = await routeNativeDash(url, channel.kodi_props, getM3uHttpHeaders(channel.kodi_props));
+        if (dashRoute.kind === 'error') {
+            console.error('[ChannelContextMenu] Failed to prepare multiview DASH:', dashRoute.error);
+            return;
+        }
+        onSendToSlot(slotId, channel.name, url, sourceName, dashRoute.kind === 'native' ? dashRoute.config : undefined);
         addToRecentChannels(channel);
         onClose();
     };
@@ -1271,4 +1278,3 @@ export function ChannelContextMenu({
         document.body
     );
 }
-

@@ -12,6 +12,8 @@ import type { StoredChannel, StoredProgram } from '../db';
 import { normalizeBoolean } from '../utils/db-helpers';
 import { useSettingsStore } from '../stores/settingsStore';
 import type { RecordingInfo } from '../hooks/useActiveRecordings';
+import { routeNativeDash, type NativeDashPlaybackConfig } from '../services/native-dash';
+import { getM3uHttpHeaders } from '../services/m3u-http-headers';
 
 // Channel column width is controlled via CSS custom property for resizability
 
@@ -30,7 +32,7 @@ interface ChannelRowProps {
   categoryId?: string | null;
   activeRecordings?: RecordingInfo[];
   currentLayout?: string;
-  onSendToSlot?: (slotId: 2 | 3 | 4, channelName: string, channelUrl: string, sourceName?: string | null) => void;
+  onSendToSlot?: (slotId: 2 | 3 | 4, channelName: string, channelUrl: string, sourceName?: string | null, nativeDash?: NativeDashPlaybackConfig) => void;
   onPlayInPopout?: (channel: StoredChannel) => void;
   onPlayInExternal?: (channel: StoredChannel) => void;
   isCurrentlyPlaying?: boolean;
@@ -201,7 +203,12 @@ export const ChannelRow = memo(function ChannelRow({
         sourceName = result.data.name;
       }
     }
-    onSendToSlot(slotId, channel.name, url, sourceName);
+    const dashRoute = await routeNativeDash(url, channel.kodi_props, getM3uHttpHeaders(channel.kodi_props));
+    if (dashRoute.kind === 'error') {
+      console.error('[ChannelRow] Failed to prepare multiview DASH:', dashRoute.error);
+      return;
+    }
+    onSendToSlot(slotId, channel.name, url, sourceName, dashRoute.kind === 'native' ? dashRoute.config : undefined);
     addToRecentChannels(channel);
   }, [channel, onSendToSlot]);
 

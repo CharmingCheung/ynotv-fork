@@ -15,7 +15,12 @@
 .layout-picker-dropdown {
     position: absolute;
     top: calc(100% + 8px);
-    left: 0;
+    /* Keep the panel inside the window when the picker sits near an edge. In
+       particular, the frameless macOS title bar puts the traffic lights on the
+       left and compresses the remaining controls; expanding toward the left
+       keeps the whole menu visible. */
+    right: 0;
+    left: auto;
     background: rgba(16, 16, 20, 0.98);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);

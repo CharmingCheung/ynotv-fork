@@ -163,6 +163,8 @@ initUiDesign();
 // NEW: Extracted hooks
 import { useSettingsStore } from './stores/settingsStore';
 import { usePlayback, pushNuvioPlaybackProgress } from './hooks/usePlayback';
+import { routeNativeDash } from './services/native-dash';
+import { getM3uHttpHeaders } from './services/m3u-http-headers';
 import { useNavigation } from './hooks/useNavigation';
 import { useWatchlist } from './hooks/useWatchlist';
 import { useWindowManager } from './hooks/useWindowManager';
@@ -955,6 +957,26 @@ function App() {
     engineMode: multiviewEngineMode,
     setEngineMode: setMultiviewEngineMode,
   } = multiview;
+
+  const sendChannelToMultiviewSlot = useCallback(async (slotId: 2 | 3 | 4, channel: StoredChannel) => {
+    let url = channel.direct_url || '';
+    if (channel.source_id) {
+      const resolved = await resolvePlayUrl(channel.source_id, url);
+      url = resolved.url;
+    }
+    const dashRoute = await routeNativeDash(url, channel.kodi_props, getM3uHttpHeaders(channel.kodi_props));
+    if (dashRoute.kind === 'error') {
+      console.error('[App] Failed to prepare multiview DASH:', dashRoute.error);
+      return;
+    }
+    sendToSlot(
+      slotId,
+      channel.alias || channel.name,
+      url,
+      channel.source_id,
+      dashRoute.kind === 'native' ? dashRoute.config : undefined,
+    );
+  }, [sendToSlot]);
 
   // Refs for multiview (used by keyboard shortcuts)
   const multiviewLayoutRef = useRef<LayoutMode>('main');
@@ -1756,7 +1778,7 @@ function useTmdbPresencePoster(
       ) {
         await rawSwitchLayout(needsQuad ? '2x2' : 'sbs');
       }
-      sendToSlot(slotId, channel.alias || channel.name, channel.direct_url || '', channel.source_id);
+      await sendChannelToMultiviewSlot(slotId, channel);
     },
     onSwitchLayout: (layout: string) => {
       const mapped = REMOTE_LAYOUT_MAP[layout];
@@ -6406,7 +6428,7 @@ function useTmdbPresencePoster(
           setMultiviewPlayTarget(null);
         }}
         onSendToSlot={(slotId, channel) => {
-          sendToSlot(slotId, channel.alias || channel.name, channel.direct_url || '', channel.source_id);
+          void sendChannelToMultiviewSlot(slotId, channel);
           setMultiviewPlayTarget(null);
         }}
         onClose={() => setMultiviewPlayTarget(null)}

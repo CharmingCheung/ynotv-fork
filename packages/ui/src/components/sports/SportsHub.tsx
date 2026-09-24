@@ -960,9 +960,7 @@ export function SportsMultiviewOverlay({
   const zoom =
     parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--app-zoom').trim()) || 1;
 
-  // In Sports, big+bottom renders as a 2x2 grid too — the preview pane is too
-  // wide/short for a meaningful "big" cell plus a bottom bar.
-  const displayLayout: LayoutMode = layout === 'bigbottom' ? '2x2' : layout;
+  const displayLayout: LayoutMode = layout;
 
   return (
     <div
@@ -982,6 +980,15 @@ export function SportsMultiviewOverlay({
             {mainControls}
           </div>
           <div id="sports-slot-container-2" className="sports-mv-slot" />
+        </>
+      ) : displayLayout === 'bigbottom' ? (
+        <>
+          <div className="sports-mv-main sports-mv-big-main">
+            {mainControls}
+          </div>
+          <div id="sports-slot-container-2" className="sports-mv-slot" />
+          <div id="sports-slot-container-3" className="sports-mv-slot" />
+          <div id="sports-slot-container-4" className="sports-mv-slot" />
         </>
       ) : (
         <>

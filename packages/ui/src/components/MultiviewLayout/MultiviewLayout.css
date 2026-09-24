@@ -224,7 +224,10 @@
     left: 0;
     right: 0;
     display: grid;
-    grid-template-rows: 1fr 320px;
+    /* The lower strip is three 16:9 cells across. Let CSS derive its height
+       from the actual layout container instead of window.innerWidth (which is
+       especially error-prone with Retina backing scale and app zoom). */
+    grid-template-rows: minmax(0, 1fr) auto;
     gap: 2px;
     background: transparent;
     z-index: 5;
@@ -244,7 +247,8 @@
     grid-row: 2;
     display: grid;
     grid-template-columns: 1fr 1fr 1fr;
+    aspect-ratio: 16 / 3;
+    min-height: 0;
     gap: 2px;
     pointer-events: all;
 }
-

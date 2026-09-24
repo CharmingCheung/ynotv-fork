@@ -31,6 +31,7 @@ import { formatTime, formatDate } from '../utils/dateTime';
 import { dvrProgressPercent } from '../hooks/useTimeshift';
 import { pickCurrentProgram, EPG_WINDOW_BACK_MS, EPG_WINDOW_FWD_MS } from '../utils/epgTime';
 import { useTranslation } from 'react-i18next';
+import type { NativeDashPlaybackConfig } from '../services/native-dash';
 import i18n from '../i18n';
 
 function formatSeekTime(seconds: number): string {
@@ -96,7 +97,7 @@ interface ChannelRowData {
   categoryId: string | null;
   activeRecordings: import('../hooks/useActiveRecordings').RecordingInfo[];
   currentLayout?: string;
-  onSendToSlot?: (slotId: 2 | 3 | 4, channelName: string, channelUrl: string, sourceName?: string | null) => void;
+  onSendToSlot?: (slotId: 2 | 3 | 4, channelName: string, channelUrl: string, sourceName?: string | null, nativeDash?: NativeDashPlaybackConfig) => void;
   onPlayInPopout?: (channel: StoredChannel) => void;
   onPlayInExternal?: (channel: StoredChannel) => void;
   currentChannel?: StoredChannel | null;
@@ -210,7 +211,7 @@ interface SearchProgramRowData {
   refreshSearchResults: () => void;
   activeRecordings: import('../hooks/useActiveRecordings').RecordingInfo[];
   currentLayout?: string;
-  onSendToSlot?: (slotId: 2 | 3 | 4, channelName: string, channelUrl: string, sourceName?: string | null) => void;
+  onSendToSlot?: (slotId: 2 | 3 | 4, channelName: string, channelUrl: string, sourceName?: string | null, nativeDash?: NativeDashPlaybackConfig) => void;
   onPlayInPopout?: (channel: StoredChannel) => void;
   onPlayInExternal?: (channel: StoredChannel) => void;
   includeSourceInSearch?: boolean;
@@ -313,7 +314,7 @@ interface ChannelPanelProps {
   // Multiview props
   currentLayout?: string;
   multiviewEngineMode?: MultiviewEngineMode;
-  onSendToSlot?: (slotId: 2 | 3 | 4, channelName: string, channelUrl: string, sourceName?: string | null) => void;
+  onSendToSlot?: (slotId: 2 | 3 | 4, channelName: string, channelUrl: string, sourceName?: string | null, nativeDash?: NativeDashPlaybackConfig) => void;
   multiviewSlots?: ViewerSlot[];
   onSwapWithMain?: (slotId: 2 | 3 | 4) => void;
   onStopSlot?: (slotId: 2 | 3 | 4) => void;
@@ -3444,14 +3445,14 @@ export function ChannelPanel({
       {/* Top Section: Preview & Info — hidden in transparent guide mode */}
       {!guideTransparent && (
       <div 
-        className={`guide-top-section ${epgThreeColumn || epgView === 'alternate' ? 'alternate-view' : ''} ${showMultiviewGrid && !epgThreeColumn ? 'multiview-grid-active' : ''}`}
+        className={`guide-top-section ${epgThreeColumn || epgView === 'alternate' ? 'alternate-view' : ''} ${showMultiviewGrid && !epgThreeColumn ? `multiview-grid-active multiview-${currentLayout}` : ''}`}
         style={epgView !== 'alternate' && !showMultiviewGrid ? { '--preview-width': `${previewWidthPct}%` } as React.CSSProperties : undefined}
       >
         {(showMultiviewGrid || showMultiviewSplit) && epgThreeColumn ? (
           <>
             {/* Multiview in the 3-column view: the video grid renders above
                 the schedule pane (renderAltRightPane), which stays visible. */}
-            <div className={`guide-multiview-3col ${showMultiviewGrid ? 'four-up' : 'two-up'}`}>
+            <div className={`guide-multiview-3col ${showMultiviewGrid ? `four-up layout-${currentLayout}` : 'two-up'}`}>
               {/* Cell 1: Main MPV player */}
               <div id="epg-slot-container-1" className="guide-preview-grid-cell">
                 {renderPreviewPane()}
@@ -3472,7 +3473,7 @@ export function ChannelPanel({
             </div>
           </>
         ) : showMultiviewGrid ? (
-          <div className="guide-preview-line-1x4">
+          <div className={`guide-preview-multiview guide-preview-${currentLayout}`}>
             {/* Cell 1: Main MPV player */}
             <div id="epg-slot-container-1" className="guide-preview-grid-cell">
               {renderPreviewPane()}

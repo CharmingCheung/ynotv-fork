@@ -392,19 +392,11 @@ export function MultiviewLayout({
         }
 
         if (layout === 'bigbottom') {
-            // Calculate exact 16:9 height for the bottom row cells to prevent letterboxing
-            const gap = 2; // matches CSS gap
-            const cellW = Math.floor((window.innerWidth - (2 * gap)) / 3);
-            const cellH = Math.floor(cellW * 9 / 16);
-
             return (
                 <div 
                     className="layout-bigbottom-cells" 
                     data-engine={engineMode} 
-                    style={{ 
-                        display: hidden || activeView !== 'none' ? 'none' : undefined,
-                        gridTemplateRows: `1fr ${cellH}px`
-                    }}
+                    style={{ display: hidden || activeView !== 'none' ? 'none' : undefined }}
                 >
                     {/* Top grid row: primary MPV renders behind this placeholder.
                         Must always be rendered so layout-bottom-bar stays in grid row 2.
@@ -460,6 +452,7 @@ export function MultiviewLayout({
                         slotId={slot.id as 2 | 3 | 4}
                         channelName={slot.channelName}
                         channelUrl={slot.channelUrl}
+                        nativeDash={slot.nativeDash}
                         sourceName={slot.sourceName}
                         active={slot.active}
                         onSwapWithMain={() => onSwapWithMain(slot.id)}

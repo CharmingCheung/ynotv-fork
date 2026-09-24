@@ -369,6 +369,26 @@
   pointer-events: all;
 }
 
+/* Big primary view with a three-cell 16:9 strip underneath. */
+.sports-mv-bigbottom {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 2px;
+}
+
+.sports-mv-bigbottom .sports-mv-big-main {
+  grid-column: 1 / -1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.sports-mv-bigbottom .sports-mv-slot {
+  min-width: 0;
+  aspect-ratio: 16 / 9;
+  pointer-events: all;
+}
+
 /* PiP: main fills the whole pane, slot 2 floats in the corner (above the
    mini media bar, below the resizer handle) */
 .sports-mv-pip {

@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import type { NativeDashPlaybackConfig } from '../services/native-dash';
 
 export type LayoutMode = 'main' | 'pip' | '2x2' | 'bigbottom' | 'sbs';
 export type MultiviewEngineMode = 'mpv_canvas' | 'hls';
@@ -10,6 +11,7 @@ export interface ViewerSlot {
     channelUrl: string | null;
     sourceName: string | null;
     active: boolean;
+    nativeDash?: NativeDashPlaybackConfig;
 }
 
 export interface MainSlot {
@@ -186,9 +188,16 @@ export function useMultiview() {
     }, [syncMpvGeometry]);
 
     /** Load a stream URL into a secondary slot */
-    const sendToSlot = useCallback(async (slotId: 2 | 3 | 4, channelName: string, channelUrl: string, sourceName: string | null = null) => {
+    const sendToSlot = useCallback(async (slotId: 2 | 3 | 4, channelName: string, channelUrl: string, sourceName: string | null = null, nativeDash?: NativeDashPlaybackConfig) => {
+        // Encrypted DASH needs the native packet pipeline. Select the canvas
+        // engine automatically; browser video/HLS cannot consume that source.
+        if (nativeDash && engineModeRef.current !== 'mpv_canvas') {
+            engineModeRef.current = 'mpv_canvas';
+            setEngineModeState('mpv_canvas');
+            localStorage.setItem('multiviewEngineMode', 'mpv_canvas');
+        }
         setSlots(prev => prev.map(s =>
-            s.id === slotId ? { ...s, channelName, channelUrl, sourceName, active: true } : s
+            s.id === slotId ? { ...s, channelName, channelUrl, sourceName, nativeDash, active: true } : s
         ));
     }, []);
 
@@ -204,7 +213,7 @@ export function useMultiview() {
 
         // Load the secondary stream on Main MPV
         try {
-            await invoke('mpv_load', { url: newMainUrl });
+            await invoke('mpv_load', { url: newMainUrl, nativeDash: slot.nativeDash });
         } catch (e) {}
         mainSlotRef.current = { channelName: newMainName, channelUrl: newMainUrl, sourceName: newMainSourceName };
 
@@ -278,7 +287,7 @@ export function useMultiview() {
             invoke('multiview_canvas_stop', { slotId }).catch(() => { });
         }
         setSlots(prev => prev.map(s =>
-            s.id === slotId ? { ...s, channelName: null, channelUrl: null, sourceName: null, active: false } : s
+            s.id === slotId ? { ...s, channelName: null, channelUrl: null, sourceName: null, nativeDash: undefined, active: false } : s
         ));
     }, []);
 
