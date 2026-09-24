@@ -427,7 +427,7 @@ export interface PlaybackState {
   autoSelectAudio: () => Promise<void>;
 
   // Layout persistence integration
-  notifyMainLoaded: (channelName: string, channelUrl: string, sourceName?: string | null) => void;
+  notifyMainLoaded: (channelName: string, channelUrl: string, sourceName?: string | null, nativeDash?: NativeDashPlaybackConfig) => void;
 }
 
 interface UsePlaybackOptions {
@@ -436,7 +436,7 @@ interface UsePlaybackOptions {
   savedLayoutState: import('./useLayoutPersistence').SavedLayoutState | null;
   mpvReadyState: boolean;
   syncMpvGeometry?: () => Promise<void>;
-  notifyMainLoaded?: (channelName: string, channelUrl: string, sourceName?: string | null) => void;
+  notifyMainLoaded?: (channelName: string, channelUrl: string, sourceName?: string | null, nativeDash?: NativeDashPlaybackConfig) => void;
   /** Callback to update current channel when swapped from multiview */
   onSetCurrentChannel?: (channel: StoredChannel | null) => void;
   /** Shared MPV listener state from parent (must be provided to avoid duplicate hook instances) */
@@ -1183,7 +1183,12 @@ export function usePlayback(options: UsePlaybackOptions): PlaybackState {
         }
 
         applySubtitleSettings();
-        notifyMainLoaded?.(channel.name, result.url, resolved.sourceName ?? null);
+        notifyMainLoaded?.(
+          channel.name,
+          result.url,
+          resolved.sourceName ?? null,
+          nativeDashRoute.kind === 'native' ? nativeDashRoute.config : undefined,
+        );
 
         import('../services/video-metadata').then(({ captureAndSaveMetadata }) => {
           captureAndSaveMetadata(channel.stream_id, channel.source_id).catch(console.error);

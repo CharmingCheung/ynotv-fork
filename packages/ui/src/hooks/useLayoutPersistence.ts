@@ -95,7 +95,11 @@ export function useLayoutPersistence(options: UseLayoutPersistenceOptions) {
     return {
       layout,
       engineMode,
-      mainChannel: { ...mainSlotRef.current },
+      mainChannel: {
+        channelName: mainSlotRef.current.channelName,
+        channelUrl: mainSlotRef.current.channelUrl,
+        sourceName: mainSlotRef.current.sourceName,
+      },
       // Never persist native DASH ClearKey material. It is re-derived from the
       // channel metadata whenever the user sends that channel to a slot.
       slots: slotsRef.current.map((s) => ({
@@ -184,9 +188,9 @@ export function useLayoutPersistence(options: UseLayoutPersistenceOptions) {
    * Notify that main channel loaded - tracks for persistence
    */
   const notifyMainLoaded = useCallback(
-    (channelName: string, channelUrl: string, sourceName?: string | null) => {
-      baseNotifyMainLoaded(channelName, channelUrl, sourceName);
-      mainSlotRef.current = { channelName, channelUrl, sourceName: sourceName || null };
+    (channelName: string, channelUrl: string, sourceName?: string | null, nativeDash?: NativeDashPlaybackConfig) => {
+      baseNotifyMainLoaded(channelName, channelUrl, sourceName, nativeDash);
+      mainSlotRef.current = { channelName, channelUrl, sourceName: sourceName || null, nativeDash };
 
       // Save state immediately
       if (enabled) {
@@ -287,6 +291,7 @@ export function useLayoutPersistence(options: UseLayoutPersistenceOptions) {
           channelName: slot.channelName,
           channelUrl: slot.channelUrl,
           sourceName: slot.sourceName,
+          nativeDash: slot.nativeDash,
         };
         // Notify parent that main channel changed (for preview panel sync)
         onLoadMainChannel?.(slot.channelName || '', slot.channelUrl, slot.sourceName);
@@ -302,6 +307,7 @@ export function useLayoutPersistence(options: UseLayoutPersistenceOptions) {
             channelName: oldMain.channelName,
             channelUrl: oldMain.channelUrl,
             sourceName: oldMain.sourceName,
+            nativeDash: oldMain.nativeDash,
             active: !!oldMain.channelUrl
           } : s
         );

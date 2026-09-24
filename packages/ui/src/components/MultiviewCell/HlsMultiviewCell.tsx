@@ -123,6 +123,10 @@ export function HlsMultiviewCell({
             }
         }
 
+        let watchdog: ReturnType<typeof setInterval> | null = null;
+        const markProgress = () => { lastProgressAt = Date.now(); };
+        let lastProgressAt = Date.now();
+
         if (Hls.isSupported()) {
             // IPTV live streams are plain (non low-latency) HLS. lowLatencyMode +
             // backBufferLength flushing is a known source of repeated black-frame /
@@ -138,6 +142,21 @@ export function HlsMultiviewCell({
                 liveSyncDurationCount: 3,
             });
             hlsRef.current = hls;
+            video.addEventListener('timeupdate', markProgress);
+            video.addEventListener('progress', markProgress);
+            video.addEventListener('playing', markProgress);
+            watchdog = setInterval(() => {
+                if (video.paused || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+                if (Date.now() - lastProgressAt < 8_000) return;
+                lastProgressAt = Date.now();
+                try {
+                    hls.startLoad();
+                    if (video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) {
+                        hls.recoverMediaError();
+                    }
+                    video.play().catch(() => { });
+                } catch { /* instance may be tearing down */ }
+            }, 5_000);
 
             // Fatal-error recovery with a bounded, backed-off retry budget. The
             // previous code called startLoad()/recoverMediaError() unconditionally
@@ -206,11 +225,27 @@ export function HlsMultiviewCell({
             video.src = streamUrl;
             video.muted = true;
             video.play().catch(() => { });
+            video.addEventListener('timeupdate', markProgress);
+            video.addEventListener('progress', markProgress);
+            video.addEventListener('playing', markProgress);
+            watchdog = setInterval(() => {
+                if (video.paused || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+                if (Date.now() - lastProgressAt < 8_000) return;
+                lastProgressAt = Date.now();
+                const resumeAt = video.currentTime;
+                video.load();
+                video.currentTime = resumeAt;
+                video.play().catch(() => { });
+            }, 5_000);
         } else {
             setHlsError('HLS is not supported in this environment.');
         }
 
         return () => {
+            if (watchdog) clearInterval(watchdog);
+            video.removeEventListener('timeupdate', markProgress);
+            video.removeEventListener('progress', markProgress);
+            video.removeEventListener('playing', markProgress);
             destroyHls();
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps

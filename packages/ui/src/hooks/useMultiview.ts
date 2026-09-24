@@ -18,6 +18,7 @@ export interface MainSlot {
     channelName: string | null;
     channelUrl: string | null;
     sourceName: string | null;
+    nativeDash?: NativeDashPlaybackConfig;
 }
 
 const EMPTY_SLOTS: ViewerSlot[] = [
@@ -158,8 +159,8 @@ export function useMultiview() {
         } catch (e) {}
     }, []);
 
-    const notifyMainLoaded = useCallback((channelName: string, channelUrl: string, sourceName?: string | null) => {
-        mainSlotRef.current = { channelName, channelUrl, sourceName: sourceName || null };
+    const notifyMainLoaded = useCallback((channelName: string, channelUrl: string, sourceName?: string | null, nativeDash?: NativeDashPlaybackConfig) => {
+        mainSlotRef.current = { channelName, channelUrl, sourceName: sourceName || null, nativeDash };
     }, []);
 
     const switchLayout = useCallback(async (newLayout: LayoutMode) => {
@@ -215,13 +216,13 @@ export function useMultiview() {
         try {
             await invoke('mpv_load', { url: newMainUrl, nativeDash: slot.nativeDash });
         } catch (e) {}
-        mainSlotRef.current = { channelName: newMainName, channelUrl: newMainUrl, sourceName: newMainSourceName };
+        mainSlotRef.current = { channelName: newMainName, channelUrl: newMainUrl, sourceName: newMainSourceName, nativeDash: slot.nativeDash };
 
         // Put the old main stream into the secondary slot
         if (prevMain.channelUrl) {
             setSlots(prev => prev.map(s =>
                 s.id === slotId
-                    ? { ...s, channelName: prevMain.channelName, channelUrl: prevMain.channelUrl, sourceName: prevMain.sourceName, active: true }
+                    ? { ...s, channelName: prevMain.channelName, channelUrl: prevMain.channelUrl, sourceName: prevMain.sourceName, nativeDash: prevMain.nativeDash, active: true }
                     : s
             ));
         } else {
