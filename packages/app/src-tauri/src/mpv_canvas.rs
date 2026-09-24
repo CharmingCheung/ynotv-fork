@@ -156,12 +156,17 @@ pub async fn multiview_canvas_start(
         (url, None)
     };
 
+    let force_hls = native_dash_session.is_none()
+        && crate::content_is_hls_manifest(&load_url, None).await;
+
     let (mpv_instance, render_ctx) = create_canvas_mpv_instance(slot_id)?;
     let mpv = Arc::new(mpv_instance);
 
     // Load URL
     let load_result = if native_dash_session.is_some() {
         mpv.command("loadfile", &[&load_url, "replace", "-1", "demuxer=rustdash,demuxer-seekable-cache=no,sid=no"])
+    } else if force_hls {
+        mpv.command("loadfile", &[&load_url, "replace", "-1", "demuxer-lavf-format=hls"])
     } else {
         mpv.command("loadfile", &[&load_url, "replace"])
     };
