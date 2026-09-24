@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Runtime, Manager};
+use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
 use log::{debug, info, warn, error};
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
@@ -1940,6 +1940,67 @@ async fn mpv_get_property<R: Runtime>(app: AppHandle<R>, name: String) -> Result
     {
         mpv_core::get_property(&app, name).await
     }
+}
+
+#[tauri::command]
+async fn mpv_get_properties<R: Runtime>(
+    app: AppHandle<R>,
+    names: Vec<String>,
+) -> Result<std::collections::HashMap<String, serde_json::Value>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        mpv_core::get_properties(&app, names).await
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if get_player_engine(&app).await == PlayerEngine::LibMpv {
+            mpv_core::get_properties(&app, names).await
+        } else {
+            let mut values = std::collections::HashMap::with_capacity(names.len());
+            for name in names {
+                let value = mpv_windows::get_property(&app, name.clone())
+                    .await
+                    .unwrap_or(serde_json::Value::Null);
+                values.insert(name, value);
+            }
+            Ok(values)
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        mpv_core::get_properties(&app, names).await
+    }
+}
+
+#[tauri::command]
+async fn open_playback_stats_window<R: Runtime>(
+    app: AppHandle<R>,
+    title: String,
+) -> Result<(), String> {
+    const LABEL: &str = "playback-stats";
+
+    if let Some(window) = app.get_webview_window(LABEL) {
+        window.show().map_err(|error| error.to_string())?;
+        window.set_focus().map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+
+    WebviewWindowBuilder::new(
+        &app,
+        LABEL,
+        WebviewUrl::App("index.html?window=playback-stats".into()),
+    )
+    .title(title)
+    .inner_size(920.0, 720.0)
+    .min_inner_size(640.0, 520.0)
+    .resizable(true)
+    .decorations(true)
+    .transparent(false)
+    .center()
+    .build()
+    .map_err(|error| error.to_string())?;
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -5772,6 +5833,8 @@ pub fn run() {
             mpv_set_property,
             mpv_set_properties,
             mpv_get_property,
+            mpv_get_properties,
+            open_playback_stats_window,
             set_pip_aspect_lock,
             mpv_sync_window,
             mpv_set_geometry,

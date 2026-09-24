@@ -1009,7 +1009,6 @@ function App() {
     handleToggleMute,
     handleCycleSubtitle,
     handleCycleAudio,
-    handleToggleStats,
     handleToggleFullscreen,
     autoSelectSubtitle,
     userPausedRef,
@@ -3344,6 +3343,12 @@ function useTmdbPresencePoster(
   const handleShowQualityModal = useCallback(() => {
     controlsHoveredRef.current = false;
     setShowQualityModal(true);
+  }, [controlsHoveredRef]);
+  const handleToggleStats = useCallback(() => {
+    controlsHoveredRef.current = false;
+    void Bridge.openPlaybackStatsWindow(i18n.t('player:playbackStats.title')).catch((error) => {
+      console.error('[PlaybackStats] Failed to open statistics window:', error);
+    });
   }, [controlsHoveredRef]);
 
   // ==========================================================================
@@ -6808,7 +6813,6 @@ function useTmdbPresencePoster(
         }}
       />
       <DashQualityModal isOpen={showQualityModal} onClose={() => { controlsHoveredRef.current = false; setShowQualityModal(false); handleMouseMove(); }} />
-
       {/* Advanced Search Modal */}
       <AdvancedSearchModal
         isOpen={showAdvancedSearch}

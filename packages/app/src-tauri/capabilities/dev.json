@@ -4,6 +4,7 @@
   "description": "Additional capability for the dev server (localhost:5173) — eliminates IPC CORS errors in development",
   "windows": [
     "main",
+    "playback-stats",
     "local:*",
     "jellyfin",
     "jellyfin-embed"

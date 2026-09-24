@@ -20,37 +20,26 @@ import { ensureLocalLibraryLoaded } from './services/local-library/local-library
 // useSettingsStore at module scope).
 import './stores/settingsDomApplier';
 import { useSportsSettingsStore } from './stores/sportsSettingsStore';
+import { PlaybackStatsWindow } from './components/PlaybackStatsWindow';
 // Side-effect import AFTER the settings store + applier: self-initializes the
 // scroll listener that toggles the `scroll-turbo` class (drops backdrop blur
 // and blob blending while scrolling, restores on idle). Reads the
 // reduceEffectsWhileScrolling setting from the store at event time.
 import './utils/scrollTurbo';
 
-// Must run before any component mounts: a localStorage write that exceeds the
-// WebView2 quota must never crash the (transparent) window.
-installSafeStorage();
+const isPlaybackStatsWindow = new URLSearchParams(window.location.search).get('window') === 'playback-stats';
 
-// Kick off the single boot-time settings load (the store seeds synchronously
-// from localStorage for first paint; this reconciles the authoritative values
-// from the Tauri store in the background — exactly once per run).
-ensureSettingsHydration();
+if (!isPlaybackStatsWindow) {
+  // Must run before the main app mounts: a localStorage write that exceeds the
+  // WebView2 quota must never crash the transparent player window.
+  installSafeStorage();
 
-// Load the Local VOD library from SQLite at boot (migrating the legacy
-// localStorage copy). The library is stored in the SQLite app_kv table — not
-// localStorage — so large libraries (tens of thousands of entries) never hit
-// the WebView2 localStorage quota (~10 MB), which previously made big folder
-// scans silently fail to persist.
-ensureLocalLibraryLoaded().catch(() => {});
-
-// Boot-time sports settings load. The sports settings store (live leagues,
-// autoSwapDeadStreams, …) previously hydrated only when a Sports-view
-// component mounted (SportsHub, tabs, or the overlay widget). That left the
-// "Autoswap dead streams" toggle at its default OFF whenever a team-linked
-// channel was played from Live TV before ever visiting Sports — so team
-// failover silently never fired. Loading here makes the persisted value
-// authoritative from startup; the components' `if (!loaded)` guards keep
-// their later calls no-ops.
-useSportsSettingsStore.getState().loadSettings().catch(() => {});
+  // Reconcile settings, local media, and sports state only for the main app.
+  // The statistics window is intentionally lightweight and read-only.
+  ensureSettingsHydration();
+  ensureLocalLibraryLoaded().catch(() => {});
+  useSportsSettingsStore.getState().loadSettings().catch(() => {});
+}
 
 /**
  * Checks the database before mounting the main app. If the database is
@@ -102,9 +91,13 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ErrorBoundary>
       <I18nextProvider i18n={i18n}>
-        <SourceVersionProvider>
-          <RecoveryGate />
-        </SourceVersionProvider>
+        {isPlaybackStatsWindow ? (
+          <PlaybackStatsWindow />
+        ) : (
+          <SourceVersionProvider>
+            <RecoveryGate />
+          </SourceVersionProvider>
+        )}
       </I18nextProvider>
     </ErrorBoundary>
   </React.StrictMode>

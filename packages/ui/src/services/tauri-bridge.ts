@@ -827,6 +827,14 @@ export const Bridge = {
         return invoke('mpv_get_property', { name });
     },
 
+    async getProperties(names: string[]): Promise<Record<string, any>> {
+        return invoke('mpv_get_properties', { names });
+    },
+
+    async openPlaybackStatsWindow(title: string): Promise<void> {
+        return invoke('open_playback_stats_window', { title });
+    },
+
     // Popout MPV Controls
     async popoutOpen(url: string, alwaysOnTop: boolean = false, customParams: string = '') {
         return invoke('popout_open', { url, alwaysOnTop, customParams });

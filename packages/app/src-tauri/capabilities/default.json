@@ -4,6 +4,7 @@
   "description": "Capability for the main window",
   "windows": [
     "main",
+    "playback-stats",
     "local:*",
     "jellyfin",
     "jellyfin-embed"

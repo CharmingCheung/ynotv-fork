@@ -1202,6 +1202,18 @@ pub async fn get_property<R: Runtime>(
     Ok(Value::Null)
 }
 
+pub async fn get_properties<R: Runtime>(
+    app: &AppHandle<R>,
+    names: Vec<String>,
+) -> Result<HashMap<String, Value>, String> {
+    let mut values = HashMap::with_capacity(names.len());
+    for name in names {
+        let value = get_property(app, name.clone()).await.unwrap_or(Value::Null);
+        values.insert(name, value);
+    }
+    Ok(values)
+}
+
 pub async fn toggle_stats<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     let state = app.state::<MpvCoreState>();
     let mpv = {
