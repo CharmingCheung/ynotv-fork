@@ -1991,8 +1991,8 @@ async fn open_playback_stats_window<R: Runtime>(
         WebviewUrl::App("index.html?window=playback-stats".into()),
     )
     .title(title)
-    .inner_size(920.0, 720.0)
-    .min_inner_size(640.0, 520.0)
+    .inner_size(760.0, 540.0)
+    .min_inner_size(560.0, 420.0)
     .resizable(true)
     .decorations(true)
     .transparent(false)
