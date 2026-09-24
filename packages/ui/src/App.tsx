@@ -132,8 +132,6 @@ import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useGamepad, useKeyboardAsController } from './hooks/useGamepad';
 import { focusFirstInteractive, applyTvFocus, tryRestoreFocus, hasFocusMemory, focusViewOnOpen } from './services/spatialNavigation';
 import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
-import { WhatsNewModal } from './components/WhatsNewModal/WhatsNewModal';
-import { getVersion } from '@tauri-apps/api/app';
 import { useLayoutPersistence, type LayoutMode } from './hooks/useLayoutPersistence';
 import { useMpvListeners } from './hooks/useMpvListeners';
 import { AdvancedSearchModal, type AdvancedSearchConfig } from './components/AdvancedSearchModal';
@@ -2933,12 +2931,6 @@ function useTmdbPresencePoster(
   const { handleMinimize, handleMaximize, handleClose, isMaximized, isFullscreen } = useWindowManager();
 
   // ==========================================================================
-  // What's New Modal State
-  // ==========================================================================
-  const [whatsNewModalOpen, setWhatsNewModalOpen] = useState(false);
-  const [appVersion, setAppVersion] = useState('');
-
-  // ==========================================================================
   // Sports Preview State
   // ==========================================================================
   const [sportsPreviewEnabled, setSportsPreviewEnabled] = useState(true);
@@ -5665,26 +5657,6 @@ function useTmdbPresencePoster(
   }, []);
 
   // ==========================================================================
-  // Check for What's New (First launch / update)
-  // ==========================================================================
-  useEffect(() => {
-    const checkWhatsNew = async () => {
-      try {
-        const currentVersion = await getVersion();
-        setAppVersion(currentVersion);
-        const lastVersion = localStorage.getItem('ynotv_last_version');
-        if (!lastVersion || lastVersion !== currentVersion) {
-          setWhatsNewModalOpen(true);
-          localStorage.setItem('ynotv_last_version', currentVersion);
-        }
-      } catch (err) {
-        console.error('[App] Failed to check for What\'s New:', err);
-      }
-    };
-    checkWhatsNew();
-  }, []);
-
-  // ==========================================================================
   // Render
   // ==========================================================================
   const isStremioOrNuvio = playbackSourceView === 'stremio' || playbackSourceView === 'nuvio';
@@ -7377,7 +7349,6 @@ function useTmdbPresencePoster(
             activeView === 'jellyfin' &&
             !showSettingsPopup &&
             !layoutPickerOpen &&
-            !whatsNewModalOpen &&
             !showShortcutsOverlay &&
             !showChannelProbeModal &&
             !showSubtitleModal &&
@@ -7675,12 +7646,6 @@ function useTmdbPresencePoster(
         </div>
       )}
 
-      {/* What's New Modal */}
-      <WhatsNewModal
-        isOpen={whatsNewModalOpen}
-        onClose={() => setWhatsNewModalOpen(false)}
-        version={appVersion}
-      />
       {/* Keyboard Shortcuts Modal Overlay */}
       <KeyboardShortcutsModal
         isOpen={showShortcutsOverlay}
